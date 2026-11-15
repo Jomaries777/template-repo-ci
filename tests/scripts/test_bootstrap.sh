@@ -18,6 +18,7 @@ for cli in gh security; do
   printf '#!/usr/bin/env bash\necho "%s $*" >>"%s/calls"\nexit 99\n' "$cli" "$tmp" >"$tmp/bin/$cli"
   chmod +x "$tmp/bin/$cli"
 done
+ORIG_PATH="$PATH"
 export PATH="$tmp/bin:$PATH"
 
 pass() { echo "ok - $1"; }
@@ -51,6 +52,17 @@ check "CODEOWNERS names the new owner" 'grep -qx "\* @acme" "$a/.github/CODEOWNE
 check "README stub names the stack and target" 'grep -q "Stack: \`node\`" "$a/README.md" && grep -q "Deploy target: \`cloud-run\`" "$a/README.md"'
 check "root make delegates to the stack" 'make -C "$a" -n typecheck 2>/dev/null | grep -q "stacks/node"'
 check "deploy.sh reads the new target" '[[ "$(APP_NAME=hello DEPLOY_DRY_RUN=1 "$a/scripts/deploy.sh" url dev 2>/dev/null)" == https://hello-dev-dryrun.a.run.app ]]'
+
+# The bootstrapped project's own script tests must pass (they ship with it).
+# Stack tests need npm and are run by its CI; these need only bash and git.
+(cd "$a" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm boot)
+proj_fail=""
+for t in "$a"/tests/scripts/test_*.sh; do
+  [[ -x "$t" ]] || continue
+  (cd "$a" && env -u ALLOW_WORKFLOW_EDIT -u ALLOW_TEST_EDIT PATH="$ORIG_PATH" "$t") >/dev/null 2>&1 || proj_fail+=" $(basename "$t")"
+done
+check "bootstrapped project: its script tests pass" '[[ -z "$proj_fail" ]] || { echo "failed:$proj_fail"; false; }'
+rm -rf "$a/.git"
 
 before="$(cd "$a" && find . -type f | sort | xargs cksum)"
 rc=0
@@ -138,6 +150,34 @@ out="$(BOT_APP_ID=1 GCP_PROJECT_ID=hello-proj-1 BILLING_ACCOUNT=0A1B2C-3D4E5F-6A
   "$f/scripts/bootstrap.sh" --stack node --target cloud-run --repo acme/9lives --dry-run 2>&1)" || rc=$?
 check "digit-leading repo: APP_NAME gets app- prefix" 'grep -q "gh variable set APP_NAME --repo acme/9lives --body app-9lives" <<<"$out"'
 : >"$tmp/calls"
+
+# --- real mode against a new repo: pushes to main, and never stores an empty
+# secret when the Keychain and the terminal are both unavailable.
+g="$tmp/g"
+copy "$g"
+git init -q --bare "$tmp/origin.git"
+(cd "$g" && git init -q -b main && git add -A && git -c user.email=t@t -c user.name=t commit -qm init &&
+  git remote add origin "$tmp/origin.git" && git push -q origin main)
+mkdir -p "$tmp/bin3"
+cat >"$tmp/bin3/gh" <<EOF3
+#!/usr/bin/env bash
+echo "gh \$*" >>"$tmp/calls3"
+case "\$1 \$2" in
+  "api repos/acme/hello/rulesets") echo '[]' ;;
+  "api repos/acme/hello/branches/main") echo '{"protected":false}' ;;
+  "api users/acme") echo '{"type":"User","id":1}' ;;
+  "secret set"*) cat >/dev/null ;;
+esac
+exit 0
+EOF3
+chmod +x "$tmp/bin3/gh"
+: >"$tmp/calls3"
+rc=0
+out="$(cd "$g" && PATH="$tmp/bin3:$PATH" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+  "$g/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
+check "real mode: new repo is pushed to main" '[[ "$(git -C "$tmp/origin.git" log --oneline main | wc -l)" -eq 2 ]]'
+check "real mode: no Keychain and no terminal stops bootstrap" '[[ $rc == 1 ]] && grep -q "CLAUDE_CODE_OAUTH_TOKEN" <<<"$out"'
+check "real mode: an empty secret is never set" '! grep -q "gh secret set" "$tmp/calls3"'
 
 [[ "$failures" -eq 0 ]] || {
   echo "$failures failure(s)"

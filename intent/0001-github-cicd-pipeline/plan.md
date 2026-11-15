@@ -24,7 +24,7 @@ Facts found during plan mode (they reduce C8 risk):
 | Loop artifacts | `intent/0001-…/plan.md` (this file), status lines in `intent.md` / `spec.md`, `intent/0001-…/spikes/*.md` and fixtures |
 | Agent config | `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, `.claude/settings.json`, `.claude/{agents,commands,skills}/**`, `scripts/hooks/*.sh` |
 | Repo scaffolding | `.gitignore`, `.github/{CODEOWNERS,pull_request_template.md,dependabot.yml,rulesets/main.json}`, `Makefile`, `README.md` |
-| CI | `.github/workflows/{pr,claude,deploy,dependabot-automerge,maintain}.yml`, `.github/actions/{classify,release}/action.yml`, `.template/selftest.yml` |
+| CI | `.github/workflows/{pr,claude,deploy,dependabot-automerge,maintain}.yml`, `.github/actions/{classify,release}/action.yml`, `.github/workflows/template-selftest.yml` (not `.template/selftest.yml`, see Deviations) |
 | Scripts | `scripts/{classify,gh-settings,bootstrap,doctor,bot-token,agy-run,agy-events,agy-report,deploy,sdlc-metrics}.sh`, `scripts/bot-app-manifest.json`, `tests/scripts/**` (plain-bash tests with fixtures) |
 | Stacks | `stacks/{node,python,go}/**`: hello service with `/healthz`, lint/type/test configs, Dockerfile, acceptance suite (service containers), `prod-safe` smoke tag |
 | Deploy adapters | `deploy.yml` (written by bootstrap), `deploy/targets/{cloud-run,none,github-pages,cloudflare-workers}/{target.yml,lib.sh,bootstrap,publish,current,deploy-dark,promote,revert,url,discard,cleanup}` |

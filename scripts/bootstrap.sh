@@ -129,6 +129,8 @@ else
   # Tests the template-to-project step itself, which only the template has.
   fs rm -f tests/scripts/test_bootstrap.sh
 
+  template_repo="${TEMPLATE_REPO:-Jomaries777/template-repo-ci}"
+  [[ "$template_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || usage_error "invalid TEMPLATE_REPO: $template_repo"
   deploy_yml="target: $target
 stack: $stack
 environments:
@@ -143,7 +145,7 @@ smoke:
 "
   readme="# $name
 
-Made from [template-repo-ci](https://github.com/Jomaries777/template-repo-ci).
+Made from [$template_repo](https://github.com/$template_repo).
 Stack: \`$stack\` (\`stacks/$stack/\`). Deploy target: \`$target\` (\`deploy.yml\`).
 
 ## Work
@@ -195,12 +197,17 @@ if ! ((dry_run)) && git fetch -q origin main 2>/dev/null && git merge-base --is-
 fi
 if ((need_push)); then
   # Fail closed: if the rulesets can't be read, never push to main.
-  has_ruleset=""
+  # "Protected" means any ruleset at all, or classic protection on main; only
+  # a repo with neither (a new one) takes the direct push.
+  protected=""
   if ! ((dry_run)); then
     rulesets="$(gh api "repos/$repo/rulesets")" || die "cannot read the rulesets of $repo; not pushing"
-    has_ruleset="$(jq -r '.[]? | select(.name=="main") | .id' <<<"$rulesets")"
+    branch="$(gh api "repos/$repo/branches/main")" || die "cannot read the main branch of $repo; not pushing"
+    if [[ "$(jq 'length' <<<"$rulesets")" != 0 || "$(jq -r '.protected' <<<"$branch")" == true ]]; then
+      protected=1
+    fi
   fi
-  if [[ -z "$has_ruleset" ]]; then
+  if [[ -z "$protected" ]]; then
     # A new repo: main is not protected yet; gh-settings.sh protects it next.
     run git push origin HEAD:main
   else
@@ -276,7 +283,13 @@ set_secret() {
     echo "DRY-RUN: <$secret from Keychain or prompt> | gh secret set $secret --repo $repo --app $app"
     return 0
   fi
-  "$@" | gh secret set "$secret" --repo "$repo" --app "$app"
+  # Capture first: a producer that dies inside a pipeline would only end its
+  # subshell, and gh would store an empty secret. The value stays in memory
+  # and reaches gh on stdin, never on disk or in an argument.
+  local value
+  value="$("$@")" || die "could not read $secret"
+  [[ -n "$value" ]] || die "$secret is empty; not setting it"
+  printf '%s' "$value" | gh secret set "$secret" --repo "$repo" --app "$app"
 }
 claude_token() {
   local v
@@ -321,6 +334,9 @@ else
     APP_NAME="$(tr 'A-Z_.' 'a-z--' <<<"$name")"
     # Cloud Run service names must start with a letter.
     [[ "$APP_NAME" =~ ^[a-z] ]] || APP_NAME="app-$APP_NAME"
+    # Cloud Run: at most 49 characters for "<app>-prod"/"-dev", no trailing hyphen.
+    APP_NAME="${APP_NAME:0:40}"
+    while [[ "$APP_NAME" == *- ]]; do APP_NAME="${APP_NAME%-}"; done
   fi
   export APP_NAME
   export GITHUB_REPOSITORY="$repo"

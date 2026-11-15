@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Read-only check that a project matches the spec (FR-15, spec §4.9). No AI;
-# changes nothing. Prints PASS / FAIL / SKIP per check, with a fix hint for
-# every FAIL, and exits 1 if anything failed.
+# changes no settings, secrets or resources. The bot App check mints a
+# short-lived installation token (a POST to GitHub) because only the App's own
+# token can see its installation. Prints PASS / FAIL / SKIP per check, with a
+# fix hint for every FAIL, and exits 1 if anything failed.
 #
 # Usage: scripts/doctor.sh [--repo owner/name]
 set -euo pipefail
@@ -143,8 +145,10 @@ else
       if [[ -z "$project" || -z "$app" ]]; then
         skip "cloud-run: services exist" "GCP_PROJECT_ID or APP_NAME is not set (see above)"
       else
-      expect "cloud-run: $app-prod exists" "DEPLOY_TARGET=cloud-run scripts/deploy.sh bootstrap" \
-        quiet gcloud run services describe "$app-prod" --project "$project" --region "${region:-us-central1}" --format 'value(metadata.name)'
+      for svc in "$app-dev" "$app-prod"; do
+        expect "cloud-run: $svc exists" "DEPLOY_TARGET=cloud-run scripts/deploy.sh bootstrap" \
+          quiet gcloud run services describe "$svc" --project "$project" --region "${region:-us-central1}" --format 'value(metadata.name)'
+      done
       fi
     else
       skip "cloud-run: services exist" "gcloud is not installed or not logged in"
