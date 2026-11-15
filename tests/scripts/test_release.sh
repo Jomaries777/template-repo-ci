@@ -15,7 +15,7 @@ echo "$*" >>"$CALLS"
 case "$1" in
   current) [[ -n "${CURRENT_EMPTY:-}" ]] || echo "svc-00001-old" ;;
   revert) [[ -z "${REVERT_FAIL:-}" ]] || exit 1 ;;
-  deploy-dark) echo "https://cand.example" ;;
+  deploy-dark) [[ -z "${DARK_FAIL:-}" ]] || exit 1; echo "https://cand.example" ;;
   url) echo "https://live.example" ;;
 esac
 EOF
@@ -149,6 +149,17 @@ printf 'target: cloud-run\nstack: node\n' >"$tmp/stack.yml"
 rc=0
 env -u SMOKE_CMD DEPLOY_CONFIG="$tmp/stack.yml" "$release" dev "$sha" >/dev/null 2>"$tmp/err.stack" || rc=$?
 if ! grep -q "no smoke suite" "$tmp/err.stack"; then pass "a stack in deploy.yml passes the smoke-suite check"; else fail "stack present but refused"; fi
+
+# --- a failing dark deploy is discarded, never promoted
+run darkfail DARK_FAIL=1
+rc_is "failed dark deploy: exits 1" 1
+has "failed dark deploy: discards the candidate" "discard dev $sha"
+lacks "failed dark deploy: never promotes" "promote"
+
+# --- live checks must fit the job timeout
+rc=0
+RELEASE_LIVE_CHECKS=12 RELEASE_INTERVAL=60 "$release" dev "$sha" >/dev/null 2>&1 || rc=$?
+rc_is "rejects live checks longer than 10 minutes with 64" 64
 
 # --- argument validation
 for args in "staging $sha" "dev not-a-sha" "dev"; do

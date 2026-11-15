@@ -48,6 +48,13 @@ dark="${RELEASE_DARK_DEPLOY:-true}"
   echo "release: invalid RELEASE_INTERVAL: $interval" >&2
   exit 64
 }
+# The dev and production jobs time out at 20 minutes. Live checks run after
+# promote, so a timeout mid-checks would leave the new version live without
+# a revert: keep them within 10 minutes.
+if (((checks - 1) * interval > 600)); then
+  echo "release: $checks live checks ${interval}s apart exceed 10 minutes" >&2
+  exit 64
+fi
 
 log() { echo "release[$env_name]: $*" >&2; }
 
@@ -79,12 +86,13 @@ log "serving now: ${prev:-<none>}"
 
 if [[ "$dark" == true ]]; then
   log "2/7 dark deploy of $sha"
-  candidate="$("$deploy_sh" deploy-dark "$env_name" "$sha")"
-  [[ -n "$candidate" ]] || {
-    log "deploy-dark printed no candidate URL"
-    "$deploy_sh" discard "$env_name" "$sha" || true
+  # A failed or half-done dark deploy is discarded too: no candidate is left
+  # behind (it receives no traffic either way).
+  if ! candidate="$("$deploy_sh" deploy-dark "$env_name" "$sha")" || [[ -z "$candidate" ]]; then
+    log "dark deploy failed or printed no candidate URL: discarding; no traffic was sent"
+    "$deploy_sh" discard "$env_name" "$sha" || log "discard failed"
     exit 1
-  }
+  fi
   log "3/7 pre-traffic test against $candidate"
   if ! smoke "$candidate"; then
     log "pre-traffic test failed: discarding the candidate; no traffic was sent"

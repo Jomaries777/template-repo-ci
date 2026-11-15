@@ -1,6 +1,8 @@
 # Keyless sign-in for the deploy target (spec §4.11, NFR-4). The caller job
 # needs `permissions: id-token: write`. Targets that need no cloud login
-# (none) skip every step, so switching targets never edits a workflow.
+# (none) skip every step, so switching between existing targets never edits a
+# workflow. Adding a new adapter that needs a cloud login adds its steps here
+# (plan.md Deviations), still not to deploy.yml.
 name: target-auth
 description: Sign in to the deploy target with GitHub OIDC
 

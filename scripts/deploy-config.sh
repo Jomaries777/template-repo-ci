@@ -69,6 +69,11 @@ interval="${interval:-60}"
   echo "deploy-config: smoke.interval_seconds must be 0-999, got: $interval" >&2
   exit 64
 }
+# Live checks run after promote inside a 20-minute job: keep them within 10.
+if (((checks - 1) * interval > 600)); then
+  echo "deploy-config: smoke: $checks live checks ${interval}s apart exceed 10 minutes" >&2
+  exit 64
+fi
 
 printf 'target=%s\ndark_deploy=%s\ndev=%s\nlive_checks=%s\ninterval_seconds=%s\n' \
   "$target" "$dark" "$dev" "$checks" "$interval"

@@ -68,6 +68,8 @@ rc_is "path-like target exits 64" 64 DEPLOY_CONFIG="$tmp/path.yml"
 printf 'target: none\nsmoke:\n  live_checks: 0\n' >"$tmp/zero.yml"
 rc_is "live_checks 0 exits 64" 64 DEPLOY_CONFIG="$tmp/zero.yml"
 rc_is "missing config exits 64" 64 DEPLOY_CONFIG="$tmp/missing.yml"
+printf 'target: none\nsmoke:\n  live_checks: 11\n  interval_seconds: 61\n' >"$tmp/long.yml"
+rc_is "live checks over 10 minutes exit 64" 64 DEPLOY_CONFIG="$tmp/long.yml"
 
 [[ "$failures" -eq 0 ]] || {
   echo "$failures failure(s)"

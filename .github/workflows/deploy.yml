@@ -219,4 +219,4 @@ jobs:
           claude_args: >-
             --model claude-sonnet-5-5
             --max-turns 5
-            --allowedTools "Read,Grep,Glob,Bash(gh run view:*),Bash(gh issue comment:*)"
+            --allowedTools "Read,Grep,Glob,Bash(gh run view ${{ github.run_id }}:*),Bash(gh issue comment ${{ steps.issue.outputs.number }}:*)"
