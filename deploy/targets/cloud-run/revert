@@ -16,7 +16,8 @@ run gcloud run services update-traffic "$SERVICE" --project "$GCP_PROJECT_ID" \
 
 # The restored revision's image is serving again: keep it protected. Traffic
 # has already moved, so a tagging failure is reported but doesn't fail revert.
-image="$(revision_image "$rev")"
+# Traffic has moved: nothing below may fail the revert.
+image="$(revision_image "$rev")" || image=""
 if ours "$image"; then
   tag_deployed "$image" || echo "cloud-run: could not tag $image as $ENV_NAME" >&2
 else

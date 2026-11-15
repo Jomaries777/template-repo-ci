@@ -10,16 +10,18 @@ sha_vars "${2:-}"
 rev="$(revision_for_tag "$TAG")"
 # Protect the revert target (the image serving now) and the new image before
 # moving traffic, so a tagging failure leaves traffic untouched. The revert
-# target is read from the serving revision, not from the "<env>" tag, so a
-# retried promote of the same SHA can't overwrite "<env>-prev".
+# target is read from the serving revision, not from the "<env>" tag. A
+# retried promote finds its own candidate revision already serving, so it
+# leaves "<env>-prev" alone (revisions are compared, not image references,
+# which gcloud may report by tag or by digest).
 serving_rev="$(describe_service | jq -r '.status.traffic[] | select(.percent == 100) | .revisionName' | head -n 1)"
 [[ -n "$serving_rev" ]] || die "no revision serves 100% of traffic on $SERVICE"
-serving_image="$(revision_image "$serving_rev")"
-if ! ours "$serving_image"; then
-  echo "cloud-run: $serving_rev runs ${serving_image:-<unknown>}, not an app image; no $ENV_NAME-prev to keep" >&2
-elif [[ "$serving_image" == "$IMAGE" ]]; then
-  echo "cloud-run: $IMAGE already serves $ENV_NAME; $ENV_NAME-prev unchanged" >&2
+if [[ "$serving_rev" == "$rev" ]]; then
+  echo "cloud-run: $rev already serves $ENV_NAME; $ENV_NAME-prev unchanged" >&2
+elif ! ours "$(revision_image "$serving_rev")"; then
+  echo "cloud-run: $serving_rev doesn't run an app image; no $ENV_NAME-prev to keep" >&2
 else
+  serving_image="$(revision_image "$serving_rev")"
   run gcloud artifacts docker tags add "$serving_image" "${IMAGE_BASE}:${ENV_NAME}-prev" \
     --project "$GCP_PROJECT_ID" --quiet
 fi

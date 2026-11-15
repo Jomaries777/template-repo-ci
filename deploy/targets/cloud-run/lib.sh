@@ -127,13 +127,14 @@ sha_vars() {
 }
 
 # Dry-run fixtures: an old revision serves 100% (as after a revert) and the
-# newest revision is a tagged candidate at 0%.
+# newest revision is a tagged candidate at 0%. Tests can set
+# DRY_RUN_SERVING_REVISION to make another revision the serving one.
 fixture_service() {
   local tag="${1:-c0000000}"
   cat <<EOF
 {"status": {"url": "https://${SERVICE}-dryrun.a.run.app",
   "traffic": [
-    {"revisionName": "${SERVICE}-00002-aaa", "percent": 100},
+    {"revisionName": "${DRY_RUN_SERVING_REVISION:-${SERVICE}-00002-aaa}", "percent": 100},
     {"revisionName": "${SERVICE}-00009-aaa", "percent": 0, "tag": "${tag}",
      "url": "https://${tag}---${SERVICE}-dryrun.a.run.app"}
   ]}}
