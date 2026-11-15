@@ -102,6 +102,16 @@ has "bootstrap: enables billingbudgets API" "billingbudgets.googleapis.com"
 has "bootstrap: creates registry" "gcloud artifacts repositories create app"
 has "bootstrap: keep-5 cleanup policy" '"keepCount": 5'
 has "bootstrap: untagged 7d delete policy" '"olderThan": "7d"'
+has "bootstrap: tagged 30d delete policy" '{"tagState": "TAGGED", "olderThan": "30d"}'
+has "bootstrap: deployed images are kept" '"tagPrefixes": ["dev", "production"]'
+policy_json="$(sed -n 's/^DRY-RUN: cleanup policy: //p' <<<"$err")"
+if jq -e '(.[] | select(.name == "keep-deployed") | .action.type == "Keep" and .condition.tagState == "TAGGED" and .condition.tagPrefixes == ["dev", "production"])
+  and (.[] | select(.name == "delete-tagged-30d") | .action.type == "Delete" and .condition.olderThan == "30d")
+  and ([.[] | select(.action.type == "Keep")] | length == 2)' >/dev/null 2>&1 <<<"$policy_json"; then
+  pass "bootstrap: policy JSON parses with the keep-deployed and 30-day rules"
+else
+  fail "bootstrap: policy JSON (got: $policy_json)"
+fi
 has "bootstrap: OIDC issuer" "--issuer-uri https://token.actions.githubusercontent.com"
 has "bootstrap: attribute-condition pins the repo and main" "--attribute-condition assertion.repository==\\'acme/hello\\'\\ \\&\\&\\ assertion.ref==\\'refs/heads/main\\'"
 has "bootstrap: maps the ref claim" "attribute.ref=assertion.ref"
@@ -165,9 +175,47 @@ dr cloud-run promote production "$sha"
 has "promote: resolves the tagged revision" "--to-revisions hello-prod-00009-aaa=100"
 lacks "promote: never --to-latest" "--to-latest"
 out_is "promote: stdout empty" ""
+has "promote: keeps the serving revision's image as production-prev" "tags add europe-west1-docker.pkg.dev/test-proj-42/app/hello@sha256:0000000000000000000000000000000000000000000000000000000000000000 europe-west1-docker.pkg.dev/test-proj-42/app/hello:production-prev"
+has "promote: reads the revert target from the serving revision" "revisions describe hello-prod-00002-aaa"
+has "promote: tags the new image production" "tags add europe-west1-docker.pkg.dev/test-proj-42/app/hello:$sha europe-west1-docker.pkg.dev/test-proj-42/app/hello:production"
+first_tag="$(grep -n 'tags add' <<<"$err" | head -n 1 | cut -d: -f1)"
+traffic="$(grep -n 'update-traffic' <<<"$err" | head -n 1 | cut -d: -f1)"
+if [[ -n "$first_tag" && -n "$traffic" && "$first_tag" -lt "$traffic" ]]; then pass "promote: tags before moving traffic"; else fail "promote: tag/traffic order ($first_tag, $traffic)"; fi
+# A retry of the same SHA: its candidate revision already serves 100%. The
+# revision reports a digest-pinned image, as gcloud does; the guard must
+# still hold (it compares revisions, not image references).
+export DRY_RUN_SERVING_REVISION=hello-prod-00009-aaa
+dr cloud-run promote production "$sha"
+lacks "promote retry: production-prev unchanged" ":production-prev"
+has "promote retry: still tags production" "tags add europe-west1-docker.pkg.dev/test-proj-42/app/hello:$sha europe-west1-docker.pkg.dev/test-proj-42/app/hello:production"
+unset DRY_RUN_SERVING_REVISION
+# Before the first deploy the service runs Google's sample image: nothing to keep.
+export DRY_RUN_REVISION_IMAGE="us-docker.pkg.dev/cloudrun/container/hello"
+dr cloud-run promote production "$sha"
+lacks "promote over the sample image: no production-prev" ":production-prev"
+has "promote over the sample image: says why" "doesn't run an app image"
+dr cloud-run revert dev hello-dev-00002-aaa
+lacks "revert to the sample image: not tagged" "tags add us-docker.pkg.dev"
+unset DRY_RUN_REVISION_IMAGE
 
 dr cloud-run revert dev hello-dev-00002-aaa
 has "revert: targets the revision" "--to-revisions hello-dev-00002-aaa=100"
+has "revert: re-tags the restored (digest-pinned) image as dev" "tags add europe-west1-docker.pkg.dev/test-proj-42/app/hello@sha256:0000000000000000000000000000000000000000000000000000000000000000 europe-west1-docker.pkg.dev/test-proj-42/app/hello:dev"
+# Real mode: if reading the restored revision fails after traffic moved, the
+# revert still succeeds (it only reports the missing tag).
+mkdir -p "$tmp/bin2"
+cat >"$tmp/bin2/gcloud" <<'EOF2'
+#!/usr/bin/env bash
+case "$*" in
+  "run revisions describe"*) exit 1 ;;
+esac
+exit 0
+EOF2
+chmod +x "$tmp/bin2/gcloud"
+rc=0
+out="$(PATH="$tmp/bin2:$PATH" DEPLOY_DRY_RUN=0 DEPLOY_TARGET=cloud-run "$deploy" revert dev hello-dev-00002-aaa 2>&1)" || rc=$?
+rc_is "revert: a failed image lookup after moving traffic doesn't fail the revert" 0
+if grep -q "not tagged" <<<"$out"; then pass "revert: says the image wasn't tagged"; else fail "revert: no message ($out)"; fi
 dr cloud-run revert dev 'x=1,y'
 rc_is "revert: bad revision exits 64" 64
 
