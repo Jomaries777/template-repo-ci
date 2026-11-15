@@ -48,7 +48,9 @@ case "$kind" in start | progress | blocked | done | failed) ;; *) die "usage: ag
 root="$(git rev-parse --show-toplevel)"
 branch="$(git -C "$root" rev-parse --abbrev-ref HEAD)"
 if [[ "$branch" == HEAD ]]; then
-  die "detached HEAD: check out the PR branch first"
+  # Dry runs only print commands, so CI's detached PR checkout can still test them.
+  [[ "${DRY_RUN:-0}" == 1 ]] || die "detached HEAD: check out the PR branch first"
+  branch="DRY-RUN-BRANCH"
 fi
 [[ -n "$repo" ]] || repo="$(repo_from_remote)"
 setup_bot_token "$repo"
