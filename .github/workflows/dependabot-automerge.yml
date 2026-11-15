@@ -1,0 +1,61 @@
+# Auto-merge for Dependabot patch updates (spec §4.7, C1).
+#
+# The bot App gives a real approval and enables auto-merge; GitHub merges only
+# after `ci-ok` passes under the main ruleset. No ruleset bypass is used.
+# Minor and major updates, security ones included, are left open for the
+# owner: the bot App can't read Dependabot alerts (see plan.md Deviations).
+# A Dependabot rebase dismisses the approval (the ruleset requires approval
+# of the last push); the `synchronize` run approves again.
+#
+# Needs: repo variable BOT_APP_ID, and the App private key as a *Dependabot*
+# secret BOT_APP_PRIVATE_KEY (Dependabot-triggered runs cannot read normal
+# Actions secrets).
+name: dependabot-automerge
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  automerge:
+    if: github.actor == 'dependabot[bot]' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mint bot App token
+        if: steps.meta.outputs.update-type == 'version-update:semver-patch'
+        id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+
+      - name: Approve and enable auto-merge (patch only)
+        if: steps.meta.outputs.update-type == 'version-update:semver-patch'
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          DEPS: ${{ steps.meta.outputs.dependency-names }}
+        run: |
+          gh pr review "$PR_URL" --approve --body "Patch update ($DEPS): approved by the agent bot. Merges automatically once ci-ok passes."
+          gh pr merge "$PR_URL" --auto --squash
+
+      - name: Leave for the owner
+        if: steps.meta.outputs.update-type != 'version-update:semver-patch'
+        env:
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+        run: echo "Not a patch update ($UPDATE_TYPE); the owner reviews this one."

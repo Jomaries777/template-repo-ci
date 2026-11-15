@@ -38,7 +38,7 @@ Requirements trace back to the intent: **FR** = functional requirement, **NFR** 
 | FR-4 | `scripts/agy-run.sh` runs an Antigravity `/swarm`, `/boost` or `/teamwork` job against an accepted `plan.md`. It streams progress to a GitHub check run and the PR. | Outcome §3, Decision 2 |
 | FR-5 | Claude Code ships subagents (`verifier`, `test-writer`, `researcher`, `simplifier`) and build-time hooks (format/lint, protected paths, secrets, test-first). | Outcome §4 |
 | FR-6 | Every PR runs deterministic checks in tiers. Claude Code Review runs only after all of them pass, and is skipped for docs-only, draft, Dependabot and failing PRs. | Outcome §5 |
-| FR-7 | Dependabot covers each stack's ecosystem plus `github-actions` and `docker`. Security and patch updates auto-merge after all checks pass. | Decision 6 |
+| FR-7 | Dependabot covers each stack's ecosystem plus `github-actions` and `docker`. Patch updates auto-merge after all checks pass; minor and major updates, security ones included, wait for the owner (amended 2026-11-15, see plan.md Deviations). | Decision 6 |
 | FR-8 | After merge, a path classifier routes the change: docs-only → no build or deploy; config-only → checks only; code → build once, deploy to dev, then production with owner approval. | Outcome §6 |
 | FR-9 | Every dev and production deploy goes: dark deploy → pre-traffic test → promote → live test → automatic revert on failure → report. | Decision 11 |
 | FR-10 | Scheduled deterministic jobs (CodeQL, a daily production smoke test, stale-branch cleanup, monthly SDLC metrics) open a GitHub issue when they find a breach. | Outcome §7 |
@@ -205,8 +205,8 @@ Why `claude-review` isn't required: review findings are advisory (playbook) and 
 - **Ecosystems**: the stack's (`npm` / `pip` / `gomod`), `github-actions`, `docker`.
 - **Schedule**: weekly, Monday. All non-security updates in one group per ecosystem, so there are fewer PRs and fewer CI runs.
 - **Auto-merge workflow**: triggered on `pull_request` from `dependabot[bot]`.
-  - It uses `dependabot/fetch-metadata`. If `update-type == semver-patch` or the update is a security update, the bot App approves the PR and enables `gh pr merge --auto --squash`.
-  - GitHub then merges once `ci-ok` passes. Minor and major updates stay open for the owner.
+  - It uses `dependabot/fetch-metadata`. If `update-type == semver-patch`, the bot App approves the PR and enables `gh pr merge --auto --squash`.
+  - GitHub then merges once `ci-ok` passes. Minor and major updates, security ones included, stay open for the owner: the bot App can't read Dependabot alerts, so it can't tell a security update apart (amended 2026-11-15, see plan.md Deviations).
 - **Secrets**: workflows triggered by Dependabot can't read normal Actions secrets, so the bot App key goes into **Dependabot secrets** as well.
 - ⚠ verify: community reports suggest that ruleset bypass behaves differently on the deferred auto-merge path. This design avoids bypass entirely: the bot gives a real approval and Dependabot is the author. `plan.md` must prove it with a real Dependabot PR (C1).
 
