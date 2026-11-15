@@ -32,6 +32,35 @@ has "--template marks repo as template" "$out" 'gh repo edit o/r --template'
 
 if "$root/scripts/gh-settings.sh" --bogus >/dev/null 2>&1; then nok "unknown flag errors"; else ok "unknown flag errors"; fi
 
+# Update path (idempotency): a stubbed gh returns an existing ruleset id, so
+# the script must PUT rulesets/<id> instead of POSTing a second ruleset.
+stub="$(mktemp -d)"
+trap 'rm -rf "$stub"' EXIT
+cat >"$stub/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >>"$GH_STUB_LOG"
+case "$*" in
+  "api repos/o/r/rulesets --jq"*) echo 4242 ;;
+esac
+exit 0
+STUB
+chmod +x "$stub/gh"
+export GH_STUB_LOG="$stub/gh.log"
+PATH="$stub:$PATH" "$root/scripts/gh-settings.sh" --repo o/r >/dev/null 2>&1
+log="$(cat "$GH_STUB_LOG")"
+has "re-run updates existing ruleset (PUT rulesets/4242)" "$log" 'api -X PUT repos/o/r/rulesets/4242 '
+if grep -q 'api -X POST repos/o/r/rulesets' <<<"$log"; then nok "re-run does not create a second ruleset"; else ok "re-run does not create a second ruleset"; fi
+
+: >"$GH_STUB_LOG"
+cat >"$stub/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >>"$GH_STUB_LOG"
+case "$*" in *default-setup*) exit 1 ;; esac
+exit 0
+STUB
+if PATH="$stub:$PATH" "$root/scripts/gh-settings.sh" --repo o/r >/dev/null 2>&1; then ok "default-setup failure is tolerated"; else nok "default-setup failure is tolerated"; fi
+has "ruleset still applied after default-setup failure" "$(cat "$GH_STUB_LOG")" 'api -X POST repos/o/r/rulesets '
+
 jq_true "ruleset: targets default branch" '.target == "branch" and .conditions.ref_name.include == ["~DEFAULT_BRANCH"]'
 jq_true "ruleset: active" '.enforcement == "active"'
 jq_true "ruleset: admin bypass is PRs-only (C4)" '.bypass_actors == [{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"pull_request"}]'

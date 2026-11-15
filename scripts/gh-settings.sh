@@ -15,7 +15,7 @@ while [ $# -gt 0 ]; do
     --repo) repo="$2"; shift 2 ;;
     --template) template=1; shift ;;
     --dry-run) dry_run=1; shift ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -56,7 +56,9 @@ run gh api -X PUT "repos/$repo/automated-security-fixes" --silent
 run gh api -X PUT "repos/$repo/private-vulnerability-reporting" --silent
 
 step "CodeQL: default setup off (advanced setup runs in pr.yml, C3)"
-run gh api -X PATCH "repos/$repo/code-scanning/default-setup" --silent -f state=not-configured
+# Can fail on repos where code scanning was never set up; that is already "off".
+run gh api -X PATCH "repos/$repo/code-scanning/default-setup" --silent -f state=not-configured ||
+  echo "    (default setup not changed; it is off unless someone enabled it)"
 
 step "Actions: read-only default token; workflows cannot approve PRs"
 run gh api -X PUT "repos/$repo/actions/permissions/workflow" --silent \

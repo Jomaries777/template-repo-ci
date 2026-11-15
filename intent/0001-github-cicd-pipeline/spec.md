@@ -197,7 +197,7 @@ Why `claude-review` isn't required: review findings are advisory (playbook) and 
 | Require linear history | on (squash merge only) |
 | Require a pull request | 1 approving review; dismiss stale approvals on push; require approval of the most recent push; require conversation resolution |
 | Required status checks | `ci-ok` only. "Require branches to be up to date" is **off**, which saves CI minutes; the merge queue isn't needed for a solo project. |
-| Code owners | `CODEOWNERS` → the owner; code-owner review required |
+| Code owners | `CODEOWNERS` → the owner; code-owner review **not** required, so the bot can approve Dependabot patch PRs (C1). See plan.md Deviations, 2026-11-15. |
 | Bypass list | **Repository admin, bypass mode "pull requests only"**. The owner can merge their *own* PRs without an approval but still can't push directly to `main` (C4). The bot App is **not** on the bypass list. |
 
 ### 4.7 Dependabot (`.github/dependabot.yml` + `dependabot-automerge.yml`)
