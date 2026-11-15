@@ -1,0 +1,44 @@
+# Keyless sign-in for the deploy target (spec §4.11, NFR-4). The caller job
+# needs `permissions: id-token: write`. Targets that need no cloud login
+# (none) skip every step, so switching between existing targets never edits a
+# workflow. Adding a new adapter that needs a cloud login adds its steps here
+# (plan.md Deviations), still not to deploy.yml.
+name: target-auth
+description: Sign in to the deploy target with GitHub OIDC
+
+inputs:
+  target:
+    description: Adapter name from scripts/deploy-config.sh
+    required: true
+  gcp-wif-provider:
+    description: vars.GCP_WIF_PROVIDER (cloud-run)
+    required: false
+    default: ""
+  gcp-deploy-sa:
+    description: vars.GCP_DEPLOY_SA (cloud-run)
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Check cloud-run variables
+      if: inputs.target == 'cloud-run'
+      shell: bash
+      env:
+        WIF: ${{ inputs.gcp-wif-provider }}
+        SA: ${{ inputs.gcp-deploy-sa }}
+      run: |
+        if [[ -z "$WIF" || -z "$SA" ]]; then
+          echo "::error title=cloud-run auth::GCP_WIF_PROVIDER and GCP_DEPLOY_SA repo variables are missing; run scripts/deploy.sh bootstrap as the owner."
+          exit 1
+        fi
+    - name: Google Cloud (Workload Identity Federation)
+      if: inputs.target == 'cloud-run'
+      uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+      with:
+        workload_identity_provider: ${{ inputs.gcp-wif-provider }}
+        service_account: ${{ inputs.gcp-deploy-sa }}
+    - name: gcloud CLI
+      if: inputs.target == 'cloud-run'
+      uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
