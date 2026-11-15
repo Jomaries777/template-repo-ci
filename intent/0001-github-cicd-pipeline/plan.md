@@ -70,7 +70,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 3. `deploy.yml` + the `release` composite (dark deploy → pre-traffic test → promote → live test ×3 → auto-revert → report with `claude -p` triage). Depends on step 2.
 4. `bootstrap.sh` (STACK/TARGET, cleanup, secret prompts, README stub) and `doctor.sh` (FR-15). Depends on steps 1 and 2.
 5. `dependabot-automerge.yml` (bot approves patch PRs, C1; minor and major updates, security ones included, wait for the owner). Independent of the other steps.
-6. **E2E on a sandbox repo** `sandbox-node-cloudrun` (public, created from the template): prove criteria 1–8 for this slice, including a deliberately broken live smoke test → auto-revert in under 2 min, and a real Dependabot patch auto-merge.
+6. **E2E on a sandbox repo** `sandbox-node-cloudrun` (public, created from the template): prove criteria 1–8 for this slice, including a deliberately broken live smoke test → auto-revert in under 2 min, and a real Dependabot patch auto-merge. Owner setup on the Mac: [spikes/m2-step6-owner-setup.md](spikes/m2-step6-owner-setup.md); the rest runs from a cloud session.
 
 ### M3: Remaining stacks and adapters (PRs #9–#12, all four in parallel)
 - `stacks/python`, `stacks/go`
