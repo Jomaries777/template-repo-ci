@@ -82,6 +82,16 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 - `maintain.yml` (daily prod smoke, weekly CodeQL and branch cleanup, monthly `sdlc-metrics.sh` and token-age check) and `sdlc-metrics.sh`.
 - `README.md` "Start a new project" quick-start (FR-14). Then follow it word for word in a fresh clone and a new sandbox repo (criterion 12).
 
+## Progress
+
+| Milestone | Status | PRs |
+|---|---|---|
+| M0: plan, owner setup, spikes | ✅ Done | Jomaries777/template-repo-ci#2 (spike, closed), Jomaries777/template-repo-ci#3 |
+| M1: template core | ✅ Done. The ruleset and repo settings are applied with `scripts/gh-settings.sh --template`, and the repo is a template | Jomaries777/template-repo-ci#4 (CI), Jomaries777/template-repo-ci#5 (agent config), Jomaries777/template-repo-ci#6 (agy bridge), Jomaries777/template-repo-ci#7 (settings and ruleset) |
+| M2: Node + Cloud Run slice | Next | — |
+| M3: remaining stacks and adapters | Not started | — |
+| M4: maintain, metrics, docs | Not started | — |
+
 ## Deviations
 
 | Date | Change | Why |
