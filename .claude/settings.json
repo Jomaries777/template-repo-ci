@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push origin main)",
+      "Bash(git push * main)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(scripts/deploy.sh promote*)",
+      "Bash(scripts/deploy.sh revert*)",
+      "Bash(gcloud run services update-traffic*)",
+      "Bash(wrangler versions deploy*)",
+      "Bash(wrangler rollback*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/protect-paths.sh" },
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/no-secrets.sh" },
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/test-first.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/post-edit.sh" }
+        ]
+      }
+    ]
+  }
+}
