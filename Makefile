@@ -14,7 +14,7 @@ MARKDOWNLINT := npx --yes markdownlint-cli2@0.24.0
 SHFMT_FLAGS := -i 2 -ci
 
 # Shell files: tracked *.sh plus extensionless files under scripts/hooks/.
-SH_FILES = $$( { git ls-files -- '*.sh'; git ls-files -- 'scripts/hooks/*' | grep -v '/[^/]*\.[^/]*$$' || true; } | sort -u )
+SH_FILES = $$( { git ls-files -- '*.sh'; git ls-files -- 'scripts/hooks/*' 'deploy/targets/*/*' | grep -v '/[^/]*\.[^/]*$$' || true; } | sort -u )
 
 .PHONY: help lint fmt test typecheck build acceptance smoke
 
