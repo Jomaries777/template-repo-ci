@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** by the product owner on 2026-11-15. Next: Stage 2, Design (`spec.md`) |
+| Status | **Accepted** by the product owner on 2026-11-15. **Amendment 1 (pluggable deploy targets) is waiting for acceptance.** Next: Stage 2, Design (`spec.md`) |
 | Product owner | Repo owner (sole human: product owner, engineer and release manager) |
 | Created | 2026-11-15 |
 | SDLC stage | Stage 1, Plan: "Capture as intent.md" |
@@ -104,7 +104,9 @@ When a push lands on `main`, a deterministic path classifier (no AI) picks one o
 |---|---|---|
 | **Docs only** | `**/*.md`, `docs/**`, `intent/**`, `LICENSE`, issue/PR templates | **No build, no deploy.** At most, rebuild a static docs site if the project has one. |
 | CI / repo config only | `.github/**`, `.claude/**`, lint configs | Re-run checks. No deploy. |
-| App code, dependencies, infra | everything else | Build the container image once → deploy to the **dev Cloud Run service** automatically → **production Cloud Run service only after the owner approves** (GitHub `production` Environment, owner as required reviewer) |
+| App code, dependencies, infra | everything else | Build the artifact once → deploy to the **dev** environment of the project's deploy target automatically → **production only after the owner approves** (GitHub `production` Environment, owner as required reviewer) |
+
+**The deploy target is chosen per project** (Amendment 1). Each project picks the target that fits its needs through a pluggable deploy adapter. **Google Cloud Run is the default**, and the steps below use Cloud Run terms. Every target must follow the same dark deploy → test → promote → live test → auto-revert sequence and stay at $0 when idle. Other targets (e.g. Cloudflare Workers, GitHub Pages, or none for libraries) are designed in `spec.md`.
 
 - The agent prepares the release up to the production gate and does nothing past it.
 - AI is used after merge **only if a deploy fails**. Then `claude -p` runs a read-only triage and posts a summary to the owner.
@@ -121,7 +123,7 @@ When a push lands on `main`, a deterministic path classifier (no AI) picks one o
 
 ### 7. Maintain
 
-- **Scheduled deterministic jobs**: Dependabot, a weekly CodeQL scan, stale-branch cleanup, old Cloud Run revision and image cleanup, and a GCP cost/budget check.
+- **Scheduled deterministic jobs**: Dependabot, a weekly CodeQL scan, stale-branch cleanup, cleanup of old versions and artifacts on the deploy target, and a cost/budget check.
 - When a job crosses a threshold, it opens an issue or a draft `intent.md`, which restarts the loop. **AI is called only when there is a real finding to diagnose.** The owner decides whether to fix, schedule or dismiss it.
 
 ## Affected users and systems
@@ -138,7 +140,7 @@ When a push lands on `main`, a deterministic path classifier (no AI) picks one o
 - **GitHub**: public template repository, rulesets, Actions, Dependabot, code security features, Environments, and a GitHub App as the agents' bot identity.
 - **Local machine** (macOS): Antigravity CLI and Claude Code, git worktrees.
 - **Anthropic**: the Claude Pro subscription covers interactive use *and* CI review. **Google**: Gemini quota for Antigravity.
-- **Deploy target**: **Google Cloud Run** (dev + production services) and Artifact Registry for images.
+- **Deploy target**: **chosen per project** through a pluggable adapter. The default is **Google Cloud Run** (dev + production services, Artifact Registry for images).
 
 ## Constraints
 
@@ -163,7 +165,7 @@ When a push lands on `main`, a deterministic path classifier (no AI) picks one o
 ### Optimising cost
 1. **Repos are public by default.** On public repos, CodeQL, secret scanning, push protection, dependency review and Environment reviewers are free, and so are standard Actions minutes. A repo that must be private switches to free open-source equivalents (e.g. gitleaks, Semgrep CE, osv-scanner, Trivy). Plan details must be verified in `spec.md`.
 2. **Use few Actions minutes.** Use Linux runners only, set a `timeout-minutes` on every job, cache dependencies, filter by path, and cancel superseded runs.
-3. **Scale-to-zero infra.** Cloud Run services run with `min-instances=0` and stay within the free tier wherever possible. No per-PR environments: acceptance tests run in CI containers. Artifact Registry deletes old images automatically. Set a GCP budget alert on the project.
+3. **Scale-to-zero infra on every target.** Each deploy target must declare how it costs $0 when idle. For the Cloud Run default, services run with `min-instances=0` and stay within the free tier wherever possible. No per-PR environments: acceptance tests run in CI containers. Artifact Registry deletes old images automatically. Set a GCP budget alert on the project.
 4. **Watch the Pro usage limit.** CI review shares the Claude Pro limit with interactive sessions. The skip rules (docs-only, draft, failing checks) and `concurrency` cancellation exist to protect it.
 5. **Docs-only merges never build or deploy.**
 
@@ -176,7 +178,7 @@ When a push lands on `main`, a deterministic path classifier (no AI) picks one o
 
 | # | Question | Decision |
 |---|---|---|
-| 1 | Deploy target ("deploy to claude" read as "cloud") | **Google Cloud Run**, scale to zero |
+| 1 | Deploy target ("deploy to claude" read as "cloud") | **Pluggable per project. Google Cloud Run is the default**, scale to zero (Amendment 1, 2026-11-15) |
 | 2 | Antigravity → Claude Code progress channel | **GitHub draft PR + check runs / PR comments** |
 | 3 | Public or private by default | **Public**: free GitHub security features and Actions minutes |
 | 4 | Billing for CI Claude Code Review | **Claude Pro subscription** via `CLAUDE_CODE_OAUTH_TOKEN` |
