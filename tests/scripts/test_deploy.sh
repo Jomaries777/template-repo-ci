@@ -85,9 +85,11 @@ has "bootstrap: creates registry" "gcloud artifacts repositories create app"
 has "bootstrap: keep-5 cleanup policy" '"keepCount": 5'
 has "bootstrap: untagged 7d delete policy" '"olderThan": "7d"'
 has "bootstrap: OIDC issuer" "--issuer-uri https://token.actions.githubusercontent.com"
-has "bootstrap: attribute-condition pins the repo" "--attribute-condition assertion.repository==\\'acme/hello\\'"
+has "bootstrap: attribute-condition pins the repo and main" "--attribute-condition assertion.repository==\\'acme/hello\\'\\ \\&\\&\\ assertion.ref==\\'refs/heads/main\\'"
+has "bootstrap: maps the ref claim" "attribute.ref=assertion.ref"
 has "bootstrap: deploy SA is run.developer" "--role roles/run.developer"
-has "bootstrap: deploy SA is registry writer" "--role roles/artifactregistry.writer"
+has "bootstrap: registry writer is scoped to the app repository" "artifacts repositories add-iam-policy-binding app --project test-proj-42 --location europe-west1 --member serviceAccount:deployer@test-proj-42.iam.gserviceaccount.com --role roles/artifactregistry.writer"
+lacks "bootstrap: no project-wide registry role" "add-iam-policy-binding test-proj-42 --member serviceAccount:deployer@test-proj-42.iam.gserviceaccount.com --role roles/artifactregistry.writer"
 has "bootstrap: serviceAccountUser on runtime SA only" "add-iam-policy-binding runtime@test-proj-42.iam.gserviceaccount.com --project test-proj-42 --member serviceAccount:deployer@test-proj-42.iam.gserviceaccount.com --role roles/iam.serviceAccountUser"
 has "bootstrap: WIF user bound to the repo principalSet" "attribute.repository/acme/hello --role roles/iam.workloadIdentityUser"
 has "bootstrap: budget amount" "--budget-amount 10USD"

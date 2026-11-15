@@ -13,6 +13,7 @@ usage: scripts/deploy.sh <verb> [args...]
 verbs: bootstrap publish current deploy-dark promote revert url discard cleanup
 env:   DEPLOY_TARGET (overrides deploy.yml target:)
        DEPLOY_DRY_RUN=1 (print commands instead of executing)
+       DEPLOY_CONFIG (config file, default: deploy.yml at the repo root)
 EOF
 }
 
