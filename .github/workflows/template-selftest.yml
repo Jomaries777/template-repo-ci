@@ -1,0 +1,53 @@
+# Template self-test (spec §4.1, acceptance criterion 10).
+#
+# Deviation from spec §4.1: GitHub only runs workflows under .github/workflows/,
+# so this lives here instead of .template/selftest.yml. It runs only in the
+# template repo itself, and bootstrap (M2) deletes it from new projects.
+name: template-selftest
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ACTIONLINT_VERSION: 1.7.12
+  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+
+jobs:
+  selftest:
+    if: github.repository == 'Jomaries777/template-repo-ci'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install actionlint
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          tgz="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -fsSL -o "$tgz" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  $tgz" | sha256sum -c -
+          tar -xzf "$tgz" -C "$RUNNER_TEMP/bin" actionlint
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+      - name: Ensure shellcheck
+        run: command -v shellcheck || { sudo apt-get update -q && sudo apt-get install -yq shellcheck; }
+      - name: make lint test
+        run: make lint test
+      - name: shellcheck every script
+        run: |
+          shopt -s globstar nullglob
+          files=(scripts/**/*.sh)
+          if [[ ${#files[@]} -gt 0 ]]; then shellcheck "${files[@]}"; fi
+      - name: actionlint every workflow
+        run: actionlint .github/workflows/*.yml

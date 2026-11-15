@@ -1,0 +1,17 @@
+# Dependabot (spec §4.7). Weekly on Monday, one grouped PR per ecosystem.
+# Security updates are not grouped here, so each one arrives on its own PR.
+# Stacks add their ecosystems (npm / pip / gomod, docker) at bootstrap.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      github-actions:
+        patterns:
+          - "*"

@@ -89,6 +89,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 | 2026-11-15 | `/teamwork` and `/swarm` run interactively and report through `agy-report.sh`. Headless is only for `/boost` and plain prompts. `--mode auto` is not used. | [Spike A](spikes/m0-spike-a-antigravity.md): headless `/teamwork` returned `SUCCESS` without changing the workspace, and `--mode auto` isn't available on this account |
 | 2026-11-15 | `scripts/bot-token.sh` was built in M0, not M1 Track C. The bot App has no `workflows` permission, so workflow changes go through the owner's PRs. | Spike C needed it. Keeping agents unable to change CI is a deliberate guardrail ([Spikes B/C](spikes/m0-spike-b-c-ci-identity.md)) |
 | 2026-11-15 | The Claude token is stored with `pbpaste \| tr -d '[:space:]' \| gh secret set …` | Spike B: the wrapped token was truncated, causing a 401 |
+| 2026-11-15 | The template self-test is `.github/workflows/template-selftest.yml`, not `.template/selftest.yml` (spec §4.1). It is guarded by `if: github.repository == 'Jomaries777/template-repo-ci'`, and bootstrap (M2) deletes it. | GitHub only runs workflows from `.github/workflows/`, so a file under `.template/` would never run |
 
 ## Risks
 
