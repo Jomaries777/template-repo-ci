@@ -88,7 +88,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 |---|---|---|
 | M0: plan, owner setup, spikes | ✅ Done | Jomaries777/template-repo-ci#2 (spike, closed), Jomaries777/template-repo-ci#3 |
 | M1: template core | ✅ Done. The ruleset and repo settings are applied with `scripts/gh-settings.sh --template`, and the repo is a template | Jomaries777/template-repo-ci#4 (CI), Jomaries777/template-repo-ci#5 (agent config), Jomaries777/template-repo-ci#6 (agy bridge), Jomaries777/template-repo-ci#7 (settings and ruleset) |
-| M2: Node + Cloud Run slice | Next | — |
+| M2: Node + Cloud Run slice | In progress (cloud session, owner PRs): step 1 #9, step 2 #10 | Jomaries777/template-repo-ci#9, Jomaries777/template-repo-ci#10 |
 | M3: remaining stacks and adapters | Not started | — |
 | M4: maintain, metrics, docs | Not started | — |
 
@@ -105,7 +105,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 | 2026-11-15 | The `agy` verification gate runs `make lint test` with `Makefile` and `tests/scripts/` from `origin/main` under `env -i` (no tokens), but still as the owner's user and outside a sandbox. Agent-added tests under `tests/scripts/` are not run by the gate; that path is protected, so the owner reviews it. | Claude Code Review on #6. A container or sandbox for the gate is deferred to M2, once the Node stack shows what lint and test need |
 | 2026-11-15 | The `main` ruleset doesn't require code-owner review (`require_code_owner_review: false`). It still needs 1 approval, last-push approval and resolved threads. | CODEOWNERS is `* @Jomaries777`, and the bot can't be a code owner, so code-owner review would block the bot's approval of Dependabot patch PRs (C1). The owner's own PRs merge through the PRs-only bypass (C4). |
 | 2026-11-15 | The required `ci-ok` check is bound to the GitHub Actions app (`integration_id: 15368`). | A check run named `ci-ok` posted by the bot App, which has `checks: write`, can't satisfy the rule. Only the real workflow job can. |
-| 2026-11-15 | M2 step 1 (`stacks/node/`) was finished by Claude Code in a cloud session as an owner PR, not by an Antigravity run. Antigravity's partial `/boost` output was kept; Claude Code added `vitest.config.ts` so Vitest stops loading the Playwright specs. A real Antigravity re-run is deferred. | The cloud session has no Antigravity and no bot key. `make acceptance` was run against an image built with the session's proxy CA added to a copy of the Dockerfile; the committed Dockerfile is unchanged |
+| 2026-11-15 | M2 step 1 (`stacks/node/`) was finished by Claude Code in a cloud session as an owner PR, not by an Antigravity run. Antigravity's partial `/boost` output was kept; Claude Code added `vitest.config.ts` so Vitest stops loading the Playwright specs. A real Antigravity re-run is deferred. | The cloud session has no Antigravity and no bot key. `make acceptance` was run against an image built with the session's proxy CA added to a copy of the Dockerfile; the committed Dockerfile is unchanged. CI does not exercise `stacks/node` until bootstrap (step 4) copies it to the root; the as-is `make build acceptance` is proven on the owner's machine or in step 6 |
 
 ## Risks
 
