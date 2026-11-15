@@ -1,0 +1,36 @@
+# The release sequence for one environment (spec §4.10, FR-9): dark deploy,
+# pre-traffic test, promote, live test, automatic revert, cleanup. All logic is
+# in scripts/release.sh (tested by tests/scripts/test_release.sh); no AI.
+# The caller signs in first (.github/actions/target-auth).
+name: release
+description: Release one commit to one environment with automatic revert
+
+inputs:
+  environment:
+    description: dev or production
+    required: true
+  sha:
+    description: Commit SHA to release
+    required: true
+  dark-deploy:
+    description: "true if the adapter supports dark deploys (target.yml)"
+    required: true
+  live-checks:
+    description: Number of live checks after promote
+    required: true
+  interval-seconds:
+    description: Seconds between live checks
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Release
+      shell: bash
+      env:
+        RELEASE_ENV: ${{ inputs.environment }}
+        RELEASE_SHA: ${{ inputs.sha }}
+        RELEASE_DARK_DEPLOY: ${{ inputs.dark-deploy }}
+        RELEASE_LIVE_CHECKS: ${{ inputs.live-checks }}
+        RELEASE_INTERVAL: ${{ inputs.interval-seconds }}
+      run: scripts/release.sh "$RELEASE_ENV" "$RELEASE_SHA"

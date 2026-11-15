@@ -24,8 +24,8 @@ Facts found during plan mode (they reduce C8 risk):
 | Loop artifacts | `intent/0001-…/plan.md` (this file), status lines in `intent.md` / `spec.md`, `intent/0001-…/spikes/*.md` and fixtures |
 | Agent config | `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, `.claude/settings.json`, `.claude/{agents,commands,skills}/**`, `scripts/hooks/*.sh` |
 | Repo scaffolding | `.gitignore`, `.github/{CODEOWNERS,pull_request_template.md,dependabot.yml,rulesets/main.json}`, `Makefile`, `README.md` |
-| CI | `.github/workflows/{pr,claude,deploy,dependabot-automerge,maintain}.yml`, `.github/actions/{classify,release}/action.yml`, `.template/selftest.yml` |
-| Scripts | `scripts/{classify,gh-settings,bootstrap,doctor,bot-token,agy-run,agy-events,agy-report,deploy,sdlc-metrics}.sh`, `scripts/bot-app-manifest.json`, `tests/scripts/**` (plain-bash tests with fixtures) |
+| CI | `.github/workflows/{pr,claude,deploy,dependabot-automerge,maintain}.yml`, `.github/actions/{release,target-auth}/action.yml`, `.template/selftest.yml` |
+| Scripts | `scripts/{classify,gh-settings,bootstrap,doctor,bot-token,agy-run,agy-events,agy-report,deploy,deploy-config,release,sdlc-metrics}.sh`, `scripts/bot-app-manifest.json`, `tests/scripts/**` (plain-bash tests with fixtures) |
 | Stacks | `stacks/{node,python,go}/**`: hello service with `/healthz`, lint/type/test configs, Dockerfile, acceptance suite (service containers), `prod-safe` smoke tag |
 | Deploy adapters | `deploy.yml` (written by bootstrap), `deploy/targets/{cloud-run,none,github-pages,cloudflare-workers}/{target.yml,lib.sh,bootstrap,publish,current,deploy-dark,promote,revert,url,discard,cleanup}` |
 
@@ -88,7 +88,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 |---|---|---|
 | M0: plan, owner setup, spikes | ✅ Done | Jomaries777/template-repo-ci#2 (spike, closed), Jomaries777/template-repo-ci#3 |
 | M1: template core | ✅ Done. The ruleset and repo settings are applied with `scripts/gh-settings.sh --template`, and the repo is a template | Jomaries777/template-repo-ci#4 (CI), Jomaries777/template-repo-ci#5 (agent config), Jomaries777/template-repo-ci#6 (agy bridge), Jomaries777/template-repo-ci#7 (settings and ruleset) |
-| M2: Node + Cloud Run slice | In progress (cloud session, owner PRs): step 1 merged (#9), step 2 (#10) | Jomaries777/template-repo-ci#9, Jomaries777/template-repo-ci#10 |
+| M2: Node + Cloud Run slice | In progress (cloud session, owner PRs): steps 1 (#9) and 2 (#10) merged; step 3 in review | Jomaries777/template-repo-ci#9, Jomaries777/template-repo-ci#10 |
 | M3: remaining stacks and adapters | Not started | — |
 | M4: maintain, metrics, docs | Not started | — |
 
@@ -112,6 +112,11 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 | 2026-11-15 | `deploy.sh discard <env> <sha>` takes the SHA (spec §4.10 step 3 shows `discard <env>`). `cleanup` also removes tags from revisions at 0% traffic, so step 3's `deploy.yml` must serialize deploys per environment (a concurrency group without `cancel-in-progress`). | The candidate tag is derived from the SHA. A tagged revision can't be deleted, and an overlapping run's candidate would lose its tag |
 | 2026-11-15 | The template ships a root `deploy.yml` (`target: none`); bootstrap rewrites it with the chosen `TARGET` (plan "Files that change" says bootstrap writes it). `deploy-dark` uses `--update-env-vars`, not `--set-env-vars`. | The template repo itself deploys nothing, and the dispatcher needs a config to read. `--set-env-vars` would wipe env vars set outside the deploy (Claude review on #10) |
 | 2026-11-15 | The Cloud Run WIF provider admits only `refs/heads/main` of this repository (`assertion.ref`), not every ref. The deploy SA's `artifactregistry.writer` is bound on the `app` repository, not the project. | Least privilege (Claude review on #10): PR branches can't impersonate the deploy SA, and the SA can't write other registries |
+| 2026-11-15 | M2 step 3 (`deploy.yml`, the `release` composite) was built by Claude Code in a cloud session as an owner PR, with the owner's `ALLOW_WORKFLOW_EDIT=1` override. The release sequence lives in `scripts/release.sh` and the `deploy.yml` parsing in `scripts/deploy-config.sh`, each with a test; the composite only calls the script. | Deterministic logic belongs in scripts with tests, not in workflow YAML (NFR-5). The bot can't push workflows |
+| 2026-11-15 | A second composite, `.github/actions/target-auth`, does the target's OIDC sign-in (cloud-run: `google-github-actions/auth` + `setup-gcloud`; `none`: nothing). `deploy.yml` passes adapter variables (`GCP_PROJECT_ID`, `GCP_REGION`, `APP_NAME`) as workflow env. A new adapter that needs sign-in adds a branch to `target-auth`, not to `deploy.yml`. | Composite actions can't read `vars`, and the deploy, publish and release jobs all need the same sign-in |
+| 2026-11-15 | `production` refuses to deploy unless its environment has a required reviewer. Environments and their rules are created by bootstrap (step 4), not by `scripts/gh-settings.sh`. | GitHub creates a missing environment on first use with no protection, which would skip the owner's approval |
+| 2026-11-15 | With `dark_deploy: false`, `release.sh` skips steps 2–3 and `promote` is the deploy. The local pre-traffic smoke test for such targets (spec §4.10, C9) comes with the `github-pages` adapter in M3. Classify treats a commit with no parent as `code`. | No M2 adapter lacks dark deploys. A new repo's first commit has no `HEAD~1`, and `deploy.yml` ships as `target: none`, so nothing deploys |
+| 2026-11-15 | `report` triage uses `anthropics/claude-code-action` (as `pr.yml` does) rather than a raw `claude -p`, with the same limits: Sonnet, `--max-turns 5`, read-only tools plus `gh issue comment`. The issue links the run and lists job results instead of embedding test output; the triage comment summarises the failed log. If there is no previous revision, `release.sh` fails without reverting. | One pinned, Dependabot-updated way to run Claude in CI, with the Pro-quota OAuth token and no API key. Logs stay in Actions instead of being copied into a public issue |
 
 ## Risks
 
