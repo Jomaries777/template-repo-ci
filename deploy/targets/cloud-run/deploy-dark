@@ -12,7 +12,7 @@ sha_vars "${2:-}"
 run gcloud run deploy "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
   --image "$IMAGE" --no-traffic --tag "$TAG" \
   --min-instances 0 --max-instances 2 --cpu 1 --memory 512Mi \
-  --service-account "$RUNTIME_SA" --set-env-vars "APP_VERSION=$SHA" --quiet
+  --service-account "$RUNTIME_SA" --update-env-vars "APP_VERSION=$SHA" --quiet
 
 url="$(describe_service "$TAG" | jq -r --arg t "$TAG" '.status.traffic[] | select(.tag == $t) | .url' | head -n 1)"
 [[ -n "$url" ]] || die "no URL for tag $TAG on $SERVICE"

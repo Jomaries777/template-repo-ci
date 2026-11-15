@@ -95,6 +95,8 @@ has "bootstrap: budget thresholds" "--threshold-rule percent=0.1 --threshold-rul
 has "bootstrap: services start public and idle" "--image us-docker.pkg.dev/cloudrun/container/hello --min-instances 0 --max-instances 2"
 has "bootstrap: sets GCP_WIF_PROVIDER" "gh variable set GCP_WIF_PROVIDER"
 has "bootstrap: sets APP_NAME" "gh variable set APP_NAME --repo acme/hello --body hello"
+gcloud_lines="$(grep -c 'DRY-RUN: gcloud' <<<"$err" || true)"
+if [[ "$gcloud_lines" -ge 20 ]]; then pass "bootstrap: prints its gcloud calls ($gcloud_lines)"; else fail "bootstrap: only $gcloud_lines gcloud calls"; fi
 if grep -F 'gcloud' <<<"$err" | grep -v -- '--project test-proj-42' | grep -qvE 'billing budgets|projects (describe|add-iam-policy-binding) test-proj-42'; then
   fail "bootstrap: every gcloud call names the project"
 else
@@ -116,10 +118,11 @@ out_is "current: prints the 100% revision" "hello-dev-00002-aaa"
 dr cloud-run deploy-dark dev "$sha"
 rc_is "deploy-dark: exits 0" 0
 for flag in "--no-traffic" "--tag c1234567" "--max-instances 2" "--min-instances 0" \
-  "--service-account runtime@test-proj-42.iam.gserviceaccount.com" "--set-env-vars APP_VERSION=$sha" \
+  "--service-account runtime@test-proj-42.iam.gserviceaccount.com" "--update-env-vars APP_VERSION=$sha" \
   "--region europe-west1" "gcloud run deploy hello-dev"; do
   has "deploy-dark: $flag" "$flag"
 done
+lacks "deploy-dark: never replaces all env vars" "--set-env-vars"
 out_is "deploy-dark: stdout is only the tag URL" "https://c1234567---hello-dev-dryrun.a.run.app"
 
 dr cloud-run deploy-dark production "$sha"

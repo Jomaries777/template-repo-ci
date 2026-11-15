@@ -11,6 +11,13 @@ init_common
 require_vars BILLING_ACCOUNT
 [[ "$BILLING_ACCOUNT" =~ ^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$ ]] || die "invalid BILLING_ACCOUNT"
 
+# Fail before creating anything if either login is missing.
+if [[ "$DRY_RUN" != "1" ]]; then
+  gh auth status >/dev/null 2>&1 || die "gh is not logged in (run: gh auth login)"
+  [[ -n "$(gcloud auth list --filter status:ACTIVE --format 'value(account)' 2>/dev/null)" ]] ||
+    die "gcloud is not logged in (run: gcloud auth login)"
+fi
+
 repo="${GITHUB_REPOSITORY:-}"
 if [[ -z "$repo" ]]; then
   if [[ "$DRY_RUN" == "1" ]]; then

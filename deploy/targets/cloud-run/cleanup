@@ -4,6 +4,9 @@ set -euo pipefail
 source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 # cleanup <env>: remove tags from revisions that serve no traffic, then delete
 # revisions that serve no traffic, keeping the newest 5 (KEEP_REVISIONS).
+# Assumes deploys to one environment are serialized (deploy.yml uses a
+# per-environment concurrency group, without cancel-in-progress): a candidate
+# from an overlapping run would otherwise lose its tag here.
 init_common
 service_for "${1:-}"
 keep="${KEEP_REVISIONS:-5}"
