@@ -198,7 +198,9 @@ jobs:
           body="$(printf 'Deploy of %s failed.\n\n- Run: %s\n- Jobs: %s\n\nA failed live test was reverted automatically when a previous revision existed; see the job log. Rolling forward needs a new PR.\n' \
             "$GITHUB_SHA" "$RUN_URL" "$RESULTS")"
           url="$(gh issue create --title "Deploy failed: ${GITHUB_SHA:0:7}" --label deploy-failure --body "$body")"
-          echo "number=${url##*/}" >>"$GITHUB_OUTPUT"
+          number="${url##*/}"
+          [[ "$number" =~ ^[0-9]+$ ]] || { echo "::error::unexpected issue URL: $url"; exit 1; }
+          echo "number=$number" >>"$GITHUB_OUTPUT"
       # Advisory, read-only triage (spec §4.10). Never decides anything.
       - name: Claude triage
         if: steps.issue.outputs.number != ''

@@ -132,8 +132,11 @@ if ((failed)); then
   fi
   if live_check "$url"; then
     log "revert confirmed: $prev is serving and healthy"
+    # Annotations let the report issue and triage tell the two outcomes apart.
+    echo "::error title=release $env_name::live test failed; reverted to $prev (revert confirmed)"
   else
     log "revert did not pass the live check; manual action needed"
+    echo "::error title=release $env_name::live test failed; reverted to $prev but the revert is NOT confirmed healthy: manual action needed"
   fi
   exit 1
 fi

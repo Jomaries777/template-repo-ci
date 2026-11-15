@@ -27,6 +27,7 @@ echo "smoke $1" >>"$CALLS"
 n=$(($(cat "$COUNT" 2>/dev/null || echo 0) + 1)); echo "$n" >"$COUNT"
 [[ "$1" == "${SMOKE_FAIL_URL:-}" ]] && exit 1
 [[ -n "${SMOKE_FAIL_AFTER:-}" && "$n" -gt "$SMOKE_FAIL_AFTER" ]] && exit 1
+[[ -n "${SMOKE_FAIL_NTH:-}" && "$n" == "$SMOKE_FAIL_NTH" ]] && exit 1
 exit 0
 EOF
 mkdir -p "$tmp/bin"
@@ -51,7 +52,7 @@ run() {
   export CALLS="$tmp/calls.$name" COUNT="$tmp/count.$name"
   : >"$CALLS"
   rc=0
-  env "$@" "$release" dev "$sha" 2>"$tmp/err.$name" || rc=$?
+  env "$@" "$release" dev "$sha" >"$tmp/out.$name" 2>"$tmp/err.$name" || rc=$?
   calls="$(cat "$CALLS")"
 }
 pass() { echo "ok - $1"; }
@@ -128,6 +129,11 @@ lacks "no previous revision: no cleanup" "cleanup"
 run recheck SMOKE_FAIL_AFTER=2
 if grep -q "revert did not pass the live check" "$tmp/err.recheck"; then pass "failed re-check after revert: says manual action is needed"; else fail "failed re-check: no message"; fi
 rc_is "failed re-check after revert: exits 1" 1
+if grep -q "^::error.*NOT confirmed" "$tmp/out.recheck"; then pass "failed re-check: annotates the revert as not confirmed"; else fail "failed re-check: no annotation"; fi
+# Only the 2nd live check (3rd smoke call) fails; the re-check after revert passes.
+run confirm SMOKE_FAIL_NTH=3
+rc_is "confirmed revert: still exits 1" 1
+if grep -q "^::error.*(revert confirmed)" "$tmp/out.confirm"; then pass "confirmed revert: annotated as confirmed"; else fail "confirmed revert: no annotation"; fi
 
 # --- revert itself fails
 run revfail SMOKE_FAIL_AFTER=2 REVERT_FAIL=1

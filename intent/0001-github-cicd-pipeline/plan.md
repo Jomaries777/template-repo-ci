@@ -126,6 +126,8 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 | `/swarm` quota is heavy | Default to `/boost` or `/teamwork` for small and medium tasks. Use `/swarm` only for wide parallel work. `agy-run.sh` prints the mode's quota warning. |
 | Pro limit consumed by CI reviews while building | Quota guards (max 3 per PR, skip docs/draft); `/sweep` is used sparingly. |
 | Setup-token 401s (user reports) | Spike B proves the token first. Regenerate on failure. Never fall back to the API. |
+| A production approval left open holds the repo-wide `deploy` group, so later merges wait (and only the newest pending run survives) | Intended: one deploy at a time keeps `cleanup` safe, and classify deploys everything since the last production deploy, so nothing is lost. Approve or reject promptly; M4's `maintain.yml` can remind about stale approvals |
+| An auto-created `production` Environment has no reviewer, and the guard step only runs inside the production job, after dev deployed | Bootstrap creates the Environment with the rule before any deploy, and `doctor` checks it. If it's ever missing, the guard stops production and `report` opens an issue; dev is unaffected |
 | Ruleset locks the owner out | Applied last in M1, then tested with a docs PR. The PRs-only admin bypass is confirmed before relying on it. |
 | Dependabot approve path fails under the ruleset | Proved in M2 step 6 with a real PR. If it fails, revisit C1 with the owner. |
 | Sandbox GCP spend | $10 budget alert. Sandbox Cloud Run services scale to zero. The owner is asked before any sandbox repo or GCP resource is deleted. |

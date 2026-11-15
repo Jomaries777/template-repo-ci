@@ -21,6 +21,8 @@ repo="${GITHUB_REPOSITORY:-}"
 [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "deploy-base: GITHUB_REPOSITORY is not set" >&2; exit 64; }
 
 # Newest first. A failure to read is an error: guessing could skip a deploy.
+# One page is enough: if the 30 newest all failed, nothing is printed and the
+# caller classifies as code, which deploys rather than skips.
 deployments="$(gh api "repos/$repo/deployments?environment=production&per_page=30")" ||
   { echo "deploy-base: cannot read deployments of $repo" >&2; exit 1; }
 
