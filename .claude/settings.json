@@ -1,23 +1,22 @@
 {
   "permissions": {
     "deny": [
-      "Bash(git push origin main)",
-      "Bash(git push * main)",
-      "Bash(git push --force*)",
-      "Bash(git push -f*)",
+      "Bash(git push*--force*)",
+      "Bash(git push*--force:*)",
+      "Bash(git push*-f *)",
+      "Bash(git push*-f)",
+      "Bash(git push*-f:*)",
+      "Bash(git push*main*)",
+      "Bash(git push*main:*)",
       "Bash(scripts/deploy.sh promote*)",
-      "Bash(scripts/deploy.sh revert*)",
-      "Bash(gcloud run services update-traffic*)",
-      "Bash(wrangler versions deploy*)",
-      "Bash(wrangler rollback*)",
-      "Bash(git push origin main:*)",
-      "Bash(git push origin HEAD:main:*)",
-      "Bash(git push --force:*)",
-      "Bash(git push -f:*)",
       "Bash(scripts/deploy.sh promote:*)",
+      "Bash(scripts/deploy.sh revert*)",
       "Bash(scripts/deploy.sh revert:*)",
+      "Bash(gcloud run services update-traffic*)",
       "Bash(gcloud run services update-traffic:*)",
+      "Bash(wrangler versions deploy*)",
       "Bash(wrangler versions deploy:*)",
+      "Bash(wrangler rollback*)",
       "Bash(wrangler rollback:*)"
     ]
   },
@@ -37,6 +36,15 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/test-first.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/no-secrets.sh"
           }
         ]
       }

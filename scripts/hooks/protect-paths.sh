@@ -18,6 +18,14 @@ case "/$path" in
     block "Rulesets are owner-managed config. Open an owner PR instead." ;;
 esac
 
+case "/$path" in
+  */.github/workflows/*)
+    # The bot App cannot push workflows anyway; fail early. The owner can
+    # set ALLOW_WORKFLOW_EDIT=1 in an interactive session they are watching.
+    [[ "${ALLOW_WORKFLOW_EDIT:-}" == "1" ]] ||
+      block "Workflow changes come from owner PRs (set ALLOW_WORKFLOW_EDIT=1 to override)." ;;
+esac
+
 case "$(basename "$path")" in
   package-lock.json | pnpm-lock.yaml | yarn.lock | poetry.lock | uv.lock | go.sum)
     block "Lockfiles change only through the package manager (npm/pnpm/yarn/poetry/uv/go)." ;;
