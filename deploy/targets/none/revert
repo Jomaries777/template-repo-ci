@@ -3,4 +3,5 @@ set -euo pipefail
 # shellcheck source=deploy/targets/none/lib.sh disable=SC1091
 source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 
-echo "none: nothing to revert"
+# stderr: stdout is reserved for results, and there are none.
+echo "none: nothing to revert" >&2

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloud-run/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# current <env>: print the revision that serves 100% of traffic.
+init_common
+service_for "${1:-}"
+
+rev="$(describe_service | jq -r '.status.traffic[] | select(.percent == 100) | .revisionName' | head -n 1)"
+[[ -n "$rev" ]] || die "no revision serves 100% of traffic on $SERVICE"
+printf '%s\n' "$rev"

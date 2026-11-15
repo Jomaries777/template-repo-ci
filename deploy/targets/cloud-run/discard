@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloud-run/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# discard <env> <sha>: remove the candidate tag so the dark revision has no URL.
+init_common
+service_for "${1:-}"
+sha_vars "${2:-}"
+
+run gcloud run services update-traffic "$SERVICE" --project "$GCP_PROJECT_ID" \
+  --region "$GCP_REGION" --remove-tags "$TAG" --quiet
