@@ -147,6 +147,19 @@ tag_deployed() {
   run gcloud artifacts docker tags add "$1" "${IMAGE_BASE}:${ENV_NAME}" --project "$GCP_PROJECT_ID" --quiet
 }
 
+# revision_image <revision>: the image a revision runs. The dry-run fixture is
+# digest-pinned, the form gcloud reports for a deployed revision; tests set
+# DRY_RUN_REVISION_IMAGE to try other cases.
+revision_image() {
+  query "${DRY_RUN_REVISION_IMAGE:-${IMAGE_BASE}@sha256:0000000000000000000000000000000000000000000000000000000000000000}" \
+    gcloud run revisions describe "$1" --project "$GCP_PROJECT_ID" \
+    --region "$GCP_REGION" --format 'value(spec.containers[0].image)'
+}
+
+# ours <image ref>: true if the image comes from this app's registry path
+# (not, e.g., the sample image bootstrap serves before the first deploy).
+ours() { [[ "$1" == "${IMAGE_BASE}"[:@]* ]]; }
+
 # describe_service [tag]: service JSON (real, or the dry-run fixture).
 describe_service() {
   query "$(fixture_service "${1:-}")" \

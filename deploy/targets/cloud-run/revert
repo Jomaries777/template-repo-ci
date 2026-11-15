@@ -2,7 +2,10 @@
 set -euo pipefail
 # shellcheck source=deploy/targets/cloud-run/lib.sh disable=SC1091
 source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
-# revert <env> <revision>: send 100% of traffic back to <revision>.
+# revert <env> <revision>: send 100% of traffic back to <revision>. release.sh
+# reverts only to the revision that served before its promote, whose image
+# promote kept as "<env>-prev"; an older revision's image may have been
+# cleaned up by the registry policy.
 init_common
 service_for "${1:-}"
 rev="${2:-}"
@@ -13,9 +16,8 @@ run gcloud run services update-traffic "$SERVICE" --project "$GCP_PROJECT_ID" \
 
 # The restored revision's image is serving again: keep it protected. Traffic
 # has already moved, so a tagging failure is reported but doesn't fail revert.
-image="$(query "${IMAGE_BASE}:0000000" gcloud run revisions describe "$rev" --project "$GCP_PROJECT_ID" \
-  --region "$GCP_REGION" --format 'value(spec.containers[0].image)')"
-if [[ "$image" == "${IMAGE_BASE}"[:@]* ]]; then
+image="$(revision_image "$rev")"
+if ours "$image"; then
   tag_deployed "$image" || echo "cloud-run: could not tag $image as $ENV_NAME" >&2
 else
   echo "cloud-run: $rev runs ${image:-<unknown>}, not from ${IMAGE_BASE}; not tagged" >&2

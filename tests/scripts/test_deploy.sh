@@ -90,8 +90,7 @@ has "bootstrap: keep-5 cleanup policy" '"keepCount": 5'
 has "bootstrap: untagged 7d delete policy" '"olderThan": "7d"'
 has "bootstrap: tagged 30d delete policy" '{"tagState": "TAGGED", "olderThan": "30d"}'
 has "bootstrap: deployed images are kept" '"tagPrefixes": ["dev", "production"]'
-keep_line="$(grep -o '"name": "keep-deployed"' <<<"$err" | head -n 1)"
-if [[ -n "$keep_line" ]]; then pass "bootstrap: keep-deployed rule present"; else fail "bootstrap: keep-deployed rule missing"; fi
+has "bootstrap: keep-deployed rule present" '"name": "keep-deployed"'
 has "bootstrap: OIDC issuer" "--issuer-uri https://token.actions.githubusercontent.com"
 has "bootstrap: attribute-condition pins the repo and main" "--attribute-condition assertion.repository==\\'acme/hello\\'\\ \\&\\&\\ assertion.ref==\\'refs/heads/main\\'"
 has "bootstrap: maps the ref claim" "attribute.ref=assertion.ref"
@@ -146,15 +145,29 @@ dr cloud-run promote production "$sha"
 has "promote: resolves the tagged revision" "--to-revisions hello-prod-00009-aaa=100"
 lacks "promote: never --to-latest" "--to-latest"
 out_is "promote: stdout empty" ""
-has "promote: keeps the serving image as production-prev" "tags add europe-west1-docker.pkg.dev/test-proj-42/app/hello:production europe-west1-docker.pkg.dev/test-proj-42/app/hello:production-prev"
+has "promote: keeps the serving revision's image as production-prev" "tags add europe-west1-docker.pkg.dev/test-proj-42/app/hello@sha256:0000000000000000000000000000000000000000000000000000000000000000 europe-west1-docker.pkg.dev/test-proj-42/app/hello:production-prev"
+has "promote: reads the revert target from the serving revision" "revisions describe hello-prod-00002-aaa"
 has "promote: tags the new image production" "tags add europe-west1-docker.pkg.dev/test-proj-42/app/hello:$sha europe-west1-docker.pkg.dev/test-proj-42/app/hello:production"
 first_tag="$(grep -n 'tags add' <<<"$err" | head -n 1 | cut -d: -f1)"
 traffic="$(grep -n 'update-traffic' <<<"$err" | head -n 1 | cut -d: -f1)"
 if [[ -n "$first_tag" && -n "$traffic" && "$first_tag" -lt "$traffic" ]]; then pass "promote: tags before moving traffic"; else fail "promote: tag/traffic order ($first_tag, $traffic)"; fi
+# A retry of the same SHA (already serving) must not overwrite production-prev.
+export DRY_RUN_REVISION_IMAGE="europe-west1-docker.pkg.dev/test-proj-42/app/hello:$sha"
+dr cloud-run promote production "$sha"
+lacks "promote retry: production-prev unchanged" ":production-prev"
+has "promote retry: still tags production" "tags add europe-west1-docker.pkg.dev/test-proj-42/app/hello:$sha europe-west1-docker.pkg.dev/test-proj-42/app/hello:production"
+# Before the first deploy the service runs Google's sample image: nothing to keep.
+export DRY_RUN_REVISION_IMAGE="us-docker.pkg.dev/cloudrun/container/hello"
+dr cloud-run promote production "$sha"
+lacks "promote over the sample image: no production-prev" ":production-prev"
+has "promote over the sample image: says why" "not an app image"
+dr cloud-run revert dev hello-dev-00002-aaa
+lacks "revert to the sample image: not tagged" "tags add us-docker.pkg.dev"
+unset DRY_RUN_REVISION_IMAGE
 
 dr cloud-run revert dev hello-dev-00002-aaa
 has "revert: targets the revision" "--to-revisions hello-dev-00002-aaa=100"
-has "revert: re-tags the restored image as dev" "tags add europe-west1-docker.pkg.dev/test-proj-42/app/hello:0000000 europe-west1-docker.pkg.dev/test-proj-42/app/hello:dev"
+has "revert: re-tags the restored (digest-pinned) image as dev" "tags add europe-west1-docker.pkg.dev/test-proj-42/app/hello@sha256:0000000000000000000000000000000000000000000000000000000000000000 europe-west1-docker.pkg.dev/test-proj-42/app/hello:dev"
 dr cloud-run revert dev 'x=1,y'
 rc_is "revert: bad revision exits 64" 64
 
