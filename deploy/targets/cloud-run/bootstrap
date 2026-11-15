@@ -50,6 +50,7 @@ fi
 policy="$(mktemp)"
 trap 'rm -f "$policy"' EXIT
 # Keep rules win over delete rules, so the 5 newest images always survive.
+# mostRecentVersions counts per image name; the repo holds one, $APP_NAME.
 # publish tags every image with its SHA, so tagged images also need an age
 # limit, or storage grows past the free tier.
 cat >"$policy" <<'JSON'
