@@ -88,6 +88,7 @@ has "bootstrap: enables billingbudgets API" "billingbudgets.googleapis.com"
 has "bootstrap: creates registry" "gcloud artifacts repositories create app"
 has "bootstrap: keep-5 cleanup policy" '"keepCount": 5'
 has "bootstrap: untagged 7d delete policy" '"olderThan": "7d"'
+has "bootstrap: tagged 30d delete policy" '{"tagState": "TAGGED", "olderThan": "30d"}'
 has "bootstrap: OIDC issuer" "--issuer-uri https://token.actions.githubusercontent.com"
 has "bootstrap: attribute-condition pins the repo and main" "--attribute-condition assertion.repository==\\'acme/hello\\'\\ \\&\\&\\ assertion.ref==\\'refs/heads/main\\'"
 has "bootstrap: maps the ref claim" "attribute.ref=assertion.ref"
