@@ -88,7 +88,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 |---|---|---|
 | M0: plan, owner setup, spikes | ✅ Done | Jomaries777/template-repo-ci#2 (spike, closed), Jomaries777/template-repo-ci#3 |
 | M1: template core | ✅ Done. The ruleset and repo settings are applied with `scripts/gh-settings.sh --template`, and the repo is a template | Jomaries777/template-repo-ci#4 (CI), Jomaries777/template-repo-ci#5 (agent config), Jomaries777/template-repo-ci#6 (agy bridge), Jomaries777/template-repo-ci#7 (settings and ruleset) |
-| M2: Node + Cloud Run slice | In progress (cloud session, owner PRs): steps 1 (#9) and 2 (#10) merged; step 5 in progress | Jomaries777/template-repo-ci#9, Jomaries777/template-repo-ci#10 |
+| M2: Node + Cloud Run slice | In progress (cloud session, owner PRs): steps 1 (#9) and 2 (#10) merged; step 5 in review | Jomaries777/template-repo-ci#9, Jomaries777/template-repo-ci#10 |
 | M3: remaining stacks and adapters | Not started | — |
 | M4: maintain, metrics, docs | Not started | — |
 

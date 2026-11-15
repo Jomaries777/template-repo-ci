@@ -2,6 +2,10 @@
 # Feeds sample hook JSON to each hook script and asserts exit codes.
 set -euo pipefail
 
+# Overrides from the caller's environment (e.g. a session that allows
+# workflow edits) must not leak in; cases that need one pass it explicitly.
+unset ALLOW_WORKFLOW_EDIT ALLOW_TEST_EDIT
+
 root="$(git rev-parse --show-toplevel)"
 hooks="$root/scripts/hooks"
 fail=0

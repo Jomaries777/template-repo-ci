@@ -2,7 +2,8 @@
 #
 # The bot App gives a real approval and enables auto-merge; GitHub merges only
 # after `ci-ok` passes under the main ruleset. No ruleset bypass is used.
-# Minor and major updates are left open for the owner.
+# Minor and major updates, security ones included, are left open for the
+# owner: the bot App can't read Dependabot alerts (see plan.md Deviations).
 #
 # Needs: repo variable BOT_APP_ID, and the App private key as a *Dependabot*
 # secret BOT_APP_PRIVATE_KEY (Dependabot-triggered runs cannot read normal
