@@ -12,8 +12,9 @@
 # 1. Files: keep stacks/<stack> and deploy/targets/<target>, delete the other
 #    stacks and adapters, the template's intent/ folders, self-test workflow
 #    and bootstrap test; write deploy.yml, CODEOWNERS and a README stub.
-# 2. Git: commit; push to main while the repo has no ruleset yet (a new repo),
-#    otherwise push a branch and open a PR.
+# 2. Git: commit; push to main only while the repo has no ruleset and no
+#    branch protection (a brand-new repo, run by its owner: the one exception
+#    to "never push to main"), otherwise push a branch and open a PR.
 # 3. GitHub: scripts/gh-settings.sh, the dev and production Environments
 #    (production: the owner as required reviewer, branch main only), secrets
 #    and variables.
@@ -264,6 +265,20 @@ if ! ((dry_run)); then
   names_actions="$(gh secret list --repo "$repo" --json name -q '.[].name' || true)"
   names_dependabot="$(gh secret list --repo "$repo" --app dependabot --json name -q '.[].name' || true)"
 fi
+# ask <var> <prompt> [-s]: read a line from the terminal into <var>. The
+# prompt goes straight to /dev/tty (read -p would print it on stderr, which
+# the failure redirect hides). Fails if there is no terminal.
+ask() {
+  local __var="$1" __prompt="$2" __silent="${3:-}" __v=""
+  { printf '%s' "$__prompt" >/dev/tty; } 2>/dev/null || return 1
+  if [[ "$__silent" == -s ]]; then
+    IFS= read -r -s __v </dev/tty || return 1
+    printf '\n' >/dev/tty
+  else
+    IFS= read -r __v </dev/tty || return 1
+  fi
+  printf -v "$__var" '%s' "$__v"
+}
 # keychain <service>: print a Keychain item, or nothing.
 keychain() {
   command -v security >/dev/null 2>&1 || return 0
@@ -295,9 +310,8 @@ claude_token() {
   local v
   v="$(keychain claude-code-oauth-token)"
   if [[ -z "$v" ]]; then
-    { read -r -s -p "CLAUDE_CODE_OAUTH_TOKEN (from claude setup-token): " v </dev/tty; } 2>/dev/null ||
+    ask v "CLAUDE_CODE_OAUTH_TOKEN (from claude setup-token): " -s ||
       die "no terminal to prompt for CLAUDE_CODE_OAUTH_TOKEN; store it in the Keychain (service claude-code-oauth-token)"
-    echo >&2
   fi
   printf '%s' "${v//[[:space:]]/}"
 }
@@ -314,7 +328,7 @@ app_id="${BOT_APP_ID:-}"
 if [[ -z "$app_id" ]] && ! ((dry_run)); then
   app_id="$(gh variable get BOT_APP_ID --repo "$repo" 2>/dev/null || true)"
   if [[ -z "$app_id" ]]; then
-    { read -r -p "Bot App ID (github.com/settings/apps): " app_id </dev/tty; } 2>/dev/null ||
+    ask app_id "Bot App ID (github.com/settings/apps): " ||
       die "no terminal to prompt for the bot App ID; set BOT_APP_ID"
   fi
 fi

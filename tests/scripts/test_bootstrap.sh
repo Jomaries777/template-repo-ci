@@ -179,6 +179,19 @@ check "real mode: new repo is pushed to main" '[[ "$(git -C "$tmp/origin.git" lo
 check "real mode: no Keychain and no terminal stops bootstrap" '[[ $rc == 1 ]] && grep -q "CLAUDE_CODE_OAUTH_TOKEN" <<<"$out"'
 check "real mode: an empty secret is never set" '! grep -q "gh secret set" "$tmp/calls3"'
 
+# --- prompts are visible on a terminal (a pty from util-linux `script`)
+if command -v script >/dev/null 2>&1; then
+  sed -n '/^ask() {$/,/^}$/p' "$src/scripts/bootstrap.sh" >"$tmp/ask.sh"
+  printf 'source %q\nask v "Bot App ID: " && echo "got=[$v]"\n' "$tmp/ask.sh" >"$tmp/ask_run.sh"
+  pty_out="$(printf '12345\n' | PATH="$ORIG_PATH" script -qec "bash $tmp/ask_run.sh" /dev/null 2>&1 | tr -d '\r')"
+  check "prompt: shown on the terminal" 'grep -q "Bot App ID: " <<<"$pty_out"'
+  check "prompt: reads the answer" 'grep -q "got=\[12345\]" <<<"$pty_out"'
+  # No "fails without a terminal" case here: run from a real terminal it would
+  # prompt that terminal. The real-mode run above covers the no-terminal path.
+else
+  echo "ok - prompt tests skipped: no util-linux script"
+fi
+
 [[ "$failures" -eq 0 ]] || {
   echo "$failures failure(s)"
   exit 1

@@ -145,10 +145,10 @@ else
       if [[ -z "$project" || -z "$app" ]]; then
         skip "cloud-run: services exist" "GCP_PROJECT_ID or APP_NAME is not set (see above)"
       else
-      for svc in "$app-dev" "$app-prod"; do
-        expect "cloud-run: $svc exists" "DEPLOY_TARGET=cloud-run scripts/deploy.sh bootstrap" \
-          quiet gcloud run services describe "$svc" --project "$project" --region "${region:-us-central1}" --format 'value(metadata.name)'
-      done
+        for svc in "$app-dev" "$app-prod"; do
+          expect "cloud-run: $svc exists" "DEPLOY_TARGET=cloud-run scripts/deploy.sh bootstrap" \
+            quiet gcloud run services describe "$svc" --project "$project" --region "${region:-us-central1}" --format 'value(metadata.name)'
+        done
       fi
     else
       skip "cloud-run: services exist" "gcloud is not installed or not logged in"
