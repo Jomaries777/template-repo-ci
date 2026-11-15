@@ -2,10 +2,28 @@
 # Tests for scripts/deploy-config.sh (spec §4.10, §4.11). Run from the repo root.
 set -euo pipefail
 
-cfg_sh="$PWD/scripts/deploy-config.sh"
 failures=0
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+# Run the script from a fixture tree, so the test doesn't depend on which
+# adapters this repo has or what its deploy.yml says (a bootstrapped project
+# keeps one adapter and its own deploy.yml).
+fx="$tmp/root"
+mkdir -p "$fx/scripts" "$fx/deploy/targets/none" "$fx/deploy/targets/cloud-run"
+cp "$PWD/scripts/deploy-config.sh" "$fx/scripts/"
+printf 'name: none\ndark_deploy: false\nenvironments: []\n' >"$fx/deploy/targets/none/target.yml"
+printf 'name: cloud-run\ndark_deploy: true\nenvironments:\n  - dev\n  - production\nauth: oidc\n' >"$fx/deploy/targets/cloud-run/target.yml"
+cat >"$fx/deploy.yml" <<'YAML'
+target: none                 # cloud-run (default) | cloudflare-workers | github-pages | none
+environments:
+  dev:        { enabled: true }
+  production: { approval: required }
+smoke:
+  live_checks: 3
+  interval_seconds: 60
+YAML
+cfg_sh="$fx/scripts/deploy-config.sh"
 
 pass() { echo "ok - $1"; }
 fail() {
@@ -27,7 +45,7 @@ rc_is() {
   if [[ "$rc" == "$want" ]]; then pass "$name"; else fail "$name (rc $rc, want $want)"; fi
 }
 
-check "template deploy.yml: none, no dev" "target=none
+check "template-style deploy.yml: none, no dev" "target=none
 dark_deploy=false
 dev=false
 live_checks=3

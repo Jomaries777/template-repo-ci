@@ -1,9 +1,13 @@
-# The one command surface (spec NFR-6). These are the template repo's own
-# targets; bootstrap (M2) replaces them with the chosen stack's.
+# The one command surface (spec NFR-6). Repo-level checks run here; once
+# bootstrap has written `stack: <name>` to deploy.yml, every target also runs
+# the same target in stacks/<name>/ (spec §4.1: the Makefile delegates).
 #
-#   make lint [FILE=path]   shellcheck, actionlint, markdownlint
-#   make fmt  [FILE=path]   shfmt (skipped if not installed)
-#   make test               every executable tests/scripts/test_*.sh
+#   make lint [FILE=path]   shellcheck, actionlint, markdownlint (+ stack lint)
+#   make fmt  [FILE=path]   shfmt, skipped if not installed (+ stack fmt)
+#   make test               every executable tests/scripts/test_*.sh (+ stack tests)
+#   make typecheck | build | acceptance | smoke URL=<url>   the stack's targets
+#   make bootstrap STACK=<stack> TARGET=<target>            set up a new project
+#   make doctor                                             read-only setup check
 
 SHELL := bash
 .SHELLFLAGS := -euo pipefail -c
@@ -17,7 +21,10 @@ SHFMT_FLAGS := -i 2 -ci
 # deploy/targets/<target>/ (the adapter verbs).
 SH_FILES = $$( { git ls-files -- '*.sh'; git ls-files -- 'scripts/hooks/*' 'deploy/targets/*/*' | grep -v '/[^/]*\.[^/]*$$' || true; } | sort -u )
 
-.PHONY: help lint fmt test typecheck build acceptance smoke
+.PHONY: help lint fmt test typecheck build acceptance smoke bootstrap doctor
+
+# stacks/<name> from deploy.yml's `stack:` key; empty in the template itself.
+STACK_DIR := $(shell sed -n 's/^stack:[[:space:]]*\([a-z0-9-]*\).*/stacks\/\1/p' deploy.yml 2>/dev/null)
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | \
@@ -41,6 +48,7 @@ else
 	@echo "== actionlint"; actionlint
 	@echo "== markdownlint"; files="$$(git ls-files -- '*.md')"; \
 	if [[ -n "$$files" ]]; then sed 's/^/:/' <<<"$$files" | tr '\n' '\0' | xargs -0 $(MARKDOWNLINT); fi
+	@if [[ -n "$(STACK_DIR)" ]]; then echo "== stack lint ($(STACK_DIR))"; $(MAKE) -C "$(STACK_DIR)" lint; fi
 endif
 
 fmt: ## Format shell files with shfmt, or only FILE=<path>
@@ -59,6 +67,7 @@ fmt: ## Format shell files with shfmt, or only FILE=<path>
 	  files="$(SH_FILES)"; \
 	  if [[ -n "$$files" ]]; then tr '\n' '\0' <<<"$$files" | xargs -0 shfmt $(SHFMT_FLAGS) -w; fi; \
 	fi
+	@if [[ -z "$(FILE)" && -n "$(STACK_DIR)" ]]; then $(MAKE) -C "$(STACK_DIR)" fmt; fi
 
 test: ## Run every executable tests/scripts/test_*.sh
 	@pass=0; fail=0; failed=""; \
@@ -69,15 +78,26 @@ test: ## Run every executable tests/scripts/test_*.sh
 	done; \
 	echo "test summary: $$pass passed, $$fail failed"; \
 	if [[ $$fail -gt 0 ]]; then echo "failed:$$failed"; exit 1; fi
+	@if [[ -n "$(STACK_DIR)" ]]; then echo "== stack tests ($(STACK_DIR))"; $(MAKE) -C "$(STACK_DIR)" test; fi
 
-typecheck: ## Type-check (n/a for the template)
-	@echo "typecheck: n/a (template repo)"
+typecheck: ## Type-check the stack (n/a before bootstrap)
+	@$(call stack,typecheck)
 
-build: ## Build the deploy artifact (n/a for the template)
-	@echo "build: n/a (template repo)"
+build: ## Build the deploy artifact (n/a before bootstrap)
+	@$(call stack,build)
 
-acceptance: ## Acceptance suite (n/a for the template)
-	@echo "acceptance: n/a (template repo)"
+acceptance: ## Acceptance suite (n/a before bootstrap)
+	@$(call stack,acceptance)
 
-smoke: ## prod-safe smoke tests (n/a for the template)
-	@echo "smoke: n/a (template repo)"
+smoke: ## prod-safe smoke tests against URL=<url> (n/a before bootstrap)
+	@$(call stack,smoke URL="$(URL)")
+
+bootstrap: ## Set up a new project: STACK=<stack> TARGET=<target>
+	@scripts/bootstrap.sh --stack "$(STACK)" --target "$(TARGET)"
+
+doctor: ## Read-only check that repo settings and the target match the spec
+	@scripts/doctor.sh
+
+# $(call stack,<target and args>): run it in the stack, or say n/a.
+stack = if [[ -n "$(STACK_DIR)" ]]; then $(MAKE) -C "$(STACK_DIR)" $(1); \
+  else echo "$(firstword $(1)): n/a (no stack yet; run make bootstrap)"; fi

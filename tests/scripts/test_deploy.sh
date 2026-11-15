@@ -20,6 +20,13 @@ export PATH="$tmp/bin:$PATH"
 export DEPLOY_DRY_RUN=1 GCP_PROJECT_ID=test-proj-42 GCP_REGION=europe-west1 \
   APP_NAME=hello GITHUB_REPOSITORY=acme/hello BILLING_ACCOUNT=0A1B2C-3D4E5F-6A7B8C
 sha=1234567abcdef0123456789abcdef0123456789
+# Never read the repo's own deploy.yml: a bootstrapped project has its own.
+printf 'target: none\n' >"$tmp/plain.yml"
+export DEPLOY_CONFIG="$tmp/plain.yml"
+# A bootstrapped project keeps one adapter; test the ones that are installed.
+have_none=0 have_cr=0
+[[ -d "$root/deploy/targets/none" ]] && have_none=1
+[[ -d "$root/deploy/targets/cloud-run" ]] && have_cr=1
 
 pass() { echo "ok - $1"; }
 fail() {
@@ -58,29 +65,36 @@ dr nope url dev
 rc_is "dispatcher: unknown target exits 64" 64
 dr '../none' url
 rc_is "dispatcher: path-like target exits 64" 64
-rc=0
-out="$(DEPLOY_CONFIG="$root/deploy.yml" "$deploy" url 2>/dev/null)" || rc=$?
-rc_is "dispatcher: deploy.yml target (none) is used" 0
 cfg="$tmp/deploy.yml"
+if ((have_none)); then
+  rc=0
+  out="$(DEPLOY_CONFIG="$tmp/plain.yml" "$deploy" url 2>/dev/null)" || rc=$?
+  rc_is "dispatcher: deploy.yml target (none) is used" 0
+  rc=0
+  out="$(DEPLOY_CONFIG="$cfg" DEPLOY_TARGET=none "$deploy" url 2>/dev/null)" || rc=$?
+  out_is "dispatcher: DEPLOY_TARGET overrides deploy.yml" ""
+fi
+if ((have_cr)); then
 printf 'target: cloud-run   # comment\n' >"$cfg"
 rc=0
 out="$(DEPLOY_CONFIG="$cfg" "$deploy" url dev 2>/dev/null)" || rc=$?
 out_is "dispatcher: reads target from config" "https://hello-dev-dryrun.a.run.app"
-printf 'smoke:\n  target: cloud-run\ntarget: none\n' >"$cfg.nested"
-rc=0
-out="$(DEPLOY_CONFIG="$cfg.nested" "$deploy" url dev 2>/dev/null)" || rc=$?
-out_is "dispatcher: ignores an indented nested target:" ""
-rc=0
-out="$(DEPLOY_CONFIG="$cfg" DEPLOY_TARGET=none "$deploy" url 2>/dev/null)" || rc=$?
-out_is "dispatcher: DEPLOY_TARGET overrides deploy.yml" ""
+  printf 'smoke:\n  target: cloud-run\ntarget: nope\n' >"$cfg.nested"
+  rc=0
+  DEPLOY_CONFIG="$cfg.nested" "$deploy" url dev >/dev/null 2>&1 || rc=$?
+  rc_is "dispatcher: ignores an indented nested target:" 64
+fi
 
 # --- none adapter: every verb is a no-op with empty stdout
 for verb in bootstrap publish current deploy-dark promote revert url discard cleanup; do
+  ((have_none)) || break
   dr none "$verb" dev "$sha"
   if [[ "$rc" == 0 && -z "$out" ]]; then pass "none: $verb is a no-op"; else fail "none: $verb (rc $rc, stdout [$out])"; fi
 done
 
-# --- cloud-run
+# --- cloud-run (the block below runs only when the adapter is installed;
+# it is left unindented to keep the diff readable)
+if ((have_cr)); then
 dr cloud-run bootstrap
 rc_is "cloud-run bootstrap: exits 0" 0
 has "bootstrap: enables run API" "run.googleapis.com"
@@ -127,6 +141,15 @@ dr cloud-run publish "$sha"
 rc_is "publish: exits 0" 0
 has "publish: builds the sha image" "docker build -t europe-west1-docker.pkg.dev/test-proj-42/app/hello:$sha"
 has "publish: pushes" "docker push europe-west1-docker.pkg.dev/test-proj-42/app/hello:$sha"
+has "publish: builds from . without a stack" "hello:$sha ."
+printf 'target: cloud-run\nstack: node\n' >"$tmp/stack.yml"
+rc=0
+out="$(DEPLOY_CONFIG="$tmp/stack.yml" "$deploy" publish "$sha" 2>&1)" || rc=$?
+if grep -qF "hello:$sha $root/stacks/node" <<<"$out"; then pass "publish: builds from stacks/<stack> when deploy.yml names one"; else fail "publish: stack context (got: $out)"; fi
+printf 'target: cloud-run\nstack: ../etc\n' >"$tmp/badstack.yml"
+rc=0
+DEPLOY_CONFIG="$tmp/badstack.yml" "$deploy" publish "$sha" >/dev/null 2>&1 || rc=$?
+rc_is "publish: invalid stack exits 64" 64
 
 dr cloud-run current dev
 out_is "current: prints the 100% revision" "hello-dev-00002-aaa"
@@ -220,6 +243,8 @@ rc_is "cloud-run: bootstrap runs with no variables in dry run" 0
 rc=0
 env -u GCP_PROJECT_ID -u APP_NAME DEPLOY_DRY_RUN=0 DEPLOY_TARGET=cloud-run "$deploy" url dev >/dev/null 2>&1 || rc=$?
 rc_is "cloud-run: missing variables fail outside dry run" 1
+
+fi # have_cr
 
 if [[ -s "$tmp/calls" ]]; then
   fail "dry run never calls a real CLI (called: $(tr '\n' ';' <"$tmp/calls"))"

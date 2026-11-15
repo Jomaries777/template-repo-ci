@@ -7,6 +7,16 @@ cd "$root"
 run="$root/scripts/agy-run.sh"
 report="$root/scripts/agy-report.sh"
 plan="intent/0001-github-cicd-pipeline/plan.md"
+slug="0001-github-cicd-pipeline"
+# A bootstrapped project has no template intent: use a fixture plan instead
+# (agy-run.sh needs intent/<id>-<slug>/plan.md inside the repo).
+if [[ ! -f "$plan" ]]; then
+  slug="0000-agy-run-fixture"
+  plan="intent/$slug/plan.md"
+  mkdir -p "intent/$slug"
+  trap 'rm -rf "$root/intent/0000-agy-run-fixture"' EXIT
+  printf '# Plan (test fixture)\n\nStatus: Accepted\n' >"$plan"
+fi
 fail=0
 
 ok() { echo "ok - $1"; }
@@ -25,7 +35,7 @@ has "boost: agy runs with token env stripped" "$out" 'env -u GH_TOKEN -u GITHUB_
 has "boost: gate restores harness from origin/main" "$out" 'restored from origin/main'
 has "boost: final check run on superseding SHA" "$out" 'neutral'
 has "boost: prompt starts with /boost" "$out" '/boost'
-has "boost: branch agy/0001-github-cicd-pipeline" "$out" 'agy/0001-github-cicd-pipeline'
+has "boost: branch agy/$slug" "$out" "agy/$slug"
 has "boost: draft PR" "$out" 'gh pr create .*--draft'
 has "boost: check run in_progress" "$out" 'check-runs.*antigravity/boost|antigravity/boost.*status=in_progress|status=in_progress'
 has "boost: gate runs make lint test" "$out" 'make .* lint test'
