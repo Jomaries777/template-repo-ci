@@ -92,6 +92,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 | 2026-11-15 | The template self-test is `.github/workflows/template-selftest.yml`, not `.template/selftest.yml` (spec §4.1). It is guarded by `if: github.repository == 'Jomaries777/template-repo-ci'`, and bootstrap (M2) deletes it. | GitHub only runs workflows from `.github/workflows/`, so a file under `.template/` would never run |
 | 2026-11-15 | No `.github/actions/classify` composite. `pr.yml` calls `scripts/classify.sh` directly. The `release` composite still comes in M2. | One script is shared by PR and deploy workflows without a wrapper. Raised by Claude Code Review on #4 |
 | 2026-11-15 | Dependency graph and Dependabot alerts were enabled ahead of the M1 serial step | `dependency-review` fails while the dependency graph is off (first CI run on #4) |
+| 2026-11-15 | The `agy` verification gate runs `make lint test` with `Makefile` and `tests/scripts/` from `origin/main` under `env -i` (no tokens), but still as the owner's user and outside a sandbox. Agent-added tests under `tests/scripts/` are not run by the gate; that path is protected, so the owner reviews it. | Claude Code Review on #6. A container or sandbox for the gate is deferred to M2, once the Node stack shows what lint and test need |
 
 ## Risks
 
