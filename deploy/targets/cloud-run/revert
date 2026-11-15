@@ -10,3 +10,13 @@ rev="${2:-}"
 
 run gcloud run services update-traffic "$SERVICE" --project "$GCP_PROJECT_ID" \
   --region "$GCP_REGION" --to-revisions "$rev=100" --quiet
+
+# The restored revision's image is serving again: keep it protected. Traffic
+# has already moved, so a tagging failure is reported but doesn't fail revert.
+image="$(query "${IMAGE_BASE}:0000000" gcloud run revisions describe "$rev" --project "$GCP_PROJECT_ID" \
+  --region "$GCP_REGION" --format 'value(spec.containers[0].image)')"
+if [[ "$image" == "${IMAGE_BASE}"[:@]* ]]; then
+  tag_deployed "$image" || echo "cloud-run: could not tag $image as $ENV_NAME" >&2
+else
+  echo "cloud-run: $rev runs ${image:-<unknown>}, not from ${IMAGE_BASE}; not tagged" >&2
+fi

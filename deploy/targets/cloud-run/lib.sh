@@ -105,6 +105,7 @@ init_common() {
   [[ "$APP_NAME" =~ ^[a-z][a-z0-9-]{0,39}$ ]] || die "invalid APP_NAME: $APP_NAME"
   RUNTIME_SA="runtime@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
   REGISTRY="${GCP_REGION}-docker.pkg.dev"
+  IMAGE_BASE="${REGISTRY}/${GCP_PROJECT_ID}/app/${APP_NAME}"
 }
 
 # service_for <env>: sets ENV_NAME and SERVICE.
@@ -122,7 +123,7 @@ sha_vars() {
   [[ "${1:-}" =~ ^[0-9a-f]{7,40}$ ]] || usage_error "invalid commit sha: ${1:-<empty>}"
   SHA="$1"
   TAG="c${SHA:0:7}"
-  IMAGE="${REGISTRY}/${GCP_PROJECT_ID}/app/${APP_NAME}:${SHA}"
+  IMAGE="${IMAGE_BASE}:${SHA}"
 }
 
 # Dry-run fixtures: an old revision serves 100% (as after a revert) and the
@@ -137,6 +138,13 @@ fixture_service() {
      "url": "https://${tag}---${SERVICE}-dryrun.a.run.app"}
   ]}}
 EOF
+}
+
+# tag_deployed <image ref>: tag the image serving ENV_NAME as "<env>". The
+# registry's keep-deployed rule never deletes "dev*" / "production*" tags, so
+# the image a cold start pulls (min-instances 0) is never cleaned up.
+tag_deployed() {
+  run gcloud artifacts docker tags add "$1" "${IMAGE_BASE}:${ENV_NAME}" --project "$GCP_PROJECT_ID" --quiet
 }
 
 # describe_service [tag]: service JSON (real, or the dry-run fixture).

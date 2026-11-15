@@ -8,5 +8,11 @@ service_for "${1:-}"
 sha_vars "${2:-}"
 
 rev="$(revision_for_tag "$TAG")"
+# Protect the image now serving (the revert target) and the new one before
+# moving traffic, so a tagging failure leaves traffic untouched. The first
+# promote has no "<env>" image yet.
+run gcloud artifacts docker tags add "${IMAGE_BASE}:${ENV_NAME}" "${IMAGE_BASE}:${ENV_NAME}-prev" \
+  --project "$GCP_PROJECT_ID" --quiet || echo "cloud-run: no previous $ENV_NAME image to keep" >&2
+tag_deployed "$IMAGE"
 run gcloud run services update-traffic "$SERVICE" --project "$GCP_PROJECT_ID" \
   --region "$GCP_REGION" --to-revisions "$rev=100" --quiet
