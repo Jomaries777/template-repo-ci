@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloud-run/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# publish <sha>: build the image and push it to Artifact Registry.
+init_common
+sha_vars "${1:-}"
+context="${DEPLOY_BUILD_CONTEXT:-.}"
+
+run gcloud auth configure-docker "$REGISTRY" --quiet
+run docker build -t "$IMAGE" "$context"
+run docker push "$IMAGE"

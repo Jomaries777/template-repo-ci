@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloud-run/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# revert <env> <revision>: send 100% of traffic back to <revision>.
+init_common
+service_for "${1:-}"
+rev="${2:-}"
+[[ "$rev" =~ ^[a-z0-9-]+$ ]] || usage_error "invalid revision: ${rev:-<empty>}"
+
+run gcloud run services update-traffic "$SERVICE" --project "$GCP_PROJECT_ID" \
+  --region "$GCP_REGION" --to-revisions "$rev=100" --quiet

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloud-run/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# promote <env> <sha>: send 100% of traffic to the revision tagged for <sha>.
+init_common
+service_for "${1:-}"
+sha_vars "${2:-}"
+
+rev="$(revision_for_tag "$TAG")"
+run gcloud run services update-traffic "$SERVICE" --project "$GCP_PROJECT_ID" \
+  --region "$GCP_REGION" --to-revisions "$rev=100" --quiet

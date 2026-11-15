@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/none/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+
+# Nothing is deployed, so there is no URL: print nothing.

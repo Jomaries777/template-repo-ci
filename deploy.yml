@@ -1,0 +1,7 @@
+target: none                 # cloud-run (default) | cloudflare-workers | github-pages | none
+environments:
+  dev:        { enabled: true }
+  production: { approval: required }
+smoke:
+  live_checks: 3
+  interval_seconds: 60

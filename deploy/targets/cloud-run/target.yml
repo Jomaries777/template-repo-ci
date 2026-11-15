@@ -1,0 +1,22 @@
+name: cloud-run
+artifact: image
+dark_deploy: true
+environments:
+  - dev
+  - production
+auth: oidc
+required_variables:
+  - GCP_PROJECT_ID
+  - GCP_REGION # default: us-central1
+  - GCP_WIF_PROVIDER
+  - GCP_DEPLOY_SA
+  - APP_NAME
+defaults:
+  GCP_REGION: us-central1
+environment_secrets: []
+cli: gcloud
+idle: "$0 when idle because billing is request-based and min-instances is 0"
+cost_cap:
+  min_instances: 0
+  max_instances: 2
+  budget_usd: 10

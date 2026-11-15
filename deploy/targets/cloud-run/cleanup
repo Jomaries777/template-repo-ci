@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloud-run/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# cleanup <env>: remove tags from revisions that serve no traffic, then delete
+# revisions that serve no traffic, keeping the newest 5 (KEEP_REVISIONS).
+# Assumes deploys to one environment are serialized (deploy.yml uses a
+# per-environment concurrency group, without cancel-in-progress): a candidate
+# from an overlapping run would otherwise lose its tag here.
+init_common
+service_for "${1:-}"
+keep="${KEEP_REVISIONS:-5}"
+[[ "$keep" =~ ^[0-9]+$ ]] || usage_error "invalid KEEP_REVISIONS: $keep"
+
+fixture_revisions() {
+  local i sep=""
+  printf '['
+  for i in 1 2 3 4 5 6 7 8 9; do
+    printf '%s{"metadata": {"name": "%s-0000%s-aaa", "creationTimestamp": "2026-01-0%sT00:00:00Z"}}' \
+      "$sep" "$SERVICE" "$i" "$i"
+    sep=","
+  done
+  printf ']\n'
+}
+
+svc="$(describe_service)"
+revs="$(query "$(fixture_revisions)" gcloud run revisions list --service "$SERVICE" \
+  --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json)"
+
+stale_tags="$(jq -r '[.status.traffic[] | select((.percent // 0) == 0 and .tag != null) | .tag] | join(",")' <<<"$svc")"
+if [[ -n "$stale_tags" ]]; then
+  run gcloud run services update-traffic "$SERVICE" --project "$GCP_PROJECT_ID" \
+    --region "$GCP_REGION" --remove-tags "$stale_tags" --quiet
+fi
+
+serving="$(jq -c '[.status.traffic[] | select((.percent // 0) > 0) | .revisionName]' <<<"$svc")"
+while IFS= read -r rev; do
+  [[ -n "$rev" ]] || continue
+  run gcloud run revisions delete "$rev" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
+done < <(jq -r --argjson keep "$keep" --argjson serving "$serving" \
+  'sort_by(.metadata.creationTimestamp) | reverse | .[$keep:][] | .metadata.name | select(. as $n | $serving | any(. == $n) | not)' <<<"$revs")
