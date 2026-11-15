@@ -2,7 +2,7 @@
 # Milestone reporting for interactive Antigravity runs (/teamwork, /swarm).
 #
 # Usage: scripts/agy-report.sh <start|progress|blocked|done|failed> "<message>"
-#                              [--repo owner/repo] [--allow-protected] [--dry-run]
+#                              [--repo owner/repo] [--dry-run]
 #
 # Finds the open PR for the current branch and the newest `antigravity/*`
 # check run for it (on the PR head, else on the branch's recent commits; an
@@ -10,8 +10,10 @@
 #   start|progress  keep it in_progress, append a summary line
 #   blocked         same, plus a PR comment so Claude Code wakes up
 #   done            run the verification gate (changes exist, no
-#                   .github/workflows/ paths, no protected paths unless
-#                   --allow-protected, `make lint test` with the harness
+#                   .github/workflows/ paths, no protected paths (there is no
+#                   override here: the interactive agent runs this script, so
+#                   protected changes go to the owner, who reviews and runs
+#                   `gh pr ready` themselves), `make lint test` with the harness
 #                   restored from origin/main), commit+push leftovers as the
 #                   bot, then record the final result as a check run on the
 #                   current head SHA (the old run is marked neutral/superseded)
@@ -30,7 +32,7 @@ kind="" message="" repo=""
 while (($#)); do
   case "$1" in
     --repo) repo="${2:?--repo needs a value}"; shift 2 ;;
-    --allow-protected) ALLOW_PROTECTED=1; shift ;;
+    --allow-protected) die "--allow-protected is owner-only: use scripts/agy-run.sh, or review and run gh pr ready yourself" ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h | --help) sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) die "unknown option: $1" ;;

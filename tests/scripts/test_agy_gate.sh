@@ -52,6 +52,7 @@ EOF
 chmod +x "$stubs"/*
 export PATH="$stubs:$PATH"
 export STUB_DIR="$tmp/stub-state"
+export AGY_TEST_MODE=1
 export AGY_GATE_PASS_ENV="STUB_DIR STUB_MAKE_RC"
 mkdir -p "$STUB_DIR"
 export BOT_TOKEN_SCRIPT="$stubs/bot-token.sh"
@@ -167,7 +168,7 @@ lacks "report: no duplicate interactive run" "$log" 'POST repos/o/r/check-runs'
 
 # done -> final run on the (new) head SHA, old run neutral
 rm -f "$STUB_DIR/gh.log"
-(cd "$repo" && "$report" "done" "finished" --repo o/r --allow-protected) >/dev/null 2>&1
+(cd "$repo" && "$report" "done" "finished" --repo o/r) >/dev/null 2>&1
 log="$(cat "$STUB_DIR/gh.log")"
 final="$(git -C "$repo" rev-parse HEAD)"
 contains "report done: final run created on head SHA" "$log" "POST repos/o/r/check-runs.*name=antigravity/swarm.*head_sha=$final.*conclusion=success"
@@ -176,7 +177,7 @@ contains "report done: PR marked ready" "$log" 'pr ready 7'
 
 # done with a failing gate -> failure run + comment, non-zero exit
 rm -f "$STUB_DIR/gh.log"
-if (cd "$repo" && STUB_MAKE_RC=1 "$report" "done" "finished" --repo o/r --allow-protected) >/dev/null 2>&1; then
+if (cd "$repo" && STUB_MAKE_RC=1 "$report" "done" "finished" --repo o/r) >/dev/null 2>&1; then
   nok "report done: failing gate exits non-zero"
 else
   ok "report done: failing gate exits non-zero"
@@ -184,6 +185,23 @@ fi
 log="$(cat "$STUB_DIR/gh.log")"
 contains "report done (fail): failure conclusion" "$log" 'conclusion=failure'
 contains "report done (fail): PR comment" "$log" 'pr comment 7'
+
+# --allow-protected is refused by agy-report (the interactive agent runs it)
+if (cd "$repo" && "$report" "done" "x" --repo o/r --allow-protected) >/dev/null 2>&1; then
+  nok "report: --allow-protected refused"
+else
+  ok "report: --allow-protected refused"
+fi
+
+# commit_and_push refuses secret-looking untracked files
+echo 'SECRET=1' >"$repo/.env"
+if (commit_and_push o/r "$repo" agy/feature "chore: leftovers") >/dev/null 2>&1; then
+  nok "commit: .env refused"
+else
+  ok "commit: .env refused"
+fi
+if git -C "$repo" diff --cached --name-only | grep -q '^\.env$'; then nok "commit: .env left unstaged"; else ok "commit: .env left unstaged"; fi
+rm -f "$repo/.env"
 
 # detached HEAD refused by agy-report
 git -C "$repo" checkout -q --detach

@@ -81,6 +81,16 @@ die() {
   exit 1
 }
 
+# Test-only overrides (BOT_TOKEN_SCRIPT, AGY_PUSH_URL, AGY_GATE_PASS_ENV) are
+# honoured only with AGY_TEST_MODE=1, so a stray env var cannot redirect the
+# bot token or the push in real runs.
+token_script() {
+  if [[ "${AGY_TEST_MODE:-}" == 1 && -n "${BOT_TOKEN_SCRIPT:-}" ]]; then echo "$BOT_TOKEN_SCRIPT"; else echo "$SCRIPT_DIR/bot-token.sh"; fi
+}
+push_url() { # repo
+  if [[ "${AGY_TEST_MODE:-}" == 1 && -n "${AGY_PUSH_URL:-}" ]]; then echo "$AGY_PUSH_URL"; else echo "https://x-access-token@github.com/$1.git"; fi
+}
+
 repo_from_remote() {
   local url
   url="$(git remote get-url origin 2>/dev/null || true)"
@@ -99,7 +109,7 @@ refresh_token() {
   local now
   now="$(date +%s)"
   if [[ -z "$_TOK" ]] || ((now - _TOK_TS > 2400)); then
-    _TOK="$("${BOT_TOKEN_SCRIPT:-$SCRIPT_DIR/bot-token.sh}" "$BOT_REPO")"
+    _TOK="$("$(token_script)" "$BOT_REPO")"
     _TOK_TS="$now"
   fi
 }
@@ -168,7 +178,7 @@ bot_push() {
     # shellcheck disable=SC2016
     printf '%s\n' '#!/bin/sh' 'echo "$GH_TOKEN"' >"$askpass"
     GH_TOKEN="$_TOK" GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
-      git -C "$dir" push "${AGY_PUSH_URL:-https://x-access-token@github.com/$repo.git}" "HEAD:refs/heads/$branch"
+      git -C "$dir" push "$(push_url "$repo")" "HEAD:refs/heads/$branch"
   ) || rc=$?
   return "$rc"
 }
@@ -238,7 +248,10 @@ run_harness_make() { # wt logfile
     # shellcheck disable=SC2329 # invoked via trap
     restore() {
       rm -rf "${wt:?}/Makefile" "${wt:?}/tests/scripts"
-      if [[ -f "$bk/harness.tar" ]]; then tar -C "$wt" -xf "$bk/harness.tar"; fi
+      if [[ -f "$bk/harness.tar" ]] && ! tar -C "$wt" -xf "$bk/harness.tar"; then
+        echo "agy-run: could not restore Makefile/tests/scripts; saved copy kept at $bk/harness.tar" >&2
+        return
+      fi
       rm -rf "$bk"
     }
     trap restore EXIT
@@ -248,7 +261,9 @@ run_harness_make() { # wt logfile
       git -C "$wt" archive origin/main -- "$p" 2>/dev/null | tar -x -C "$wt" || true
     done
     extra=()
-    for v in ${AGY_GATE_PASS_ENV:-}; do extra+=("$v=${!v:-}"); done # test hook only
+    if [[ "${AGY_TEST_MODE:-}" == 1 ]]; then
+      for v in ${AGY_GATE_PASS_ENV:-}; do extra+=("$v=${!v:-}"); done
+    fi
     env -i ${extra[@]+"${extra[@]}"} PATH="$PATH" HOME="$HOME" LANG="${LANG:-C.UTF-8}" TMPDIR="${TMPDIR:-/tmp}" TERM="${TERM:-dumb}" \
       make -C "$wt" lint test >"$log" 2>&1
   )
@@ -303,9 +318,21 @@ verify_gate() {
 }
 
 # Commit leftovers (if any) as the bot and push.
+# Files an agent must never commit, even if it leaves them in the worktree.
+SECRET_FILE_RE='(^|/)(\.env(\..*)?|.*\.(pem|key|p12|pfx)|id_(rsa|ecdsa|ed25519)(\.pub)?|\.netrc|events\.ndjson|credentials(\.json)?)$'
+
 commit_and_push() { # repo wt branch message
-  local repo="$1" wt="$2" branch="$3" msg="$4"
+  local repo="$1" wt="$2" branch="$3" msg="$4" bad
   run git -C "$wt" add -A
+  if [[ "$DRY_RUN" == 1 ]]; then
+    echo "+ (commit) refuse staged files matching: $SECRET_FILE_RE"
+  else
+    bad="$(git -C "$wt" diff --cached --name-only | grep -E "$SECRET_FILE_RE" || true)"
+    if [[ -n "$bad" ]]; then
+      git -C "$wt" reset -q -- "$bad"
+      die "refusing to commit secret-looking files: $(tr '\n' ' ' <<<"$bad")"
+    fi
+  fi
   if [[ "$DRY_RUN" == 1 ]] || [[ -n "$(git -C "$wt" status --porcelain)" ]]; then
     bot_git "$repo" "$wt" commit -m "$msg"
   fi
@@ -479,7 +506,7 @@ EOF
         agy -p "$prompt" --output-format stream-json --sandbox --print-timeout "$timeout"
     ) | tee "$work/events.ndjson" |
       AGY_REPO="$repo" AGY_CHECK_ID="$check_id" AGY_MODE="$mode" \
-        AGY_TOKEN_SCRIPT="${BOT_TOKEN_SCRIPT:-$SCRIPT_DIR/bot-token.sh}" \
+        AGY_TOKEN_SCRIPT="$(token_script)" \
         AGY_THROTTLE_SECONDS="${AGY_THROTTLE_SECONDS:-60}" \
         AGY_ON_PROGRESS="$cb" AGY_SUMMARY_JSON="$summary_file" "$SCRIPT_DIR/agy-events.sh" ||
       agy_rc=$?
