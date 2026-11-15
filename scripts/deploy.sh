@@ -66,5 +66,18 @@ if [[ ! -d "$target_dir" || ! -x "$verb_path" ]]; then
   exit 64
 fi
 
+# The stack's directory (deploy.yml `stack:`, written by bootstrap) is the
+# build context for adapters that build an image. DEPLOY_BUILD_CONTEXT wins.
+if [[ -z "${DEPLOY_BUILD_CONTEXT:-}" && -f "$config_file" ]]; then
+  stack="$(grep -E '^stack:' "$config_file" | head -n 1 | sed -E 's/^stack:[[:space:]]*//; s/[[:space:]]*(#.*)?$//' || true)"
+  if [[ -n "$stack" ]]; then
+    [[ "$stack" =~ ^[a-z0-9-]+$ && -d "$root/stacks/$stack" ]] || {
+      echo "deploy.sh: invalid stack in $config_file: $stack" >&2
+      exit 64
+    }
+    export DEPLOY_BUILD_CONTEXT="$root/stacks/$stack"
+  fi
+fi
+
 export DEPLOY_DRY_RUN="${DEPLOY_DRY_RUN:-0}"
 exec "$verb_path" "$@"
