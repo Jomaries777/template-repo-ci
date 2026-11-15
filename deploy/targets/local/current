@@ -18,7 +18,8 @@ if [[ "$DRY_RUN" == "1" ]]; then
   parent=0000000000000000000000000000000000000000
 else
   # actions/checkout fetches one commit; a public repo can deepen anonymously.
-  git -C "$root" fetch -q --deepen=1 origin 2>/dev/null || true
+  git -C "$root" fetch -q --deepen=1 origin 2>/dev/null ||
+    echo "local: warning: could not fetch the parent commit; a revert will have nothing to go back to" >&2
   parent="$(git -C "$root" rev-parse -q --verify HEAD~1 2>/dev/null || true)"
 fi
 if [[ -z "$parent" ]]; then
@@ -37,6 +38,13 @@ if [[ "$DRY_RUN" == "1" ]]; then
 else
   git -C "$root" archive "$parent" "$stack" | tar -x -C "$src"
 fi
-start_rev "$rev" "$src/$stack" "$parent"
+# A parent that doesn't start healthy (e.g. a broken commit that was reverted
+# earlier) is no revert target: report nothing serving, like a first deploy,
+# so the release of a fix still goes ahead.
+if ! start_rev "$rev" "$src/$stack" "$parent"; then
+  echo "local: the parent commit ${parent:0:7} isn't healthy; treating $ENV_NAME as empty" >&2
+  run docker rm -f "$rev" || true
+  exit 0
+fi
 set_live "$rev"
 printf '%s\n' "$rev"

@@ -93,13 +93,16 @@ stack_dir() {
 }
 
 # start_rev <rev> <build context> <version>: build the image and run it on a
-# free localhost port, then wait up to 60s for /healthz. Prints nothing.
+# free localhost port, then wait up to 60s for /healthz. Prints nothing;
+# fails if the container never becomes healthy.
 start_rev() {
   local rev="$1" ctx="$2" version="$3" port
   run docker build -q -t "local/$rev" "$ctx"
   if [[ "$DRY_RUN" == "1" ]]; then
     port=18080
   else
+    # Free now; another process could take it before docker binds it, in
+    # which case docker run fails loudly. Fine on a single-job runner.
     port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
     echo "$port" >"$STATE/$rev.port"
   fi
@@ -112,4 +115,5 @@ start_rev() {
     sleep 1
   done
   echo "local: $rev did not become healthy in 60s" >&2
+  return 1
 }
