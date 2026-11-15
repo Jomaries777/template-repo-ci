@@ -13,8 +13,9 @@ MAKEFLAGS += --no-print-directory
 MARKDOWNLINT := npx --yes markdownlint-cli2@0.24.0
 SHFMT_FLAGS := -i 2 -ci
 
-# Shell files: tracked *.sh plus extensionless files under scripts/hooks/.
-SH_FILES = $$( { git ls-files -- '*.sh'; git ls-files -- 'scripts/hooks/*' | grep -v '/[^/]*\.[^/]*$$' || true; } | sort -u )
+# Shell files: tracked *.sh plus extensionless files under scripts/hooks/ and
+# deploy/targets/<target>/ (the adapter verbs).
+SH_FILES = $$( { git ls-files -- '*.sh'; git ls-files -- 'scripts/hooks/*' 'deploy/targets/*/*' | grep -v '/[^/]*\.[^/]*$$' || true; } | sort -u )
 
 .PHONY: help lint fmt test typecheck build acceptance smoke
 
@@ -28,8 +29,8 @@ ifdef FILE
 	if [[ ! -f "$$f" ]]; then echo "lint: skip $$f (no such file)"; exit 0; fi; \
 	case "$$f" in \
 	  *.sh) shellcheck "$$f" ;; \
-	  scripts/hooks/*.*) echo "lint: skip $$f (no linter for this type)" ;; \
-	  scripts/hooks/*) shellcheck "$$f" ;; \
+	  scripts/hooks/*.* | deploy/targets/*/*.*) echo "lint: skip $$f (no linter for this type)" ;; \
+	  scripts/hooks/* | deploy/targets/*/*) shellcheck "$$f" ;; \
 	  .github/workflows/*.yml | .github/workflows/*.yaml) actionlint "$$f" ;; \
 	  *.md) $(MARKDOWNLINT) ":$$f" ;; \
 	  *) echo "lint: skip $$f (no linter for this type)" ;; \
@@ -50,8 +51,8 @@ fmt: ## Format shell files with shfmt, or only FILE=<path>
 	  if [[ ! -f "$$f" ]]; then echo "fmt: skip $$f (no such file)"; exit 0; fi; \
 	  case "$$f" in \
 	    *.sh) shfmt $(SHFMT_FLAGS) -w "$$f" ;; \
-	    scripts/hooks/*.*) echo "fmt: skip $$f (no formatter for this type)" ;; \
-	    scripts/hooks/*) shfmt $(SHFMT_FLAGS) -w "$$f" ;; \
+	    scripts/hooks/*.* | deploy/targets/*/*.*) echo "fmt: skip $$f (no formatter for this type)" ;; \
+	    scripts/hooks/* | deploy/targets/*/*) shfmt $(SHFMT_FLAGS) -w "$$f" ;; \
 	    *) echo "fmt: skip $$f (no formatter for this type)" ;; \
 	  esac; \
 	else \

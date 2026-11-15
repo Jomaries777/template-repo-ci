@@ -91,6 +91,8 @@ for sa in deployer runtime; do
     run gcloud iam service-accounts create "$sa" "${p[@]}" --display-name "$sa (${APP_NAME})"
   fi
 done
+# Project-wide: run.developer has no per-service binding at create time. Use a
+# dedicated project per app (as step 6 does) so this covers only its services.
 run gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
   --member "serviceAccount:${deploy_sa}" --role roles/run.developer --condition None --quiet
 # Registry writes are scoped to the "app" repository, not the project.

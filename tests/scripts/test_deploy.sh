@@ -66,6 +66,10 @@ printf 'target: cloud-run   # comment\n' >"$cfg"
 rc=0
 out="$(DEPLOY_CONFIG="$cfg" "$deploy" url dev 2>/dev/null)" || rc=$?
 out_is "dispatcher: reads target from config" "https://hello-dev-dryrun.a.run.app"
+printf 'smoke:\n  target: cloud-run\ntarget: none\n' >"$cfg.nested"
+rc=0
+out="$(DEPLOY_CONFIG="$cfg.nested" "$deploy" url dev 2>/dev/null)" || rc=$?
+out_is "dispatcher: ignores an indented nested target:" ""
 rc=0
 out="$(DEPLOY_CONFIG="$cfg" DEPLOY_TARGET=none "$deploy" url 2>/dev/null)" || rc=$?
 out_is "dispatcher: DEPLOY_TARGET overrides deploy.yml" ""

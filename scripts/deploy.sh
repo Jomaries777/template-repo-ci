@@ -48,7 +48,7 @@ if [[ -z "$target" ]]; then
     usage
     exit 64
   fi
-  target="$(grep -E '^[[:space:]]*target:' "$config_file" | head -n 1 | sed -E 's/^[[:space:]]*target:[[:space:]]*//; s/[[:space:]]*(#.*)?$//; s/^["'\''](.*)["'\'']$/\1/' || true)"
+  target="$(grep -E '^target:' "$config_file" | head -n 1 | sed -E 's/^target:[[:space:]]*//; s/[[:space:]]*(#.*)?$//; s/^["'\''](.*)["'\'']$/\1/' || true)"
 fi
 
 if [[ -z "$target" || ! "$target" =~ ^[a-z0-9-]+$ ]]; then
