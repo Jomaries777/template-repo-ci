@@ -21,6 +21,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
+          show_full_output: true
           prompt: |
             M0 Spike B smoke test. Run exactly this one command and nothing else:
             gh pr comment ${{ github.event.pull_request.number }} --body "Spike B: Claude Pro token works in CI."
