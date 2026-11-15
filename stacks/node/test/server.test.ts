@@ -88,6 +88,7 @@ describe("server", () => {
     expect(resolvePort("")).toBe(8080);
     expect(resolvePort("3000")).toBe(3000);
     expect(() => resolvePort("invalid")).toThrow(RangeError);
+    expect(() => resolvePort("0")).toThrow(RangeError);
 
     activeServer = startServer(0);
     await new Promise<void>((resolve) => {

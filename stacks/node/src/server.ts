@@ -46,16 +46,28 @@ export function resolvePort(
     return 8080;
   }
   const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+  // 0 (a random port) would break the fixed 8080 in Dockerfile and compose.
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
     throw new RangeError(`Invalid PORT: ${raw}`);
   }
   return parsed;
 }
 
+// Cloud Run sends SIGKILL 10 s after SIGTERM; exit cleanly before that.
+const SHUTDOWN_TIMEOUT_MS = 8000;
+
 export function startServer(port: number = resolvePort()): Server {
   const server = createServer();
   const onSigterm = (): void => {
+    console.log("SIGTERM: closing server");
     server.close();
+    server.closeIdleConnections();
+    // A stuck connection must not hang shutdown. unref() keeps the timer
+    // from holding the process open once the server has closed.
+    setTimeout(() => {
+      console.error("SIGTERM: connections still open, forcing exit");
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS).unref();
   };
   process.on("SIGTERM", onSigterm);
   server.on("close", () => {
