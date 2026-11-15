@@ -5,7 +5,7 @@
 # Usage:
 #   scripts/agy-run.sh <boost|plain|teamwork|swarm> <path/to/plan.md>
 #                      [--task "<extra instruction>"] [--repo owner/repo]
-#                      [--yes] [--dry-run]
+#                      [--yes] [--allow-protected] [--dry-run]
 #
 # boost / plain  run headless (`agy -p ... --output-format stream-json --sandbox`)
 #                and are verified by a tool-checked diff + `make lint test`.
@@ -14,10 +14,25 @@
 #                worktree, draft PR and check run, then prints next steps;
 #                the agent reports via scripts/agy-report.sh.
 # --dry-run      prints every git/gh/agy command, executes nothing.
+# --allow-protected  owner override: permit diffs touching protected harness
+#                paths (.github/**, Makefile, tests/scripts/**, scripts/**,
+#                .claude/settings.json, CLAUDE.md, AGENTS.md, REVIEW.md).
+#                Changes under .github/workflows/ always fail the gate.
+#
+# Token handling: the bot token is minted by scripts/bot-token.sh into a
+# NON-exported shell variable and passed inline (GH_TOKEN=... gh ...) only to
+# the individual gh/git calls this script makes. Headless agy runs with
+# GH_TOKEN/GITHUB_TOKEN stripped. The interactive agent never sees a token:
+# scripts/agy-report.sh mints its own short-lived token per call and never
+# exports it.
 #
 # This file can also be sourced (by agy-report.sh) for its helper functions.
 
 DRY_RUN=0
+ALLOW_PROTECTED=0
+_TOK=""
+_TOK_TS=0
+BOT_REPO=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------------------------------------------------------------- helpers ---
@@ -36,6 +51,10 @@ run() {
   if [[ "$DRY_RUN" == 1 ]]; then
     local a
     printf '+'
+    if [[ "$1" == ghb ]]; then
+      shift
+      printf ' gh'
+    fi
     for a in "$@"; do printf ' %s' "$(fmt_arg "$a")"; done
     printf '\n'
   else
@@ -72,15 +91,43 @@ repo_from_remote() {
   esac
 }
 
-# Mint the bot token once (never printed).
+# Mint (or refresh) the bot token into a NON-exported variable. Never printed.
+refresh_token() {
+  [[ "$DRY_RUN" != 1 ]] || return 0
+  local now
+  now="$(date +%s)"
+  if [[ -z "$_TOK" ]] || ((now - _TOK_TS > 2400)); then
+    _TOK="$("${BOT_TOKEN_SCRIPT:-$SCRIPT_DIR/bot-token.sh}" "$BOT_REPO")"
+    _TOK_TS="$now"
+  fi
+}
+
 setup_bot_token() {
-  local repo="$1"
+  BOT_REPO="$1"
   if [[ "$DRY_RUN" == 1 ]]; then
-    echo "+ GH_TOKEN=\$(scripts/bot-token.sh $repo)   # never printed"
+    echo "+ (bot token minted per call via scripts/bot-token.sh $BOT_REPO; never exported or printed)"
     return 0
   fi
-  GH_TOKEN="$("$SCRIPT_DIR/bot-token.sh" "$repo")"
-  export GH_TOKEN
+  refresh_token
+}
+
+# gh as the bot: the token is passed inline to this one command only.
+ghb() {
+  if [[ "$DRY_RUN" == 1 ]]; then
+    run ghb "$@"
+    return 0
+  fi
+  refresh_token
+  GH_TOKEN="$_TOK" gh "$@"
+}
+
+# Like ghb but discards stdout (PATCH responses).
+ghq() {
+  if [[ "$DRY_RUN" == 1 ]]; then
+    ghb "$@"
+  else
+    ghb "$@" >/dev/null
+  fi
 }
 
 bot_app_id() {
@@ -94,7 +141,7 @@ bot_app_id() {
   fi
 }
 
-# git commit as the bot identity: bot_git <repo> <dir> <git args...>
+# git as the bot identity: bot_git <repo> <dir> <git args...>
 bot_git() {
   local repo="$1" dir="$2" id
   shift 2
@@ -103,58 +150,117 @@ bot_git() {
     -c "user.email=${id}+jomaries777-agent-bot[bot]@users.noreply.github.com" "$@"
 }
 
-# Push over HTTPS as the bot; the token is passed via GIT_ASKPASS, not argv.
+# Push over HTTPS as the bot; the token reaches git only via GIT_ASKPASS and
+# inline env, never argv. The askpass temp file is always removed.
 bot_push() {
-  local repo="$1" dir="$2" branch="$3"
+  local repo="$1" dir="$2" branch="$3" rc=0
   if [[ "$DRY_RUN" == 1 ]]; then
     echo "+ git -C $dir push https://x-access-token:<GH_TOKEN>@github.com/$repo.git HEAD:refs/heads/$branch"
     return 0
   fi
-  local askpass
-  askpass="$(mktemp)"
-  chmod 700 "$askpass"
-  # shellcheck disable=SC2016
-  printf '%s\n' '#!/bin/sh' 'echo "$GH_TOKEN"' >"$askpass"
-  GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
-    git -C "$dir" push "https://x-access-token@github.com/$repo.git" "HEAD:refs/heads/$branch"
-  local rc=$?
-  rm -f "$askpass"
-  return $rc
+  refresh_token
+  (
+    askpass="$(mktemp)"
+    trap 'rm -f "$askpass"' EXIT
+    chmod 700 "$askpass"
+    # shellcheck disable=SC2016
+    printf '%s\n' '#!/bin/sh' 'echo "$GH_TOKEN"' >"$askpass"
+    GH_TOKEN="$_TOK" GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
+      git -C "$dir" push "${AGY_PUSH_URL:-https://x-access-token@github.com/$repo.git}" "HEAD:refs/heads/$branch"
+  ) || rc=$?
+  return "$rc"
 }
 
-check_create() { # repo name sha title summary -> CHECK_ID
-  local repo="$1" name="$2" sha="$3" title="$4" summary="$5"
-  cap CHECK_ID "<CHECK_RUN_ID>" gh api -X POST "repos/$repo/check-runs" \
-    -f "name=$name" -f "head_sha=$sha" -f status=in_progress \
-    -f "output[title]=$title" -f "output[summary]=$summary" --jq .id
+# check_create repo name sha title summary [conclusion] -> CHECK_ID
+check_create() {
+  local repo="$1" name="$2" sha="$3" title="$4" summary="$5" conclusion="${6:-}"
+  if [[ -n "$conclusion" ]]; then
+    cap CHECK_ID "<CHECK_RUN_ID>" ghb api -X POST "repos/$repo/check-runs" \
+      -f "name=$name" -f "head_sha=$sha" -f status=completed -f "conclusion=$conclusion" \
+      -f "output[title]=$title" -f "output[summary]=$summary" --jq .id
+  else
+    cap CHECK_ID "<CHECK_RUN_ID>" ghb api -X POST "repos/$repo/check-runs" \
+      -f "name=$name" -f "head_sha=$sha" -f status=in_progress \
+      -f "output[title]=$title" -f "output[summary]=$summary" --jq .id
+  fi
 }
 
-check_update() { # repo id title summary [conclusion]
+# check_update repo id title summary [conclusion]
+check_update() {
   local repo="$1" id="$2" title="$3" summary="$4" conclusion="${5:-}"
   if [[ -n "$conclusion" ]]; then
-    run gh api -X PATCH "repos/$repo/check-runs/$id" -f status=completed \
+    ghq api -X PATCH "repos/$repo/check-runs/$id" -f status=completed \
       -f "conclusion=$conclusion" -f "output[title]=$title" -f "output[summary]=$summary"
   else
-    run gh api -X PATCH "repos/$repo/check-runs/$id" -f status=in_progress \
+    ghq api -X PATCH "repos/$repo/check-runs/$id" -f status=in_progress \
       -f "output[title]=$title" -f "output[summary]=$summary"
   fi
+}
+
+# The final result must be visible on the PR head. If the head moved since the
+# run was created, create the final run on the new SHA and mark the old one
+# neutral ("superseded"); a check run's head_sha cannot be changed.
+# finalize_check repo old_id name old_sha new_sha title summary conclusion
+finalize_check() {
+  local repo="$1" old_id="$2" name="$3" old_sha="$4" new_sha="$5" title="$6" summary="$7" conclusion="$8"
+  if [[ "$new_sha" == "$old_sha" ]]; then
+    check_update "$repo" "$old_id" "$title" "$summary" "$conclusion"
+  else
+    check_create "$repo" "$name" "$new_sha" "$title" "$summary" "$conclusion"
+    check_update "$repo" "$old_id" "$title (superseded)" "superseded by $new_sha" neutral
+  fi
+}
+
+# Paths an agent run may not touch unless the owner passes --allow-protected.
+PROTECTED_RE='^(\.github/|Makefile$|tests/scripts/|scripts/|\.claude/settings\.json$|CLAUDE\.md$|AGENTS\.md$|REVIEW\.md$)'
+
+# Run `make lint test` with Makefile and tests/scripts/ restored from
+# origin/main so a modified harness can't fake a pass. The agent's versions
+# are put back afterwards.
+run_harness_make() { # wt logfile
+  local wt="$1" log="$2" bk rc=0 p
+  local keep=()
+  bk="$(mktemp -d)"
+  for p in Makefile tests/scripts; do
+    if [[ -e "$wt/$p" ]]; then keep+=("$p"); fi
+  done
+  if ((${#keep[@]})); then tar -C "$wt" -cf "$bk/harness.tar" "${keep[@]}"; fi
+  rm -rf "${wt:?}/Makefile" "${wt:?}/tests/scripts"
+  for p in Makefile tests/scripts; do
+    git -C "$wt" archive origin/main -- "$p" 2>/dev/null | tar -x -C "$wt" || true
+  done
+  make -C "$wt" lint test >"$log" 2>&1 || rc=$?
+  rm -rf "${wt:?}/Makefile" "${wt:?}/tests/scripts"
+  if [[ -f "$bk/harness.tar" ]]; then tar -C "$wt" -xf "$bk/harness.tar"; fi
+  rm -rf "$bk"
+  return "$rc"
 }
 
 # Verification gate (spec §4.8 as amended). Sets GATE_REASONS (newline-joined,
 # empty = pass). Args: worktree-dir [agy-final-status|-]
 verify_gate() {
-  local wt="$1" agy_status="${2:--}" reasons="" changed
+  local wt="$1" agy_status="${2:--}" reasons="" changed prot log
   GATE_REASONS=""
-  if [[ "$agy_status" != "-" && "$agy_status" != "SUCCESS" ]]; then
-    reasons="agy final status is '$agy_status', not SUCCESS"
-  fi
   if [[ "$DRY_RUN" == 1 ]]; then
-    run git -C "$wt" fetch origin main
+    run git -C "$wt" symbolic-ref -q HEAD
+    run git -C "$wt" fetch -q origin main
     run git -C "$wt" diff --name-only origin/main
     run git -C "$wt" ls-files --others --exclude-standard
-    echo "+ (gate) fail if no changes vs origin/main; fail if any path under .github/workflows/"
+    echo "+ (gate) fail if: no changes; any path under .github/workflows/; protected paths without --allow-protected"
+    echo "+ (gate) make lint test runs with Makefile and tests/scripts/ restored from origin/main"
     run make -C "$wt" lint test
     return 0
+  fi
+  if ! git -C "$wt" symbolic-ref -q HEAD >/dev/null; then
+    GATE_REASONS="detached HEAD: check out the PR branch before verifying"
+    return 0
+  fi
+  if ! git -C "$wt" fetch -q origin main; then
+    GATE_REASONS="could not fetch origin/main, so the diff cannot be verified"
+    return 0
+  fi
+  if [[ "$agy_status" != "-" && "$agy_status" != "SUCCESS" ]]; then
+    reasons="agy final status is '$agy_status', not SUCCESS"
   fi
   changed="$({
     git -C "$wt" diff --name-only origin/main
@@ -166,9 +272,12 @@ verify_gate() {
   if grep -q '^\.github/workflows/' <<<"$changed"; then
     reasons="${reasons:+$reasons$'\n'}changes under .github/workflows/ — the bot has no workflows permission; move them to an owner PR"
   fi
-  local log
+  prot="$(grep -E "$PROTECTED_RE" <<<"$changed" | grep -v '^\.github/workflows/' | head -n 10 | tr '\n' ' ' || true)"
+  if [[ -n "$prot" && "$ALLOW_PROTECTED" != 1 ]]; then
+    reasons="${reasons:+$reasons$'\n'}protected harness paths changed (${prot% }); an owner must pass --allow-protected after reviewing them"
+  fi
   log="$(mktemp)"
-  if ! make -C "$wt" lint test >"$log" 2>&1; then
+  if ! run_harness_make "$wt" "$log"; then
     reasons="${reasons:+$reasons$'\n'}make lint test failed: $(tail -n 5 "$log" | tr '\n' ' ' | cut -c1-400)"
   fi
   rm -f "$log"
@@ -188,7 +297,7 @@ commit_and_push() { # repo wt branch message
 # ------------------------------------------------------------------- main ---
 
 usage() {
-  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-2}"
 }
 
@@ -207,6 +316,7 @@ main() {
       --task) task="${2:?--task needs a value}"; shift 2 ;;
       --repo) repo="${2:?--repo needs a value}"; shift 2 ;;
       --yes) yes=1; shift ;;
+      --allow-protected) ALLOW_PROTECTED=1; shift ;;
       --dry-run) DRY_RUN=1; shift ;;
       -h | --help) usage 0 ;;
       -*) die "unknown option: $1" ;;
@@ -245,15 +355,13 @@ main() {
 
   # 1. branch + worktree
   local branch="agy/$idslug" n=1
+  run git -C "$root" fetch origin main
   if [[ "$DRY_RUN" != 1 ]]; then
-    run git -C "$root" fetch origin main
     while git -C "$root" show-ref --verify --quiet "refs/heads/$branch" ||
       git -C "$root" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; do
       n=$((n + 1))
       branch="agy/$idslug-$n"
     done
-  else
-    run git -C "$root" fetch origin main
   fi
   local wt
   wt="$(dirname "$root")/$(basename "$root").agy/${branch//\//-}"
@@ -286,7 +394,7 @@ Antigravity \`$mode\` run for **$idslug** (draft until the run passes its verifi
 Progress is reported on the \`antigravity/$mode\` check run.
 EOF
   local prurl pr
-  cap prurl "https://github.com/$repo/pull/<PR_NUMBER>" gh pr create --repo "$repo" --draft \
+  cap prurl "https://github.com/$repo/pull/<PR_NUMBER>" ghb pr create --repo "$repo" --draft \
     --base main --head "$branch" --title "agy($mode): $idslug" --body-file "$body"
   pr="${prurl##*/}"
   rm -f "$body"
@@ -316,7 +424,10 @@ Next steps:
        /$mode [skip-interview] $instruction
   4. Have the agent report at milestones:
        scripts/agy-report.sh <start|progress|blocked|done|failed> "<message>"
+     (agy-report.sh mints its own short-lived bot token per call; no token is
+     exported to your shell or to agy.)
   5. When finished, run: scripts/agy-report.sh done "<summary>"
+     Add --allow-protected only after you have reviewed changes to protected paths.
 EOF
     return 0
   fi
@@ -333,21 +444,26 @@ EOF
   cat >"$cb" <<'EOF'
 #!/usr/bin/env bash
 # Generated by agy-run.sh: PATCH the check run output from a summary file.
-gh api -X PATCH "repos/$AGY_REPO/check-runs/$AGY_CHECK_ID" \
+# Mints its own token per call; the token is never exported.
+GH_TOKEN="$("$AGY_TOKEN_SCRIPT" "$AGY_REPO")" gh api -X PATCH "repos/$AGY_REPO/check-runs/$AGY_CHECK_ID" \
   -f "output[title]=agy $AGY_MODE: running" -F "output[summary]=@$1" >/dev/null
 EOF
   chmod +x "$cb"
-  export AGY_REPO="$repo" AGY_CHECK_ID="$check_id" AGY_MODE="$mode"
 
   if [[ "$DRY_RUN" == 1 ]]; then
-    run agy -p "$prompt" --output-format stream-json --sandbox --print-timeout "$timeout"
+    run env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN \
+      agy -p "$prompt" --output-format stream-json --sandbox --print-timeout "$timeout"
     echo "+ | AGY_ON_PROGRESS=<patch check run $check_id> scripts/agy-events.sh > summary.json"
   else
     (
       cd "$wt"
-      agy -p "$prompt" --output-format stream-json --sandbox --print-timeout "$timeout"
+      env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN \
+        agy -p "$prompt" --output-format stream-json --sandbox --print-timeout "$timeout"
     ) | tee "$work/events.ndjson" |
-      AGY_ON_PROGRESS="$cb" AGY_SUMMARY_JSON="$summary_file" "$SCRIPT_DIR/agy-events.sh" ||
+      AGY_REPO="$repo" AGY_CHECK_ID="$check_id" AGY_MODE="$mode" \
+        AGY_TOKEN_SCRIPT="${BOT_TOKEN_SCRIPT:-$SCRIPT_DIR/bot-token.sh}" \
+        AGY_THROTTLE_SECONDS="${AGY_THROTTLE_SECONDS:-60}" \
+        AGY_ON_PROGRESS="$cb" AGY_SUMMARY_JSON="$summary_file" "$SCRIPT_DIR/agy-events.sh" ||
       agy_rc=$?
   fi
 
@@ -366,8 +482,12 @@ EOF
   fi
   if [[ -z "$GATE_REASONS" ]]; then
     commit_and_push "$repo" "$wt" "$branch" "feat($idslug): implement plan via agy $mode"
-    check_update "$repo" "$check_id" "agy $mode: passed" "Verification gate passed. $summary_md" success
-    run gh pr ready "$pr" --repo "$repo"
+    local final_sha
+    cap final_sha "<FINAL_SHA>" git -C "$wt" rev-parse HEAD
+    finalize_check "$repo" "$check_id" "antigravity/$mode" "$sha" "$final_sha" \
+      "agy $mode: passed" "Verification gate passed. $summary_md" success
+    ghb pr ready "$pr" --repo "$repo"
+    rm -rf "$work"
     echo "agy $mode run passed: $prurl"
     return 0
   fi
@@ -375,9 +495,9 @@ EOF
   bullets="- ${GATE_REASONS//$'\n'/$'\n'- }"
   msg="Verification gate FAILED for agy $mode ($summary_md):"$'\n'"$bullets"
   check_update "$repo" "$check_id" "agy $mode: failed" "$msg" failure
-  run gh pr comment "$pr" --repo "$repo" --body "$msg"
+  ghb pr comment "$pr" --repo "$repo" --body "$msg"
   echo "$msg" >&2
-  echo "raw events kept in $work/events.ndjson (may contain agent text; not uploaded)" >&2
+  echo "work dir kept for inspection: $work (events.ndjson may contain agent text; not uploaded)" >&2
   return 1
 }
 

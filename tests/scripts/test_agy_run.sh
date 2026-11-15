@@ -21,6 +21,9 @@ hasnt() {
 out="$("$run" boost "$plan" --repo o/r --dry-run 2>&1)"
 has "boost: agy flags" "$out" 'agy -p .* --output-format stream-json --sandbox'
 hasnt "boost: never --mode auto" "$out" 'mode auto'
+has "boost: agy runs with token env stripped" "$out" 'env -u GH_TOKEN -u GITHUB_TOKEN .*agy -p'
+has "boost: gate restores harness from origin/main" "$out" 'restored from origin/main'
+has "boost: final check run on superseding SHA" "$out" 'neutral'
 has "boost: prompt starts with /boost" "$out" '/boost'
 has "boost: branch agy/0001-github-cicd-pipeline" "$out" 'agy/0001-github-cicd-pipeline'
 has "boost: draft PR" "$out" 'gh pr create .*--draft'
@@ -47,6 +50,7 @@ hasnt "swarm --yes: no agy -p" "$out" 'agy -p'
 out="$("$run" teamwork "$plan" --repo o/r --task "extra" --dry-run 2>&1)"
 has "teamwork: interactive instructions" "$out" '/teamwork \[skip-interview\]'
 has "teamwork: mentions agy-report" "$out" 'agy-report.sh'
+has "teamwork: notes per-call token" "$out" 'mints its own short-lived bot token'
 hasnt "teamwork: no agy -p" "$out" 'agy -p'
 has "teamwork: cost class medium" "$out" 'cost class: medium'
 
