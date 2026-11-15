@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Draft**: waiting for the product owner to review and accept |
+| Status | **Accepted** by the product owner on 2026-11-15 (PR #1, `083d256`). Next: Stage 3, Build (`plan.md`) |
 | Source intent | [`intent.md`](intent.md), accepted 2026-11-15 (commit `7138c42`) |
 | SDLC stage | Stage 2, Design: "Requirements and design" |
 | Framework | [The AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook) |
