@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/local/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# promote <env> <sha>: make <sha>'s container the one the live URL serves.
+env_vars "${1:-}"
+sha_vars "${2:-}"
+
+[[ "$DRY_RUN" == "1" || -n "$(port_of "$REV")" ]] || die "$REV was never deployed"
+set_live "$REV"

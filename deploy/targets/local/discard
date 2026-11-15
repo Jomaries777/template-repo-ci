@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/local/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# discard <env> <sha>: stop and remove <sha>'s candidate container.
+env_vars "${1:-}"
+sha_vars "${2:-}"
+
+run docker rm -f "$REV" || true
+run rm -f "$STATE/$REV.port"

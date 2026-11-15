@@ -14,9 +14,9 @@ cat >"$tmp/deploy.sh" <<'EOF'
 echo "$*" >>"$CALLS"
 case "$1" in
   current) [[ -n "${CURRENT_EMPTY:-}" ]] || echo "svc-00001-old" ;;
-  revert) [[ -z "${REVERT_FAIL:-}" ]] || exit 1 ;;
+  revert) [[ -z "${REVERT_FAIL:-}" ]] || exit 1; touch "$CALLS.reverted" ;;
   deploy-dark) [[ -z "${DARK_FAIL:-}" ]] || exit 1; echo "https://cand.example" ;;
-  url) echo "https://live.example" ;;
+  url) if [[ -n "${URL_FOLLOWS_REVERT:-}" && -e "$CALLS.reverted" ]]; then echo "https://prev.example/"; else echo "https://live.example/"; fi ;;
 esac
 EOF
 # Fake smoke: fails for the URL in SMOKE_FAIL_URL; with SMOKE_FAIL_AFTER=n,
@@ -40,8 +40,7 @@ exit 0
 EOF
 chmod +x "$tmp/deploy.sh" "$tmp/smoke" "$tmp/bin/curl"
 export PATH="$tmp/bin:$PATH" DEPLOY_SH="$tmp/deploy.sh" SMOKE_CMD="$tmp/smoke" RELEASE_INTERVAL=0
-# The fake deploy.sh prints a URL with a trailing slash, as some hosts do.
-sed -i 's|echo "https://live.example" ;;|echo "https://live.example/" ;;|' "$tmp/deploy.sh"
+# The fake deploy.sh prints its live URL with a trailing slash, as some hosts do.
 
 sha=1234567abcdef
 
@@ -166,6 +165,12 @@ lacks "failed dark deploy: never promotes" "promote"
 rc=0
 RELEASE_LIVE_CHECKS=12 RELEASE_INTERVAL=60 "$release" dev "$sha" >/dev/null 2>&1 || rc=$?
 rc_is "rejects live checks longer than 10 minutes with 64" 64
+
+# --- the re-check after revert asks for the live URL again (targets whose
+# URL follows the serving revision, like the test-only local target)
+run follows URL_FOLLOWS_REVERT=1 SMOKE_FAIL_NTH=3
+has "revert re-check: uses the URL after revert" "smoke https://prev.example"
+if grep -q "^::error.*(revert confirmed)" "$tmp/out.follows"; then pass "revert re-check: confirmed against the restored URL"; else fail "revert re-check: not confirmed"; fi
 
 # --- argument validation
 for args in "staging $sha" "dev not-a-sha" "dev"; do

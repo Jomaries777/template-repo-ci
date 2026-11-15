@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/local/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# publish <sha>: nothing to push. Jobs don't share images, so deploy-dark
+# builds the version itself on the runner that serves it.
+[[ "${1:-}" =~ ^[0-9a-f]{7,40}$ ]] || usage_error "invalid commit sha: ${1:-<empty>}"
+echo "local: nothing to publish; deploy-dark builds ${1:0:7} on its own runner" >&2

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/local/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# bootstrap: nothing to provision; the test-only local target needs only Docker.
+command -v docker >/dev/null 2>&1 || echo "local: docker is not installed here; the GitHub Actions runner has it" >&2
+echo "local: nothing to provision (test-only target)" >&2

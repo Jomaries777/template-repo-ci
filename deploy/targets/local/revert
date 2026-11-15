@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/local/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# revert <env> <revision>: make <revision> serve again.
+env_vars "${1:-}"
+rev="${2:-}"
+[[ "$rev" =~ ^[a-z0-9-]+$ ]] || usage_error "invalid revision: ${rev:-<empty>}"
+
+[[ "$DRY_RUN" == "1" || -n "$(port_of "$rev")" ]] || die "$rev is not running here"
+set_live "$rev"

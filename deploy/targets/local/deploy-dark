@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/local/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# deploy-dark <env> <sha>: build and start <sha> next to the serving version,
+# with no traffic, and print its own URL (the candidate).
+env_vars "${1:-}"
+sha_vars "${2:-}"
+
+ctx="${DEPLOY_BUILD_CONTEXT:-$root/$(stack_dir)}"
+start_rev "$REV" "$ctx" "$SHA"
+printf 'http://127.0.0.1:%s\n' "$(port_of "$REV")"

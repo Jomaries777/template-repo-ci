@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/local/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# cleanup <env>: stop every container of <env> except the serving one.
+env_vars "${1:-}"
+
+keep="$(live)"
+if [[ "$DRY_RUN" == "1" ]]; then
+  revs="${APP}-${ENV_NAME}-c1111111 $keep"
+else
+  revs="$(docker ps -a --filter "name=^${APP}-${ENV_NAME}-c" --format '{{.Names}}')"
+fi
+for rev in $revs; do
+  [[ "$rev" == "$keep" ]] && continue
+  run docker rm -f "$rev" || true
+  run rm -f "$STATE/$rev.port"
+done

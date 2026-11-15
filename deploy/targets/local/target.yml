@@ -1,0 +1,15 @@
+name: local
+# TEST ONLY: runs each version as a Docker container on the job's own machine
+# (the GitHub Actions runner), to test deploy.yml and release.sh end to end
+# without a cloud account. Not a real hosting target: nothing outlives the job.
+test_only: true
+artifact: image
+dark_deploy: true
+environments:
+  - dev
+  - production
+auth: none
+required_variables: []
+environment_secrets: []
+cli: docker
+idle: "$0 when idle because nothing outlives the job"
