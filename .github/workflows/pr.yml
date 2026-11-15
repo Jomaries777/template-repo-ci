@@ -159,7 +159,8 @@ jobs:
 
   codeql:
     needs: classify
-    if: needs.classify.outputs.class == 'code'
+    # Code and config (workflows are this template's main code; CodeQL 'actions' covers them).
+    if: needs.classify.outputs.class != 'docs'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Advanced setup inside this workflow so claude-review can wait on it (C3).

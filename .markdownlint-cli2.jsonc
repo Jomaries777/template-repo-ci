@@ -19,7 +19,9 @@
     "MD031": false,
     "MD032": false,
     // Directory trees and plain output blocks have no language.
-    "MD040": false
+    "MD040": false,
+    // Agent, command and skill files start with YAML front matter, not an H1.
+    "MD041": false
   },
   "ignores": ["node_modules/**", ".venv/**", "dist/**", "coverage/**"]
 }
