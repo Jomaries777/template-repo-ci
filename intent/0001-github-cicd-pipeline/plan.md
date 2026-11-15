@@ -69,7 +69,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 2. Deploy contract: `scripts/deploy.sh` dispatcher with `DEPLOY_DRY_RUN`, plus `deploy/targets/cloud-run/*` (WIF, Artifact Registry + cleanup policy, `<app>-dev` / `<app>-prod`, min 0 / max 2 instances, $10 budget) and `deploy/targets/none`. Runs in parallel with step 1.
 3. `deploy.yml` + the `release` composite (dark deploy → pre-traffic test → promote → live test ×3 → auto-revert → report with `claude -p` triage). Depends on step 2.
 4. `bootstrap.sh` (STACK/TARGET, cleanup, secret prompts, README stub) and `doctor.sh` (FR-15). Depends on steps 1 and 2.
-5. `dependabot-automerge.yml` (bot approves security/patch PRs, C1). Independent of the other steps.
+5. `dependabot-automerge.yml` (bot approves patch PRs, C1; minor and major updates, security ones included, wait for the owner). Independent of the other steps.
 6. **E2E on a sandbox repo** `sandbox-node-cloudrun` (public, created from the template): prove criteria 1–8 for this slice, including a deliberately broken live smoke test → auto-revert in under 2 min, and a real Dependabot patch auto-merge.
 
 ### M3: Remaining stacks and adapters (PRs #9–#12, all four in parallel)
@@ -88,7 +88,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 |---|---|---|
 | M0: plan, owner setup, spikes | ✅ Done | Jomaries777/template-repo-ci#2 (spike, closed), Jomaries777/template-repo-ci#3 |
 | M1: template core | ✅ Done. The ruleset and repo settings are applied with `scripts/gh-settings.sh --template`, and the repo is a template | Jomaries777/template-repo-ci#4 (CI), Jomaries777/template-repo-ci#5 (agent config), Jomaries777/template-repo-ci#6 (agy bridge), Jomaries777/template-repo-ci#7 (settings and ruleset) |
-| M2: Node + Cloud Run slice | In progress (cloud session, owner PRs): step 1 merged (#9), step 2 (#10) | Jomaries777/template-repo-ci#9, Jomaries777/template-repo-ci#10 |
+| M2: Node + Cloud Run slice | In progress (cloud session, owner PRs): steps 1 (#9) and 2 (#10) merged; step 5 in review | Jomaries777/template-repo-ci#9, Jomaries777/template-repo-ci#10 |
 | M3: remaining stacks and adapters | Not started | — |
 | M4: maintain, metrics, docs | Not started | — |
 
@@ -113,6 +113,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 | 2026-11-15 | The template ships a root `deploy.yml` (`target: none`); bootstrap rewrites it with the chosen `TARGET` (plan "Files that change" says bootstrap writes it). `deploy-dark` uses `--update-env-vars`, not `--set-env-vars`. | The template repo itself deploys nothing, and the dispatcher needs a config to read. `--set-env-vars` would wipe env vars set outside the deploy (Claude review on #10) |
 | 2026-11-15 | The Cloud Run WIF provider admits only `refs/heads/main` of this repository (`assertion.ref`), not every ref. The deploy SA's `artifactregistry.writer` is bound on the `app` repository, not the project. | Least privilege (Claude review on #10): PR branches can't impersonate the deploy SA, and the SA can't write other registries |
 | 2026-11-15 | Owner decisions after #10: (1) the Artifact Registry policy also deletes tagged images older than 30 days (the 5 newest are still kept). `promote` tags the new image `<env>` and the image of the revision serving before it `<env>-prev` (both before moving traffic), `revert` re-tags the restored image, and a `keep-deployed` rule never deletes `dev*` / `production*` tags, so the image a cold start pulls (min-instances 0) is never cleaned up. `<env>-prev` is read from the serving revision, and a retried promote (its own revision already serving) leaves it alone. Only the previous revision is protected, which is the one `release.sh` reverts to; an older revision's image may be cleaned up. No deployment predates these tags (step 6 is the first). Step 6 checks the live policy with `gcloud artifacts repositories list-cleanup-policies`, that `tagPrefixes` matches `production-prev`, that `gcloud artifacts docker tags add` moves an existing tag, and which image form `revisions describe` reports; (2) WIF bound to `refs/heads/main` is enough, without binding to the `environment` claim; (3) both services serving Google's public sample image until the first real deploy is acceptable. | (1) `publish` tags every image with its SHA, so without an age limit storage passes the free tier, breaking NFR-1's $0 when idle. (2) and (3) accepted as-is by the owner |
+| 2026-11-15 | `dependabot-automerge.yml` auto-merges only `semver-patch` updates. Security updates that are minor or major wait for the owner (FR-7 says security and patch updates auto-merge). Built by Claude Code in a cloud session as an owner PR. | The bot App can't read Dependabot alerts, so the workflow can't tell a security update apart from a version update. Patch-only is the safe subset. Workflow files come from owner PRs (the bot has no `workflows` permission) |
 
 ## Risks
 
