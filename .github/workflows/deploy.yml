@@ -7,7 +7,10 @@
 # never edits this file. Docs-only and config-only merges stop after classify.
 #
 # One deploy at a time, never cancelled halfway: the adapters' cleanup relies
-# on deploys to an environment never overlapping (plan.md Deviations).
+# on deploys to an environment never overlapping (plan.md Deviations). The
+# group is repo-wide, so a production run waiting for approval holds back
+# later deploys; GitHub keeps only the newest pending run, and classify covers
+# everything since the last production deploy, so nothing is skipped.
 name: deploy
 
 on:
@@ -32,6 +35,9 @@ jobs:
   classify:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      deployments: read
     outputs:
       class: ${{ steps.classify.outputs.class }}
       target: ${{ steps.config.outputs.target }}
@@ -42,25 +48,32 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
+          # Full history: the base can be any earlier deploy.
+          fetch-depth: 0
           persist-credentials: false
-      - name: Classify the merge
+      - name: Classify everything since the last production deploy
         id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # The first commit of a new repo has no parent: treat it as code.
-          # deploy.yml ships with target: none, so nothing deploys until bootstrap.
-          if git rev-parse -q --verify HEAD~1 >/dev/null; then
-            class="$(scripts/classify.sh HEAD~1 HEAD)"
+          # Not HEAD~1: a cancelled pending run must not let its code skip
+          # deploying (scripts/deploy-base.sh). No production deploy yet (or
+          # the template's target: none) means code: nothing to compare with.
+          base="$(scripts/deploy-base.sh "$GITHUB_SHA")"
+          if [[ -n "$base" ]]; then
+            class="$(scripts/classify.sh "$base" "$GITHUB_SHA")"
           else
             class=code
           fi
           echo "class=$class" >>"$GITHUB_OUTPUT"
-          echo "Change class: **$class**" >>"$GITHUB_STEP_SUMMARY"
+          echo "Change class since ${base:0:7}: **$class**" >>"$GITHUB_STEP_SUMMARY"
       - name: Read deploy.yml
         id: config
         run: |
-          scripts/deploy-config.sh | tee -a "$GITHUB_OUTPUT"
-          echo "Deploy target: **$(scripts/deploy-config.sh | sed -n 's/^target=//p')**" >>"$GITHUB_STEP_SUMMARY"
+          # Captured first, so a failing deploy-config.sh fails this step.
+          config="$(scripts/deploy-config.sh)"
+          echo "$config" >>"$GITHUB_OUTPUT"
+          echo "Deploy target: **$(sed -n 's/^target=//p' <<<"$config")**" >>"$GITHUB_STEP_SUMMARY"
 
   artifact:
     needs: classify
@@ -132,10 +145,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          reviewers="$(gh api "repos/$GITHUB_REPOSITORY/environments/production" \
-            --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length')"
-          if [[ "$reviewers" -lt 1 ]]; then
-            echo "::error title=production::The production environment has no required reviewer. Run make bootstrap (or scripts/gh-settings.sh) before deploying."
+          env_json="$(gh api "repos/$GITHUB_REPOSITORY/environments/production")"
+          if ! jq -e '[.protection_rules[]? | select(.type == "required_reviewers")] | length > 0' >/dev/null <<<"$env_json"; then
+            echo "::error title=production::The production environment has no required reviewer. Run make bootstrap before deploying."
+            exit 1
+          fi
+          if ! jq -e '.deployment_branch_policy.custom_branch_policies == true or .deployment_branch_policy.protected_branches == true' >/dev/null <<<"$env_json"; then
+            echo "::error title=production::The production environment accepts deploys from any branch. Run make bootstrap before deploying."
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -65,6 +65,14 @@ live_check() {
   smoke "$1" && curl -fsS --max-time 10 -o /dev/null "$1/healthz"
 }
 
+# Fail closed: without the stack's prod-safe suite (bootstrap writes `stack:`
+# to deploy.yml), the template's stub `make smoke` would pass vacuously.
+config="${DEPLOY_CONFIG:-$root/deploy.yml}"
+if [[ -z "${SMOKE_CMD:-}" ]] && ! grep -qE '^stack:[[:space:]]*[a-z0-9-]+' "$config" 2>/dev/null; then
+  log "no smoke suite: $config names no stack (run make bootstrap); refusing to deploy"
+  exit 1
+fi
+
 log "1/7 current revision"
 prev="$("$deploy_sh" current "$env_name")"
 log "serving now: ${prev:-<none>}"
@@ -91,6 +99,7 @@ log "4/7 promote $sha"
 "$deploy_sh" promote "$env_name" "$sha"
 
 url="$("$deploy_sh" url "$env_name")"
+url="${url%/}"
 log "5/7 live test against $url ($checks checks, ${interval}s apart)"
 failed=0
 for ((i = 1; i <= checks; i++)); do
@@ -109,7 +118,10 @@ if ((failed)); then
     exit 1
   fi
   log "6/7 reverting to $prev"
-  "$deploy_sh" revert "$env_name" "$prev"
+  if ! "$deploy_sh" revert "$env_name" "$prev"; then
+    log "revert failed; manual action needed"
+    exit 1
+  fi
   if live_check "$url"; then
     log "revert confirmed: $prev is serving and healthy"
   else

@@ -13,7 +13,8 @@ cat >"$tmp/deploy.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >>"$CALLS"
 case "$1" in
-  current) echo "svc-00001-old" ;;
+  current) [[ -n "${CURRENT_EMPTY:-}" ]] || echo "svc-00001-old" ;;
+  revert) [[ -z "${REVERT_FAIL:-}" ]] || exit 1 ;;
   deploy-dark) echo "https://cand.example" ;;
   url) echo "https://live.example" ;;
 esac
@@ -38,6 +39,8 @@ exit 0
 EOF
 chmod +x "$tmp/deploy.sh" "$tmp/smoke" "$tmp/bin/curl"
 export PATH="$tmp/bin:$PATH" DEPLOY_SH="$tmp/deploy.sh" SMOKE_CMD="$tmp/smoke" RELEASE_INTERVAL=0
+# The fake deploy.sh prints a URL with a trailing slash, as some hosts do.
+sed -i 's|echo "https://live.example" ;;|echo "https://live.example/" ;;|' "$tmp/deploy.sh"
 
 sha=1234567abcdef
 
@@ -114,6 +117,38 @@ rc_is "no dark deploy: exits 0" 0
 lacks "no dark deploy: skips deploy-dark" "deploy-dark"
 has "no dark deploy: promotes" "promote dev $sha"
 has "no dark deploy: cleans up" "cleanup dev"
+
+# --- first deploy: nothing to revert to
+run first CURRENT_EMPTY=1 SMOKE_FAIL_AFTER=1
+if [[ "$rc" == 1 ]] && grep -q "no previous revision" "$tmp/err.first"; then pass "no previous revision: fails and says so"; else fail "no previous revision (rc $rc)"; fi
+lacks "no previous revision: no revert" "revert"
+lacks "no previous revision: no cleanup" "cleanup"
+
+# --- revert whose re-check fails
+run recheck SMOKE_FAIL_AFTER=2
+if grep -q "revert did not pass the live check" "$tmp/err.recheck"; then pass "failed re-check after revert: says manual action is needed"; else fail "failed re-check: no message"; fi
+rc_is "failed re-check after revert: exits 1" 1
+
+# --- revert itself fails
+run revfail SMOKE_FAIL_AFTER=2 REVERT_FAIL=1
+if [[ "$rc" == 1 ]] && grep -q "revert failed; manual action needed" "$tmp/err.revfail"; then pass "failed revert: logs it and exits 1"; else fail "failed revert (rc $rc)"; fi
+
+# --- the live URL's trailing slash is stripped before /healthz
+run slash
+has "trailing slash: /healthz has a single slash" "curl https://live.example/healthz"
+
+# --- fail closed without a stack smoke suite
+printf 'target: cloud-run\n' >"$tmp/nostack.yml"
+export CALLS="$tmp/calls.nostack"
+: >"$CALLS"
+rc=0
+env -u SMOKE_CMD DEPLOY_CONFIG="$tmp/nostack.yml" "$release" dev "$sha" 2>"$tmp/err.nostack" || rc=$?
+calls="$(cat "$CALLS")"
+if [[ "$rc" == 1 && -z "$calls" ]] && grep -q "no smoke suite" "$tmp/err.nostack"; then pass "no stack smoke suite: refuses before deploying anything"; else fail "no stack smoke suite (rc $rc, calls [$calls])"; fi
+printf 'target: cloud-run\nstack: node\n' >"$tmp/stack.yml"
+rc=0
+env -u SMOKE_CMD DEPLOY_CONFIG="$tmp/stack.yml" "$release" dev "$sha" >/dev/null 2>"$tmp/err.stack" || rc=$?
+if ! grep -q "no smoke suite" "$tmp/err.stack"; then pass "a stack in deploy.yml passes the smoke-suite check"; else fail "stack present but refused"; fi
 
 # --- argument validation
 for args in "staging $sha" "dev not-a-sha" "dev"; do
