@@ -4,6 +4,7 @@
 # manager), and generated dirs dist/ build/ coverage/.
 # Input: hook JSON on stdin. Exit 2 blocks and shows stderr to Claude.
 set -euo pipefail
+command -v jq >/dev/null || { echo "BLOCKED: Claude Code hooks need jq (brew install jq)." >&2; exit 2; }
 
 path="$(jq -r '.tool_input.file_path // empty')"
 [[ -n "$path" ]] || exit 0

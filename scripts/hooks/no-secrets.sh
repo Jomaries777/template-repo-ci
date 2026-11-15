@@ -10,6 +10,7 @@
 # that merely mentions a token pattern (e.g. grep) is blocked.
 # Exit 2 blocks and shows stderr to Claude. CI's gitleaks job is the backstop.
 set -euo pipefail
+command -v jq >/dev/null || { echo "BLOCKED: Claude Code hooks need jq (brew install jq)." >&2; exit 2; }
 
 content="$(jq -r '[.tool_input.content, .tool_input.new_string, .tool_input.command, (.tool_input.edits[]?.new_string)] | map(select(. != null)) | join("\n")')"
 [[ -n "$content" ]] || exit 0

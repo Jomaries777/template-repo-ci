@@ -5,6 +5,7 @@
 # Exit 0 = fine. Exit 2 = lint errors; output goes to stderr so Claude sees
 # and fixes them. Scoped to the one changed file to stay fast.
 set -euo pipefail
+command -v jq >/dev/null || { echo "BLOCKED: Claude Code hooks need jq (brew install jq)." >&2; exit 2; }
 
 path="$(jq -r '.tool_input.file_path // empty')"
 [[ -n "$path" ]] || exit 0

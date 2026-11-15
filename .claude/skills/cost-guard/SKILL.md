@@ -9,7 +9,7 @@ Deterministic first: if a script can decide it, do not spend AI quota on it. Ski
 
 | Check | Enforced by |
 |---|---|
-| Every workflow job sets `timeout-minutes` | `actionlint` rule in `make lint`; `REVIEW.md` cost pass |
+| Every workflow job sets `timeout-minutes` | `REVIEW.md` cost pass (no script check yet) |
 | Workflows are path-filtered or skipped for docs-only changes; no work on every push | `classify.sh` and the `ci-ok` gate; `REVIEW.md` cost pass |
 | Cloud resources scale to zero (min instances 0) and have a max cap | `REVIEW.md` cost pass; adapter `bootstrap` sets caps |
 | Budget alert configured wherever the target can bill | adapter `bootstrap`; `make doctor` |

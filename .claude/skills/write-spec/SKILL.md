@@ -7,7 +7,7 @@ description: Use when an intent.md has been accepted and a design is needed, or 
 
 Turn an accepted intent into a design the owner can accept.
 
-Enforced by: the `hygiene` job (a spec must exist before `code` PRs touching `src/`; warning only at first). This skill is advisory.
+Enforced by: owner review against `REVIEW.md`. A `hygiene` check for a spec before `src/` changes is planned, not built yet. This skill is advisory.
 
 ## Checklist
 

@@ -8,6 +8,7 @@
 # Test overrides: TEST_FIRST_BRANCH, TEST_FIRST_COMMITS_AHEAD.
 # Exit 2 blocks and shows stderr to Claude.
 set -euo pipefail
+command -v jq >/dev/null || { echo "BLOCKED: Claude Code hooks need jq (brew install jq)." >&2; exit 2; }
 
 path="$(jq -r '.tool_input.file_path // empty')"
 [[ -n "$path" ]] || exit 0

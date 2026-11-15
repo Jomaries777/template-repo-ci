@@ -58,6 +58,24 @@ expect "secrets: bash clean command allowed" 0 "$s" \
   '{"tool_name":"Bash","tool_input":{"command":"make lint test"}}' A=1
 expect "secrets: empty allowed" 0 "$s" '{"tool_input":{"file_path":"a"}}' A=1
 
+# test-first: real git path (merge-base + rev-list) in a temp repo
+tf_repo="$(mktemp -d)"
+trap 'rm -rf "$tf_repo"' EXIT
+(
+  cd "$tf_repo"
+  git init -q -b main
+  git -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
+  git checkout -q -b fix/real
+) >/dev/null
+tf_expect() { # name want
+  local got=0
+  (cd "$tf_repo" && edit tests/foo.sh | "$hooks/test-first.sh") >/dev/null 2>&1 || got=$?
+  if [[ "$got" == "$2" ]]; then echo "ok - $1"; else echo "not ok - $1 (want $2, got $got)"; fail=1; fi
+}
+tf_expect "test-first (git): fresh fix/ branch allows test edit" 0
+git -C "$tf_repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "test: failing"
+tf_expect "test-first (git): after first commit blocks test edit" 2
+
 # test-first
 t="$hooks/test-first.sh"
 fb="TEST_FIRST_BRANCH=fix/bug"
