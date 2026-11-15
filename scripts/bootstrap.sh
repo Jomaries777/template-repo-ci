@@ -97,6 +97,12 @@ fi
 name="${repo#*/}"
 name="${name:-$(basename "$root")}"
 
+# Bootstrap commits with `git add -A`, so it must start from a clean tree:
+# then its commit holds only its own changes, never a stray local file.
+if ! ((local_only)) && ! ((dry_run)) && [[ -n "$(git status --porcelain)" ]]; then
+  usage_error "the working tree has uncommitted changes; commit or stash them first"
+fi
+
 # fs <cmd...>: a file change, printed in dry run.
 fs() { run "$@"; }
 
@@ -178,6 +184,16 @@ step "Git: commit and push"
 if ((dry_run)) || [[ -n "$(git status --porcelain)" ]]; then
   run git add -A
   run git commit -q -m "chore: bootstrap $stack on $target"
+else
+  echo "    nothing to commit"
+fi
+# Push whenever the commit isn't on origin/main yet, so a rerun retries a
+# push that failed or was interrupted after the commit.
+need_push=1
+if ! ((dry_run)) && git fetch -q origin main 2>/dev/null && git merge-base --is-ancestor HEAD origin/main; then
+  need_push=0
+fi
+if ((need_push)); then
   # Fail closed: if the rulesets can't be read, never push to main.
   has_ruleset=""
   if ! ((dry_run)); then
@@ -189,11 +205,17 @@ if ((dry_run)) || [[ -n "$(git status --porcelain)" ]]; then
     run git push origin HEAD:main
   else
     run git push -u origin HEAD:refs/heads/chore/bootstrap
-    run gh pr create --repo "$repo" --head chore/bootstrap --base main \
-      --title "chore: bootstrap $stack on $target" --body "Files written by scripts/bootstrap.sh."
+    open_prs=""
+    ((dry_run)) || open_prs="$(gh pr list --repo "$repo" --head chore/bootstrap --json number -q length)"
+    if [[ "${open_prs:-0}" == 0 ]]; then
+      run gh pr create --repo "$repo" --head chore/bootstrap --base main \
+        --title "chore: bootstrap $stack on $target" --body "Files written by scripts/bootstrap.sh."
+    else
+      echo "    PR from chore/bootstrap already open"
+    fi
   fi
 else
-  echo "    nothing to commit"
+  echo "    already pushed"
 fi
 
 # --- 3. GitHub
@@ -204,9 +226,17 @@ settings_args=(--repo "$repo")
 "$root/scripts/gh-settings.sh" "${settings_args[@]}"
 
 step "GitHub: Environments dev and production"
-owner_id=""
-((dry_run)) || owner_id="$(gh api "users/$owner" --jq .id)"
-owner_id="${owner_id:-0}"
+# The production reviewer must be a user. An organization owner names one
+# with BOOTSTRAP_REVIEWER.
+reviewer="${BOOTSTRAP_REVIEWER:-$owner}"
+[[ "$reviewer" =~ ^[A-Za-z0-9-]+$ ]] || usage_error "invalid BOOTSTRAP_REVIEWER: $reviewer"
+owner_id=0
+if ! ((dry_run)); then
+  account="$(gh api "users/$reviewer")" || die "cannot read GitHub account $reviewer"
+  [[ "$(jq -r .type <<<"$account")" == User ]] ||
+    die "$reviewer is an organization; set BOOTSTRAP_REVIEWER to the user who approves production"
+  owner_id="$(jq -r .id <<<"$account")"
+fi
 run gh api -X PUT "repos/$repo/environments/dev" --silent
 run gh api -X PUT "repos/$repo/environments/production" --silent --input - <<JSON
 {"reviewers":[{"type":"User","id":$owner_id}],
@@ -251,7 +281,11 @@ set_secret() {
 claude_token() {
   local v
   v="$(keychain claude-code-oauth-token)"
-  [[ -n "$v" ]] || { read -r -s -p "CLAUDE_CODE_OAUTH_TOKEN (from claude setup-token): " v </dev/tty; echo >&2; }
+  if [[ -z "$v" ]]; then
+    { read -r -s -p "CLAUDE_CODE_OAUTH_TOKEN (from claude setup-token): " v </dev/tty; } 2>/dev/null ||
+      die "no terminal to prompt for CLAUDE_CODE_OAUTH_TOKEN; store it in the Keychain (service claude-code-oauth-token)"
+    echo >&2
+  fi
   printf '%s' "${v//[[:space:]]/}"
 }
 bot_key() {
@@ -266,7 +300,10 @@ set_secret BOT_APP_PRIVATE_KEY dependabot bot_key
 app_id="${BOT_APP_ID:-}"
 if [[ -z "$app_id" ]] && ! ((dry_run)); then
   app_id="$(gh variable get BOT_APP_ID --repo "$repo" 2>/dev/null || true)"
-  [[ -n "$app_id" ]] || read -r -p "Bot App ID (github.com/settings/apps): " app_id </dev/tty
+  if [[ -z "$app_id" ]]; then
+    { read -r -p "Bot App ID (github.com/settings/apps): " app_id </dev/tty; } 2>/dev/null ||
+      die "no terminal to prompt for the bot App ID; set BOT_APP_ID"
+  fi
 fi
 if ((dry_run)); then
   [[ -z "$app_id" || "$app_id" =~ ^[0-9]+$ ]] || usage_error "BOT_APP_ID must be a number"
@@ -280,7 +317,12 @@ step "Target: $target"
 if [[ "$target" == none ]]; then
   echo "    nothing to provision"
 else
-  export APP_NAME="${APP_NAME:-$(tr 'A-Z_.' 'a-z--' <<<"$name")}"
+  if [[ -z "${APP_NAME:-}" ]]; then
+    APP_NAME="$(tr 'A-Z_.' 'a-z--' <<<"$name")"
+    # Cloud Run service names must start with a letter.
+    [[ "$APP_NAME" =~ ^[a-z] ]] || APP_NAME="app-$APP_NAME"
+  fi
+  export APP_NAME
   export GITHUB_REPOSITORY="$repo"
   if ((dry_run)); then
     DEPLOY_DRY_RUN=1 DEPLOY_TARGET="$target" "$root/scripts/deploy.sh" bootstrap 2>&1 | sed 's/^/    /'

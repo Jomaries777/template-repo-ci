@@ -115,6 +115,28 @@ check "unreadable rulesets: stops with an error" '[[ $rc == 1 ]] && grep -q "not
 # The copy has no remote, so any git push would print "fatal: ... origin".
 check "unreadable rulesets: never pushes" '! grep -q "fatal:" <<<"$out" && [[ "$(cat "$tmp/calls")" == "gh api repos/acme/hello/rulesets" ]]'
 check "unreadable rulesets: the commit stays local" '[[ "$(cd "$d" && git log --oneline | wc -l)" -eq 2 ]]'
+# A rerun must retry the push, not stop at "nothing to commit".
+rc=0
+out="$(cd "$d" && "$d/scripts/bootstrap.sh" --stack node --target none --repo acme/hello 2>&1)" || rc=$?
+check "rerun after a failed push: tries to push again" '[[ $rc == 1 ]] && grep -q "not pushing" <<<"$out"'
+check "rerun after a failed push: no second commit" '[[ "$(cd "$d" && git log --oneline | wc -l)" -eq 2 ]]'
+
+# A dirty tree is refused before anything changes.
+e="$tmp/e"
+copy "$e"
+(cd "$e" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm init && echo stray >stray.txt)
+rc=0
+out="$(cd "$e" && "$e/scripts/bootstrap.sh" --stack node --target none --repo acme/hello 2>&1)" || rc=$?
+check "dirty tree: refused with 64" '[[ $rc == 64 ]] && grep -q "uncommitted changes" <<<"$out"'
+check "dirty tree: nothing changed" '[[ -d "$e/deploy/targets/cloud-run" && ! -f "$e/README.md" ]]'
+
+# A repo name that starts with a digit gets a letter prefix for Cloud Run.
+f="$tmp/f"
+copy "$f"
+rc=0
+out="$(BOT_APP_ID=1 GCP_PROJECT_ID=hello-proj-1 BILLING_ACCOUNT=0A1B2C-3D4E5F-6A7B8C \
+  "$f/scripts/bootstrap.sh" --stack node --target cloud-run --repo acme/9lives --dry-run 2>&1)" || rc=$?
+check "digit-leading repo: APP_NAME gets app- prefix" 'grep -q "gh variable set APP_NAME --repo acme/9lives --body app-9lives" <<<"$out"'
 : >"$tmp/calls"
 
 [[ "$failures" -eq 0 ]] || {

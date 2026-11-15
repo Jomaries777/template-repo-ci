@@ -100,7 +100,7 @@ Requirements trace back to the intent: **FR** = functional requirement, **NFR** 
 ├── deploy.yml                     # chosen deploy target + environments + smoke settings (FR-13)
 ├── deploy/targets/                # adapters: cloud-run (default), cloudflare-workers, github-pages, none
 ├── intent/
-│   └── 0000-example/              # worked example; deleted by bootstrap
+│   └── .gitkeep                   # bootstrap removes the template's own intent folders
 ├── .claude/
 │   ├── settings.json              # team hooks + permissions
 │   ├── commands/                  # /intent, /spec, /plan, /sweep
@@ -123,10 +123,10 @@ Requirements trace back to the intent: **FR** = functional requirement, **NFR** 
 │   ├── agy-run.sh / agy-events.sh # FR-4
 │   ├── classify.sh                # docs | config | code (shared by PR and deploy)
 │   └── sdlc-metrics.sh            # FR-10 monthly metrics
-└── .template/selftest.yml         # template-only CI; removed by bootstrap
+(template-only CI is .github/workflows/template-selftest.yml; bootstrap removes it)
 ```
 
-`make bootstrap STACK=node|python|go TARGET=cloud-run|cloudflare-workers|github-pages|none` copies the chosen stack's files to the root, writes `deploy.yml`, and deletes the unused stacks and adapters, `intent/0000-example` and `.template/`. It then runs `gh-settings.sh` and the chosen adapter's `bootstrap`.
+`make bootstrap STACK=node|python|go TARGET=cloud-run|cloudflare-workers|github-pages|none` keeps the chosen stack in `stacks/<stack>/` (the root `Makefile` delegates to it), writes `deploy.yml` with `target:` and `stack:`, and deletes the unused stacks and adapters, the template's own `intent/` folders, its self-test workflow and its bootstrap test. It then runs `gh-settings.sh`, creates the Environments, sets the secrets and runs the chosen adapter's `bootstrap` (amended 2026-11-15, see plan.md Deviations).
 
 ### 4.2 Change classifier (`scripts/classify.sh`, no AI)
 

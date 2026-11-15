@@ -45,9 +45,9 @@ EOF
   "deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}]}
 EOF
   echo '{"branch_policies":[{"name":"main","type":"branch"}]}' >"$FIX/${R}_environments_production_deployment-branch-policies.json"
-  echo '{"secrets":[{"name":"CLAUDE_CODE_OAUTH_TOKEN"},{"name":"BOT_APP_PRIVATE_KEY"}]}' >"$FIX/${R}_actions_secrets.json"
-  echo '{"secrets":[{"name":"BOT_APP_PRIVATE_KEY"}]}' >"$FIX/${R}_dependabot_secrets.json"
-  echo '{"variables":[{"name":"BOT_APP_ID","value":"1"},{"name":"GCP_PROJECT_ID","value":"p"},{"name":"GCP_REGION","value":"us-central1"},{"name":"GCP_WIF_PROVIDER","value":"w"},{"name":"GCP_DEPLOY_SA","value":"s"},{"name":"APP_NAME","value":"hello"}]}' >"$FIX/${R}_actions_variables.json"
+  echo '{"secrets":[{"name":"CLAUDE_CODE_OAUTH_TOKEN"},{"name":"BOT_APP_PRIVATE_KEY"}]}' >"$FIX/${R}_actions_secrets?per_page=100.json"
+  echo '{"secrets":[{"name":"BOT_APP_PRIVATE_KEY"}]}' >"$FIX/${R}_dependabot_secrets?per_page=100.json"
+  echo '{"variables":[{"name":"BOT_APP_ID","value":"1"},{"name":"GCP_PROJECT_ID","value":"p"},{"name":"GCP_REGION","value":"us-central1"},{"name":"GCP_WIF_PROVIDER","value":"w"},{"name":"GCP_DEPLOY_SA","value":"s"},{"name":"APP_NAME","value":"hello"}]}' >"$FIX/${R}_actions_variables?per_page=30.json"
 }
 
 pass() { echo "ok - $1"; }
@@ -102,9 +102,15 @@ break_one "production without a reviewer fails" "${R}_environments" '.environmen
 break_one "production from any branch fails" "${R}_environments" '.environments[1].deployment_branch_policy = null' "environment: production deploys from main only"
 break_one "production policy not main fails" "${R}_environments_production_deployment-branch-policies" '.branch_policies[0].name = "dev"' "environment: production branch policy is main"
 break_one "missing dev fails" "${R}_environments" '.environments |= map(select(.name != "dev"))' "environment: dev"
-break_one "missing Claude token fails" "${R}_actions_secrets" '.secrets |= map(select(.name != "CLAUDE_CODE_OAUTH_TOKEN"))' "secret: CLAUDE_CODE_OAUTH_TOKEN"
-break_one "missing Dependabot key fails" "${R}_dependabot_secrets" '.secrets = []' "Dependabot secret: BOT_APP_PRIVATE_KEY"
-break_one "missing BOT_APP_ID fails" "${R}_actions_variables" '.variables |= map(select(.name != "BOT_APP_ID"))' "variable: BOT_APP_ID"
+break_one "missing Claude token fails" "${R}_actions_secrets?per_page=100" '.secrets |= map(select(.name != "CLAUDE_CODE_OAUTH_TOKEN"))' "secret: CLAUDE_CODE_OAUTH_TOKEN"
+break_one "missing Dependabot key fails" "${R}_dependabot_secrets?per_page=100" '.secrets = []' "Dependabot secret: BOT_APP_PRIVATE_KEY"
+break_one "missing BOT_APP_ID fails" "${R}_actions_variables?per_page=30" '.variables |= map(select(.name != "BOT_APP_ID"))' "variable: BOT_APP_ID"
+
+good
+rm -f "$FIX/${R}_environments.json"
+doc
+has "an unreadable API path is its own FAIL" "FAIL  GitHub API reads (1 failed: repos/acme/hello/environments)"
+has "the read-error FAIL has a scopes hint" "fix: check gh auth status and its scopes"
 
 good
 GH_AUTH_RC=1 doc
@@ -119,7 +125,7 @@ doc "$proj"
 if [[ "$rc" == 0 ]]; then pass "cloud-run: all variables present passes"; else fail "cloud-run: rc $rc: $(grep FAIL <<<"$out" | tr '\n' ';')"; fi
 has "cloud-run: checks GCP_WIF_PROVIDER" "PASS  variable: GCP_WIF_PROVIDER (cloud-run)"
 has "cloud-run: service check skips without gcloud" "SKIP  cloud-run: services exist"
-jq '.variables |= map(select(.name != "GCP_DEPLOY_SA"))' "$FIX/${R}_actions_variables.json" >"$tmp/v" && mv "$tmp/v" "$FIX/${R}_actions_variables.json"
+jq '.variables |= map(select(.name != "GCP_DEPLOY_SA"))' "$FIX/${R}_actions_variables?per_page=30.json" >"$tmp/v" && mv "$tmp/v" "$FIX/${R}_actions_variables?per_page=30.json"
 doc "$proj"
 has "cloud-run: missing GCP_DEPLOY_SA fails" "FAIL  variable: GCP_DEPLOY_SA (cloud-run)"
 has "cloud-run: hint names the adapter bootstrap" "fix: DEPLOY_TARGET=cloud-run scripts/deploy.sh bootstrap"

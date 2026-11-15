@@ -31,8 +31,18 @@ expect() {
 }
 # quiet <cmd...>: run a check command with its output hidden.
 quiet() { "$@" >/dev/null 2>&1; }
-# api <path>: GET a GitHub API path as JSON, or print nothing on error.
-api() { gh api "$1" 2>/dev/null || true; }
+# api <path>: GET a GitHub API path as JSON. On error print nothing and
+# remember the path, so the summary reports the read error itself instead of
+# a misleading settings FAIL.
+# api() runs inside $(...), a subshell, so failures go to a file, not an array.
+api_errors="$(mktemp)"
+trap 'rm -f "$api_errors"' EXIT
+api() {
+  gh api "$1" 2>/dev/null || {
+    echo "$1" >>"$api_errors"
+    true
+  }
+}
 # jqt <json> <filter>: true if the jq filter is true for the JSON.
 jqt() { [[ -n "$1" ]] && jq -e "$2" >/dev/null 2>&1 <<<"$1"; }
 
@@ -89,9 +99,9 @@ expect "environment: production branch policy is main" "make bootstrap" \
   jqt "$policies" '[.branch_policies[]? | select(.name == "main")] | length > 0'
 
 # --- secrets and variables (names only; values are never readable)
-secrets="$(api "repos/$repo/actions/secrets")"
-dependabot="$(api "repos/$repo/dependabot/secrets")"
-variables="$(api "repos/$repo/actions/variables")"
+secrets="$(api "repos/$repo/actions/secrets?per_page=100")"
+dependabot="$(api "repos/$repo/dependabot/secrets?per_page=100")"
+variables="$(api "repos/$repo/actions/variables?per_page=30")"
 has_name() { jqt "$1" "[.$2[]?.name] | index(\"$3\") != null"; }
 expect "secret: CLAUDE_CODE_OAUTH_TOKEN" "make bootstrap (or: claude setup-token | gh secret set CLAUDE_CODE_OAUTH_TOKEN)" \
   has_name "$secrets" secrets CLAUDE_CODE_OAUTH_TOKEN
@@ -130,12 +140,21 @@ else
       project="$(sed -n 's/^GCP_PROJECT_ID=//p' <<<"$vals")"
       region="$(sed -n 's/^GCP_REGION=//p' <<<"$vals")"
       app="$(sed -n 's/^APP_NAME=//p' <<<"$vals")"
+      if [[ -z "$project" || -z "$app" ]]; then
+        skip "cloud-run: services exist" "GCP_PROJECT_ID or APP_NAME is not set (see above)"
+      else
       expect "cloud-run: $app-prod exists" "DEPLOY_TARGET=cloud-run scripts/deploy.sh bootstrap" \
         quiet gcloud run services describe "$app-prod" --project "$project" --region "${region:-us-central1}" --format 'value(metadata.name)'
+      fi
     else
       skip "cloud-run: services exist" "gcloud is not installed or not logged in"
     fi
   fi
+fi
+
+if [[ -s "$api_errors" ]]; then
+  fail "GitHub API reads ($(wc -l <"$api_errors" | tr -d ' ') failed: $(sort -u "$api_errors" | tr '\n' ' ' | sed 's/ $//'))" \
+    "check gh auth status and its scopes (gh auth refresh -s repo); the checks above may be wrong"
 fi
 
 echo
