@@ -6,6 +6,8 @@
 # Generic rule: password/secret/token/api_key assigned a QUOTED literal of
 # 8+ chars. References (process.env.X, os.environ[..], ${..}, $(..),
 # ${{ secrets.X }}, secrets.X, env.X) are not flagged.
+# Trade-off: literals containing $ { } ( ) are not flagged, and a Bash command
+# that merely mentions a token pattern (e.g. grep) is blocked.
 # Exit 2 blocks and shows stderr to Claude. CI's gitleaks job is the backstop.
 set -euo pipefail
 

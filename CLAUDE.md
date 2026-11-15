@@ -22,7 +22,7 @@ GitHub template for AI-native projects. Keep this under one page; when Claude ma
 - Push only as the bot: `GH_TOKEN="$(scripts/bot-token.sh)" git push ...` / `gh pr create ...`.
 - Never push to `main`. Agent output always arrives as a PR; only the owner approves.
 - Never edit `.github/workflows/` as the bot (the App has no `workflows` permission).
-- Must-hold rules are backed by hooks and CI; skills are advisory.
+- Must-hold rules are backed by the ruleset and CI; hooks are an early guard on Edit/Write (secrets also on Bash), not a sandbox; skills are advisory. Hooks need `jq`.
 
 ## Architecture
 
