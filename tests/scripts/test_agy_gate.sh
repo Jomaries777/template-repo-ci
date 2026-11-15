@@ -52,6 +52,7 @@ EOF
 chmod +x "$stubs"/*
 export PATH="$stubs:$PATH"
 export STUB_DIR="$tmp/stub-state"
+export AGY_GATE_PASS_ENV="STUB_DIR STUB_MAKE_RC"
 mkdir -p "$STUB_DIR"
 export BOT_TOKEN_SCRIPT="$stubs/bot-token.sh"
 export BOT_APP_ID=123

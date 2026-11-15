@@ -87,7 +87,9 @@ repo_from_remote() {
   url="${url%.git}"
   case "$url" in
     *github.com[:/]*) echo "${url##*github.com[:/]}" ;;
-    *) echo "OWNER/REPO" ;;
+    *)
+      if [[ "${DRY_RUN:-0}" == 1 ]]; then echo "OWNER/REPO"; else die "cannot infer owner/repo from origin; pass --repo"; fi
+      ;;
   esac
 }
 
@@ -218,22 +220,38 @@ PROTECTED_RE='^(\.github/|Makefile$|tests/scripts/|scripts/|\.claude/settings\.j
 # origin/main so a modified harness can't fake a pass. The agent's versions
 # are put back afterwards.
 run_harness_make() { # wt logfile
-  local wt="$1" log="$2" bk rc=0 p
-  local keep=()
-  bk="$(mktemp -d)"
-  for p in Makefile tests/scripts; do
-    if [[ -e "$wt/$p" ]]; then keep+=("$p"); fi
-  done
-  if ((${#keep[@]})); then tar -C "$wt" -cf "$bk/harness.tar" "${keep[@]}"; fi
-  rm -rf "${wt:?}/Makefile" "${wt:?}/tests/scripts"
-  for p in Makefile tests/scripts; do
-    git -C "$wt" archive origin/main -- "$p" 2>/dev/null | tar -x -C "$wt" || true
-  done
-  make -C "$wt" lint test >"$log" 2>&1 || rc=$?
-  rm -rf "${wt:?}/Makefile" "${wt:?}/tests/scripts"
-  if [[ -f "$bk/harness.tar" ]]; then tar -C "$wt" -xf "$bk/harness.tar"; fi
-  rm -rf "$bk"
-  return "$rc"
+  # Runs `make lint test` with Makefile and tests/scripts/ taken from
+  # origin/main, so an agent cannot weaken the gate. The agent's versions are
+  # restored by an EXIT/INT/TERM trap, so an interrupt cannot lose them.
+  # The environment is scrubbed (env -i + allowlist) so no tokens reach the
+  # agent-written code that lint/test executes. Residual risk: it still runs
+  # as the owner's user (HOME, keychain); see plan.md Deviations.
+  local wt="$1" log="$2"
+  (
+    set -euo pipefail
+    bk="$(mktemp -d)"
+    keep=()
+    for p in Makefile tests/scripts; do
+      if [[ -e "$wt/$p" ]]; then keep+=("$p"); fi
+    done
+    if ((${#keep[@]})); then tar -C "$wt" -cf "$bk/harness.tar" "${keep[@]}"; fi
+    # shellcheck disable=SC2329 # invoked via trap
+    restore() {
+      rm -rf "${wt:?}/Makefile" "${wt:?}/tests/scripts"
+      if [[ -f "$bk/harness.tar" ]]; then tar -C "$wt" -xf "$bk/harness.tar"; fi
+      rm -rf "$bk"
+    }
+    trap restore EXIT
+    trap 'exit 130' INT TERM
+    rm -rf "${wt:?}/Makefile" "${wt:?}/tests/scripts"
+    for p in Makefile tests/scripts; do
+      git -C "$wt" archive origin/main -- "$p" 2>/dev/null | tar -x -C "$wt" || true
+    done
+    extra=()
+    for v in ${AGY_GATE_PASS_ENV:-}; do extra+=("$v=${!v:-}"); done # test hook only
+    env -i ${extra[@]+"${extra[@]}"} PATH="$PATH" HOME="$HOME" LANG="${LANG:-C.UTF-8}" TMPDIR="${TMPDIR:-/tmp}" TERM="${TERM:-dumb}" \
+      make -C "$wt" lint test >"$log" 2>&1
+  )
 }
 
 # Verification gate (spec §4.8 as amended). Sets GATE_REASONS (newline-joined,
