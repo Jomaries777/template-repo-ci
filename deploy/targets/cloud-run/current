@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloud-run/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# current <env>: print the revision that serves 100% of traffic. A split
+# (e.g. a manual 90/10 rollout) is not supported: it fails, and release
+# stops before deploying, rather than guessing which revision to revert to.
+init_common
+service_for "${1:-}"
+
+rev="$(describe_service | jq -r '.status.traffic[] | select(.percent == 100) | .revisionName' | head -n 1)"
+[[ -n "$rev" ]] || die "no revision serves 100% of traffic on $SERVICE"
+printf '%s\n' "$rev"

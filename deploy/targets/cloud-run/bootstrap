@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloud-run/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# bootstrap: one-time, idempotent project setup, run by the owner with their
+# own gcloud login (never from CI). Each resource is checked before it is
+# created. Needs GCP_PROJECT_ID, APP_NAME, BILLING_ACCOUNT; GCP_REGION
+# defaults to us-central1. The repository comes from GITHUB_REPOSITORY or
+# `gh repo view`.
+init_common
+require_vars BILLING_ACCOUNT
+[[ "$BILLING_ACCOUNT" =~ ^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$ ]] || die "invalid BILLING_ACCOUNT"
+
+# Fail before creating anything if either login is missing.
+if [[ "$DRY_RUN" != "1" ]]; then
+  gh auth status >/dev/null 2>&1 || die "gh is not logged in (run: gh auth login)"
+  [[ -n "$(gcloud auth list --filter status:ACTIVE --format 'value(account)' 2>/dev/null)" ]] ||
+    die "gcloud is not logged in (run: gcloud auth login)"
+fi
+
+repo="${GITHUB_REPOSITORY:-}"
+if [[ -z "$repo" ]]; then
+  if [[ "$DRY_RUN" == "1" ]]; then
+    repo="$(placeholder GITHUB_REPOSITORY)"
+  else
+    repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
+  fi
+fi
+[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "invalid repository: $repo"
+
+p=(--project "$GCP_PROJECT_ID")
+deploy_sa="deployer@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+
+echo "== APIs" >&2
+run gcloud services enable "${p[@]}" \
+  run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com \
+  iamcredentials.googleapis.com sts.googleapis.com \
+  billingbudgets.googleapis.com cloudresourcemanager.googleapis.com
+
+project_number="$(query 123456789012 gcloud projects describe "$GCP_PROJECT_ID" --format 'value(projectNumber)')"
+[[ "$project_number" =~ ^[0-9]+$ ]] || die "could not read the project number"
+pool="projects/${project_number}/locations/global/workloadIdentityPools/github"
+provider="${pool}/providers/github"
+
+echo "== Artifact Registry" >&2
+if ! exists gcloud artifacts repositories describe app "${p[@]}" --location "$GCP_REGION"; then
+  run gcloud artifacts repositories create app "${p[@]}" --location "$GCP_REGION" \
+    --repository-format docker --description "Deploy images"
+fi
+policy="$(mktemp)"
+trap 'rm -f "$policy"' EXIT
+cat >"$policy" <<'JSON'
+[
+  {"name": "keep-5-most-recent", "action": {"type": "Keep"},
+   "mostRecentVersions": {"keepCount": 5}},
+  {"name": "delete-untagged-7d", "action": {"type": "Delete"},
+   "condition": {"tagState": "UNTAGGED", "olderThan": "7d"}}
+]
+JSON
+if [[ "$DRY_RUN" == "1" ]]; then
+  echo "DRY-RUN: cleanup policy: $(tr -d '\n' <"$policy" | tr -s ' ')" >&2
+fi
+run gcloud artifacts repositories set-cleanup-policies app "${p[@]}" \
+  --location "$GCP_REGION" --policy "$policy" --no-dry-run
+
+echo "== Workload Identity Federation" >&2
+if ! exists gcloud iam workload-identity-pools describe github "${p[@]}" --location global; then
+  run gcloud iam workload-identity-pools create github "${p[@]}" --location global \
+    --display-name "GitHub Actions"
+fi
+# Only workflow runs on main in this repository can exchange a token. PR
+# branches and other refs can't impersonate the deploy SA; production is
+# further gated by its Environment's required reviewer. An existing provider
+# is updated, so a rerun converges on this condition.
+oidc_flags=(
+  --location global --workload-identity-pool github
+  --issuer-uri "https://token.actions.githubusercontent.com"
+  --attribute-mapping "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref"
+  --attribute-condition "assertion.repository=='${repo}' && assertion.ref=='refs/heads/main'"
+)
+if exists gcloud iam workload-identity-pools providers describe github "${p[@]}" \
+  --location global --workload-identity-pool github; then
+  run gcloud iam workload-identity-pools providers update-oidc github "${p[@]}" "${oidc_flags[@]}"
+else
+  run gcloud iam workload-identity-pools providers create-oidc github "${p[@]}" "${oidc_flags[@]}"
+fi
+
+echo "== Service accounts" >&2
+for sa in deployer runtime; do
+  if ! exists gcloud iam service-accounts describe "${sa}@${GCP_PROJECT_ID}.iam.gserviceaccount.com" "${p[@]}"; then
+    run gcloud iam service-accounts create "$sa" "${p[@]}" --display-name "$sa (${APP_NAME})"
+  fi
+done
+# Project-wide: run.developer has no per-service binding at create time. Use a
+# dedicated project per app (as step 6 does) so this covers only its services.
+run gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
+  --member "serviceAccount:${deploy_sa}" --role roles/run.developer --condition None --quiet
+# Registry writes are scoped to the "app" repository, not the project.
+run gcloud artifacts repositories add-iam-policy-binding app "${p[@]}" --location "$GCP_REGION" \
+  --member "serviceAccount:${deploy_sa}" --role roles/artifactregistry.writer --quiet
+# The deploy SA may act as the runtime SA only; the runtime SA has no roles.
+run gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" "${p[@]}" \
+  --member "serviceAccount:${deploy_sa}" --role roles/iam.serviceAccountUser --quiet
+run gcloud iam service-accounts add-iam-policy-binding "$deploy_sa" "${p[@]}" \
+  --member "principalSet://iam.googleapis.com/${pool}/attribute.repository/${repo}" \
+  --role roles/iam.workloadIdentityUser --quiet
+
+echo "== Services" >&2
+# Create each service once, public and idle, from Google's sample image, so
+# the deploy SA (roles/run.developer) never needs to set IAM policy. Later
+# deploys keep this policy.
+for env in dev production; do
+  service_for "$env"
+  if ! exists gcloud run services describe "$SERVICE" "${p[@]}" --region "$GCP_REGION"; then
+    run gcloud run deploy "$SERVICE" "${p[@]}" --region "$GCP_REGION" \
+      --image us-docker.pkg.dev/cloudrun/container/hello \
+      --min-instances 0 --max-instances 2 --cpu 1 --memory 512Mi \
+      --service-account "$RUNTIME_SA" --allow-unauthenticated --quiet
+  fi
+done
+
+echo "== Budget" >&2
+budget_name="${APP_NAME}-budget"
+existing="$(query "" gcloud billing budgets list --billing-account "$BILLING_ACCOUNT" \
+  --filter "displayName=${budget_name}" --format 'value(name)')"
+if [[ -z "$existing" ]]; then
+  run gcloud billing budgets create --billing-account "$BILLING_ACCOUNT" \
+    --display-name "$budget_name" --budget-amount 10USD \
+    --filter-projects "projects/${GCP_PROJECT_ID}" \
+    --threshold-rule percent=0.1 --threshold-rule percent=0.5 --threshold-rule percent=1.0
+fi
+
+echo "== Repository variables" >&2
+run gh variable set GCP_PROJECT_ID --repo "$repo" --body "$GCP_PROJECT_ID"
+run gh variable set GCP_REGION --repo "$repo" --body "$GCP_REGION"
+run gh variable set GCP_WIF_PROVIDER --repo "$repo" --body "$provider"
+run gh variable set GCP_DEPLOY_SA --repo "$repo" --body "$deploy_sa"
+run gh variable set APP_NAME --repo "$repo" --body "$APP_NAME"
+echo "cloud-run: bootstrap done for ${GCP_PROJECT_ID} (${repo})" >&2

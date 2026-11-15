@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloud-run/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# url <env>: print the service URL.
+init_common
+service_for "${1:-}"
+
+url="$(describe_service | jq -r '.status.url // empty')"
+[[ -n "$url" ]] || die "no URL for $SERVICE"
+printf '%s\n' "$url"

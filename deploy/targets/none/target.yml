@@ -1,0 +1,9 @@
+name: none
+artifact: none
+dark_deploy: false
+environments: []
+auth: none
+required_variables: []
+environment_secrets: []
+cli: none
+idle: "$0 when idle because nothing is provisioned"

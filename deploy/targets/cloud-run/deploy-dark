@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloud-run/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# deploy-dark <env> <sha>: deploy a tagged revision with no traffic, then
+# print its tag URL. Public access is granted once, by bootstrap, on the
+# service, so the deploy SA needs no setIamPolicy permission.
+init_common
+service_for "${1:-}"
+sha_vars "${2:-}"
+
+run gcloud run deploy "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+  --image "$IMAGE" --no-traffic --tag "$TAG" \
+  --min-instances 0 --max-instances 2 --cpu 1 --memory 512Mi \
+  --service-account "$RUNTIME_SA" --update-env-vars "APP_VERSION=$SHA" --quiet
+
+url="$(describe_service "$TAG" | jq -r --arg t "$TAG" '.status.traffic[] | select(.tag == $t) | .url' | head -n 1)"
+[[ -n "$url" ]] || die "no URL for tag $TAG on $SERVICE"
+printf '%s\n' "$url"
