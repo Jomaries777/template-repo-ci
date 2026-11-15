@@ -1,0 +1,76 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push*--force*)",
+      "Bash(git push*--force:*)",
+      "Bash(git push*-f *)",
+      "Bash(git push*-f)",
+      "Bash(git push*-f:*)",
+      "Bash(git push* main)",
+      "Bash(git push* main *)",
+      "Bash(git push*:main)",
+      "Bash(git push*:main *)",
+      "Bash(git push origin main:*)",
+      "Bash(git push origin HEAD:main:*)",
+      "Bash(git push*+*)",
+      "Bash(git push*refs/heads/main*)",
+      "Bash(git push*--mirror*)",
+      "Bash(scripts/deploy.sh promote*)",
+      "Bash(scripts/deploy.sh promote:*)",
+      "Bash(scripts/deploy.sh revert*)",
+      "Bash(scripts/deploy.sh revert:*)",
+      "Bash(gcloud run services update-traffic*)",
+      "Bash(gcloud run services update-traffic:*)",
+      "Bash(wrangler versions deploy*)",
+      "Bash(wrangler versions deploy:*)",
+      "Bash(wrangler rollback*)",
+      "Bash(wrangler rollback:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/protect-paths.sh",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/no-secrets.sh",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/test-first.sh",
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/no-secrets.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/post-edit.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
