@@ -49,12 +49,22 @@ if ! exists gcloud artifacts repositories describe app "${p[@]}" --location "$GC
 fi
 policy="$(mktemp)"
 trap 'rm -f "$policy"' EXIT
+# Keep rules win over delete rules. keep-deployed protects the images tagged
+# dev, production and their -prev (set by promote/revert): with min-instances
+# 0 every cold start pulls the serving image, so it must never be deleted.
+# mostRecentVersions counts per image name; the repo holds one, $APP_NAME.
+# publish tags every image with its SHA, so tagged images also need an age
+# limit, or storage grows past the free tier.
 cat >"$policy" <<'JSON'
 [
+  {"name": "keep-deployed", "action": {"type": "Keep"},
+   "condition": {"tagState": "TAGGED", "tagPrefixes": ["dev", "production"]}},
   {"name": "keep-5-most-recent", "action": {"type": "Keep"},
    "mostRecentVersions": {"keepCount": 5}},
   {"name": "delete-untagged-7d", "action": {"type": "Delete"},
-   "condition": {"tagState": "UNTAGGED", "olderThan": "7d"}}
+   "condition": {"tagState": "UNTAGGED", "olderThan": "7d"}},
+  {"name": "delete-tagged-30d", "action": {"type": "Delete"},
+   "condition": {"tagState": "TAGGED", "olderThan": "30d"}}
 ]
 JSON
 if [[ "$DRY_RUN" == "1" ]]; then
