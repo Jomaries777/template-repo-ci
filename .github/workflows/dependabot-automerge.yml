@@ -4,6 +4,8 @@
 # after `ci-ok` passes under the main ruleset. No ruleset bypass is used.
 # Minor and major updates, security ones included, are left open for the
 # owner: the bot App can't read Dependabot alerts (see plan.md Deviations).
+# A Dependabot rebase dismisses the approval (the ruleset requires approval
+# of the last push); the `synchronize` run approves again.
 #
 # Needs: repo variable BOT_APP_ID, and the App private key as a *Dependabot*
 # secret BOT_APP_PRIVATE_KEY (Dependabot-triggered runs cannot read normal
