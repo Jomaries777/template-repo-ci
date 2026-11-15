@@ -1,0 +1,27 @@
+// markdownlint-cli2 config for this repo. Keep it minimal: every disabled
+// rule needs a reason. Rules below the first three match the house style of
+// the accepted intent/spec/plan docs, which must lint clean as written.
+{
+  "config": {
+    "default": true,
+    // Prose is wrapped by editors, not by hand.
+    "MD013": false,
+    // Inline HTML is used for hidden markers and badges.
+    "MD033": false,
+    // Repeated headings are fine in different sections (e.g. "Findings").
+    "MD024": { "siblings_only": true },
+    // House style: compact `|---|` table separators.
+    "MD060": false,
+    // House style: bold run-in labels such as **Findings** above a list.
+    "MD036": false,
+    // House style: a list or fence may follow its lead-in line directly.
+    "MD022": false,
+    "MD031": false,
+    "MD032": false,
+    // Directory trees and plain output blocks have no language.
+    "MD040": false,
+    // Agent, command and skill files start with YAML front matter, not an H1.
+    "MD041": false
+  },
+  "ignores": ["node_modules/**", ".venv/**", "dist/**", "coverage/**"]
+}
