@@ -101,6 +101,12 @@ break_one "missing ruleset fails" "${R}_rulesets" '[]' "ruleset main"
 break_one "production without a reviewer fails" "${R}_environments" '.environments[1].protection_rules = []' "environment: production has a required reviewer"
 break_one "production from any branch fails" "${R}_environments" '.environments[1].deployment_branch_policy = null' "environment: production deploys from main only"
 break_one "production policy not main fails" "${R}_environments_production_deployment-branch-policies" '.branch_policies[0].name = "dev"' "environment: production branch policy is main"
+good
+jq '.environments |= map(select(.name != "production"))' "$FIX/${R}_environments.json" >"$tmp/e" && mv "$tmp/e" "$FIX/${R}_environments.json"
+rm -f "$FIX/${R}_environments_production_deployment-branch-policies.json"
+doc
+has "missing production fails its checks" "FAIL  environment: production has a required reviewer"
+if grep -q "GitHub API reads" <<<"$out"; then fail "missing production: no extra API FAIL"; else pass "missing production: no extra API FAIL"; fi
 break_one "missing dev fails" "${R}_environments" '.environments |= map(select(.name != "dev"))' "environment: dev"
 break_one "missing Claude token fails" "${R}_actions_secrets?per_page=100" '.secrets |= map(select(.name != "CLAUDE_CODE_OAUTH_TOKEN"))' "secret: CLAUDE_CODE_OAUTH_TOKEN"
 break_one "missing Dependabot key fails" "${R}_dependabot_secrets?per_page=100" '.secrets = []' "Dependabot secret: BOT_APP_PRIVATE_KEY"

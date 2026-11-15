@@ -94,7 +94,12 @@ expect "environment: dev" "make bootstrap (creates the Environments)" \
   jqt "$envs" '[.environments[]?.name] | index("dev") != null'
 expect "environment: production has a required reviewer" "make bootstrap" \
   jqt "$envs" '[.environments[]? | select(.name == "production") | .protection_rules[]? | select(.type == "required_reviewers")] | length > 0'
-policies="$(api "repos/$repo/environments/production/deployment-branch-policies")"
+policies=""
+# Read the policies only if production exists: a 404 would add a misleading
+# API FAIL on top of the Environment FAILs below.
+if jqt "$envs" '[.environments[]?.name] | index("production") != null'; then
+  policies="$(api "repos/$repo/environments/production/deployment-branch-policies")"
+fi
 expect "environment: production deploys from main only" "make bootstrap" \
   jqt "$envs" '[.environments[]? | select(.name == "production") | .deployment_branch_policy.custom_branch_policies] | index(true) != null'
 expect "environment: production branch policy is main" "make bootstrap" \
@@ -103,6 +108,7 @@ expect "environment: production branch policy is main" "make bootstrap" \
 # --- secrets and variables (names only; values are never readable)
 secrets="$(api "repos/$repo/actions/secrets?per_page=100")"
 dependabot="$(api "repos/$repo/dependabot/secrets?per_page=100")"
+# 30 is the API's maximum page size for variables.
 variables="$(api "repos/$repo/actions/variables?per_page=30")"
 has_name() { jqt "$1" "[.$2[]?.name] | index(\"$3\") != null"; }
 expect "secret: CLAUDE_CODE_OAUTH_TOKEN" "make bootstrap (or: claude setup-token | gh secret set CLAUDE_CODE_OAUTH_TOKEN)" \

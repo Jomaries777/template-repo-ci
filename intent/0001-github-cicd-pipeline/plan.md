@@ -21,7 +21,7 @@ Facts found during plan mode (they reduce C8 risk):
 
 | Area | Paths |
 |---|---|
-| Loop artifacts | `intent/0001-…/plan.md` (this file), status lines in `intent.md` / `spec.md`, `intent/0001-…/spikes/*.md` and fixtures |
+| Loop artifacts | `intent/0001-…/plan.md` (this file), status lines in `intent.md` / `spec.md`, `intent/0001-…/spikes/*.md` and fixtures. M2 also amends `spec.md` §4.1, §4.7 (FR-7) and §4.11 where the owner accepted a change (each marked "amended 2026-11-15" and recorded in Deviations) |
 | Agent config | `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, `.claude/settings.json`, `.claude/{agents,commands,skills}/**`, `scripts/hooks/*.sh` |
 | Repo scaffolding | `.gitignore`, `.github/{CODEOWNERS,pull_request_template.md,dependabot.yml,rulesets/main.json}`, `Makefile`, `README.md` |
 | CI | `.github/workflows/{pr,claude,deploy,dependabot-automerge,maintain}.yml`, `.github/actions/{classify,release}/action.yml`, `.github/workflows/template-selftest.yml` (not `.template/selftest.yml`, see Deviations) |

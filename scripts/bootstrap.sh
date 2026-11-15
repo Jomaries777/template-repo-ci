@@ -101,7 +101,7 @@ name="${name:-$(basename "$root")}"
 # Bootstrap commits with `git add -A`, so it must start from a clean tree:
 # then its commit holds only its own changes, never a stray local file.
 if ! ((local_only)) && ! ((dry_run)) && [[ -n "$(git status --porcelain)" ]]; then
-  usage_error "the working tree has uncommitted changes; commit or stash them first"
+  usage_error "the working tree has uncommitted changes; commit or stash them first. If an earlier bootstrap stopped half-way, reset its edits with: git checkout -- . && git clean -fd"
 fi
 
 # fs <cmd...>: a file change, printed in dry run.
@@ -202,7 +202,8 @@ if ((need_push)); then
   # a repo with neither (a new one) takes the direct push.
   protected=""
   if ! ((dry_run)); then
-    rulesets="$(gh api "repos/$repo/rulesets")" || die "cannot read the rulesets of $repo; not pushing"
+    # includes_parents: rulesets inherited from an organization count too.
+    rulesets="$(gh api "repos/$repo/rulesets?includes_parents=true")" || die "cannot read the rulesets of $repo; not pushing"
     branch="$(gh api "repos/$repo/branches/main")" || die "cannot read the main branch of $repo; not pushing"
     if [[ "$(jq 'length' <<<"$rulesets")" != 0 || "$(jq -r '.protected' <<<"$branch")" == true ]]; then
       protected=1
@@ -246,6 +247,8 @@ if ! ((dry_run)); then
   owner_id="$(jq -r .id <<<"$account")"
 fi
 run gh api -X PUT "repos/$repo/environments/dev" --silent
+# PUT sets the whole Environment config: a rerun resets anything changed by
+# hand (e.g. a wait timer) to these rules.
 run gh api -X PUT "repos/$repo/environments/production" --silent --input - <<JSON
 {"reviewers":[{"type":"User","id":$owner_id}],
  "deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}

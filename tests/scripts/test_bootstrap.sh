@@ -125,7 +125,7 @@ out="$(cd "$d" && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GI
   "$d/scripts/bootstrap.sh" --stack node --target none --repo acme/hello 2>&1)" || rc=$?
 check "unreadable rulesets: stops with an error" '[[ $rc == 1 ]] && grep -q "not pushing" <<<"$out"'
 # The copy has no remote, so any git push would print "fatal: ... origin".
-check "unreadable rulesets: never pushes" '! grep -q "fatal:" <<<"$out" && [[ "$(cat "$tmp/calls")" == "gh api repos/acme/hello/rulesets" ]]'
+check "unreadable rulesets: never pushes" '! grep -q "fatal:" <<<"$out" && [[ "$(cat "$tmp/calls")" == "gh api repos/acme/hello/rulesets?includes_parents=true" ]]'
 check "unreadable rulesets: the commit stays local" '[[ "$(cd "$d" && git log --oneline | wc -l)" -eq 2 ]]'
 # A rerun must retry the push, not stop at "nothing to commit".
 rc=0
@@ -163,7 +163,7 @@ cat >"$tmp/bin3/gh" <<EOF3
 #!/usr/bin/env bash
 echo "gh \$*" >>"$tmp/calls3"
 case "\$1 \$2" in
-  "api repos/acme/hello/rulesets") echo '[]' ;;
+  "api repos/acme/hello/rulesets?includes_parents=true") echo '[]' ;;
   "api repos/acme/hello/branches/main") echo '{"protected":false}' ;;
   "api users/acme") echo '{"type":"User","id":1}' ;;
   "secret set"*) cat >/dev/null ;;
