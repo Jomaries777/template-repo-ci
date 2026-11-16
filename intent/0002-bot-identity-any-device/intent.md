@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | **Accepted** by the product owner on 2026-11-16, with decisions 1–5 and the broker host left to `spec.md` |
 | Product owner | Repo owner (sole human: product owner, engineer and release manager) |
 | Created | 2026-11-16 |
 | SDLC stage | Stage 1, Plan: "Capture as intent.md" |
