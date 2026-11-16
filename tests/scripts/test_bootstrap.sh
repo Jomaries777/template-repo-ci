@@ -115,6 +115,18 @@ else
   pass "no real gh or Keychain call"
 fi
 
+# --- --skip-bot-key: everything else still happens; the key is left for later
+k="$tmp/k"
+copy "$k"
+rc=0
+out="$(BOT_APP_ID=123 "$k/scripts/bootstrap.sh" --stack node --target none --repo acme/hello --dry-run --skip-bot-key 2>&1)" || rc=$?
+check "skip-bot-key: exits 0" '[[ $rc == 0 ]]'
+# set_secret's dry-run line is the only way the key would be set.
+check "skip-bot-key: never sets the bot key" '! grep -q "DRY-RUN: <BOT_APP_PRIVATE_KEY" <<<"$out" && grep -q "BOT_APP_PRIVATE_KEY: skipped" <<<"$out"'
+check "skip-bot-key: prints the Mac commands for later" 'grep -q "security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app dependabot" <<<"$out"'
+check "skip-bot-key: still sets the Claude token and BOT_APP_ID" 'grep -q "gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme/hello" <<<"$out" && grep -q "gh variable set BOT_APP_ID --repo acme/hello --body 123" <<<"$out"'
+check "skip-bot-key: still creates production with a reviewer" 'grep -q "environments/production" <<<"$out"'
+
 # --- fail closed: if the rulesets can't be read, bootstrap must not push
 d="$tmp/d"
 copy "$d"

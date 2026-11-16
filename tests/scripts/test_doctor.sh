@@ -109,6 +109,10 @@ has "missing production fails its checks" "FAIL  environment: production has a r
 if grep -q "GitHub API reads" <<<"$out"; then fail "missing production: no extra API FAIL"; else pass "missing production: no extra API FAIL"; fi
 break_one "missing dev fails" "${R}_environments" '.environments |= map(select(.name != "dev"))' "environment: dev"
 break_one "missing Claude token fails" "${R}_actions_secrets?per_page=100" '.secrets |= map(select(.name != "CLAUDE_CODE_OAUTH_TOKEN"))' "secret: CLAUDE_CODE_OAUTH_TOKEN"
+good
+echo '{"secrets":[]}' >"$FIX/${R}_dependabot_secrets?per_page=100.json"
+doc
+has "missing bot key: hint is the Mac command" "fix: on a Mac: security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app dependabot"
 break_one "missing Dependabot key fails" "${R}_dependabot_secrets?per_page=100" '.secrets = []' "Dependabot secret: BOT_APP_PRIVATE_KEY"
 break_one "missing BOT_APP_ID fails" "${R}_actions_variables?per_page=30" '.variables |= map(select(.name != "BOT_APP_ID"))' "variable: BOT_APP_ID"
 
