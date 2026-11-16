@@ -30,6 +30,8 @@ Step 6 is split (plan.md Deviations):
    - checks a docs-only PR skips the review and the deploy
    - checks a Dependabot patch PR auto-merges and a minor one waits
 
+**Expect one approval right after bootstrap.** Bootstrap's push to `main` starts a deploy that passes dev, then waits for you to approve production. Approve it (or reject it). Deploys run one at a time, so while it waits, every later deploy queues behind it.
+
 Nothing to tear down: no cloud resources are created. Delete the sandbox repo when done.
 
 ### Step 6a from a phone (Android or iPhone, no Mac)
@@ -41,7 +43,7 @@ The bot key stays on the Mac, so a phone sets up everything except the key, and 
 3. **Log in as yourself.** The Codespace's built-in token can't change repo settings:
 
    ```bash
-   unset GITHUB_TOKEN
+   unset GITHUB_TOKEN GH_TOKEN
    gh auth login        # GitHub.com → HTTPS → "Login with a web browser"; open the code link on the phone
    ```
 
@@ -52,7 +54,7 @@ The bot key stays on the Mac, so a phone sets up everything except the key, and 
    scripts/bootstrap.sh --stack node --target local --skip-bot-key
    ```
 
-5. **Install the bot App** on the repo: <https://github.com/settings/installations> → **jomaries777-agent-bot** → **Configure**.
+5. **Install the bot App** on the repo: <https://github.com/settings/installations> → **jomaries777-agent-bot** → **Configure**. On the same page, check that the **Claude** App can reach the repo too (**All repositories**, or add it), so a cloud session can attach it.
 6. **Run `make doctor`.** Expect two FAILs for the missing `BOT_APP_PRIVATE_KEY`, each showing the Mac command that fixes it. Everything else should pass. Then stop the Codespace: **Codespaces** → **⋯** → **Stop**.
 7. **Hand over** as in step 6 above: Claude runs everything except the Dependabot test.
 8. **Later, on a Mac:** run the two commands from the doctor hints, which pipe the key from the Keychain into the repo's secrets. Then tell Claude to run the Dependabot test.
