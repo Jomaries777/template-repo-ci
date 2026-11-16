@@ -113,6 +113,22 @@ good
 echo '{"secrets":[]}' >"$FIX/${R}_dependabot_secrets?per_page=100.json"
 doc
 has "missing bot key: hint is the Mac command" "fix: on a Mac: security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app dependabot"
+# shellcheck disable=SC2016 # the hint is a literal command for the user
+has "missing bot key: hint includes the Codespace command" 'in a Codespace with the BOT_APP_KEY_B64 secret: printf %s "$BOT_APP_KEY_B64" | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app dependabot'
+
+# In a Codespace (spec 0002 phase 1): with BOT_APP_KEY_B64 the bot check runs;
+# without it, doctor says how to add the Codespaces secret.
+good
+printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/bot-ok"
+chmod +x "$tmp/bot-ok"
+rc=0
+out="$(CODESPACES=true BOT_APP_KEY_B64=x DOCTOR_BOT_CHECK="$tmp/bot-ok" "$none_proj/scripts/doctor.sh" --repo acme/hello 2>&1)" || rc=$?
+has "codespace with the secret: bot check runs" "PASS  bot App installed on acme/hello"
+if grep -q "bot key in this Codespace" <<<"$out"; then fail "codespace with the secret: no setup hint"; else pass "codespace with the secret: no setup hint"; fi
+rc=0
+out="$(CODESPACES=true DOCTOR_BOT_CHECK="$tmp/bot-ok" "$none_proj/scripts/doctor.sh" --repo acme/hello 2>&1)" || rc=$?
+has "codespace without the secret: says how to add it" "SKIP  bot key in this Codespace (add the Codespaces secret BOT_APP_KEY_B64"
+if [[ "$rc" == 0 ]]; then pass "codespace without the secret: not a failure"; else fail "codespace without the secret: not a failure (rc $rc)"; fi
 break_one "missing Dependabot key fails" "${R}_dependabot_secrets?per_page=100" '.secrets = []' "Dependabot secret: BOT_APP_PRIVATE_KEY"
 break_one "missing BOT_APP_ID fails" "${R}_actions_variables?per_page=30" '.variables |= map(select(.name != "BOT_APP_ID"))' "variable: BOT_APP_ID"
 

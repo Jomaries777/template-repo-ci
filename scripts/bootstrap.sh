@@ -7,10 +7,10 @@
 #                             [--skip-bot-key]
 #   --dry-run       print the file changes and every remote call; change nothing
 #   --local-only    change the files only: no git, GitHub or cloud calls
-#   --skip-bot-key  don't set the bot App key secrets (for a machine without
-#                   the Mac Keychain, e.g. a Codespace); add them later from a
-#                   Mac with the commands bootstrap prints. Only Dependabot
-#                   auto-merge needs them.
+#   --skip-bot-key  don't set the bot App key secrets (for a machine with no
+#                   key source: no Mac Keychain, and a Codespace without the
+#                   BOT_APP_KEY_B64 secret); add them later with the commands
+#                   bootstrap prints. Only Dependabot auto-merge needs them.
 #
 # Run it from the new project's clone, logged in with `gh` as the owner.
 #
@@ -28,7 +28,9 @@
 # Secrets are read from the macOS Keychain or a hidden prompt and piped to
 # `gh secret set`; they are never written to disk or printed.
 #   CLAUDE_CODE_OAUTH_TOKEN  Keychain service "claude-code-oauth-token"
-#   BOT_APP_PRIVATE_KEY      Keychain service "github-app-private-key" (base64)
+#   BOT_APP_PRIVATE_KEY      in a Codespace, the Codespaces secret BOT_APP_KEY_B64;
+#                            else Keychain service "github-app-private-key"
+#                            (both base64; spec 0002 phase 1)
 #   BOT_APP_ID               env BOT_APP_ID, else a prompt
 # Target settings come from the environment, e.g. for cloud-run:
 #   GCP_PROJECT_ID, BILLING_ACCOUNT, GCP_REGION (default us-central1),
@@ -325,17 +327,31 @@ claude_token() {
   fi
   printf '%s' "${v//[[:space:]]/}"
 }
+# bot_key: the decoded App key. BOT_APP_KEY_B64 counts only in a Codespace,
+# so the key isn't encouraged into ordinary env files (same rule as
+# bot-token.sh). The value is checked but never printed.
 bot_key() {
-  local v
-  v="$(keychain github-app-private-key)"
-  [[ -n "$v" ]] || die "bot App key not in the Keychain (service github-app-private-key); see the owner setup guide"
-  base64 -d <<<"$v"
+  local v pem
+  if [[ "${CODESPACES:-}" == "true" && -n "${BOT_APP_KEY_B64:-}" ]]; then
+    v="$BOT_APP_KEY_B64"
+  else
+    v="$(keychain github-app-private-key)"
+  fi
+  [[ -n "$v" ]] || die "bot App key not found. In a Codespace: add the Codespaces secret BOT_APP_KEY_B64 (github.com/settings/codespaces) and restart it. On a Mac: store it in the Keychain (service github-app-private-key). Or rerun with --skip-bot-key"
+  pem="$(base64 -d <<<"$v" 2>/dev/null)" || die "the bot App key isn't valid base64"
+  [[ "$pem" == -----BEGIN* ]] || die "the bot App key isn't a PEM private key"
+  printf '%s' "$pem"
 }
 set_secret CLAUDE_CODE_OAUTH_TOKEN actions claude_token
 if ((skip_bot_key)); then
   echo "    BOT_APP_PRIVATE_KEY: skipped (--skip-bot-key); add it later from a Mac with:"
   for app in actions dependabot; do
     echo "      security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo $repo --app $app"
+  done
+  echo "    or from a Codespace with the BOT_APP_KEY_B64 secret:"
+  for app in actions dependabot; do
+    # shellcheck disable=SC2016 # printed for the user to run, not expanded here
+    echo '      printf %s "$BOT_APP_KEY_B64" | base64 -d | gh secret set BOT_APP_PRIVATE_KEY'" --repo $repo --app $app"
   done
 else
   set_secret BOT_APP_PRIVATE_KEY actions bot_key

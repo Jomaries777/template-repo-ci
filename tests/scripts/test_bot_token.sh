@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Tests for scripts/bot-token.sh key sources (spec 0002 phase 1, FR-2):
+# BOT_APP_KEY_B64 inside a Codespace, else the macOS Keychain. Keys are
+# generated at test time; a fake curl stands in for GitHub and records the
+# JWT, which is verified against the expected public key. Run from the repo
+# root.
+set -euo pipefail
+
+src="$PWD"
+failures=0
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+pass() { echo "ok - $1"; }
+fail() {
+  echo "not ok - $1"
+  failures=$((failures + 1))
+}
+
+if ! command -v openssl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+  echo "ok - skipped (needs openssl and jq)"
+  exit 0
+fi
+
+# Two throwaway keys: A for the Codespaces secret, B for the Keychain.
+for k in a b; do
+  openssl genrsa -out "$tmp/$k.pem" 2048 2>/dev/null
+  openssl rsa -in "$tmp/$k.pem" -pubout -out "$tmp/$k.pub" 2>/dev/null
+done
+b64() { base64 <"$1" | tr -d '\n'; }
+key_a="$(b64 "$tmp/a.pem")"
+key_b="$(b64 "$tmp/b.pem")"
+
+# A PATH with only the tools bot-token.sh needs, so a real `security` (on a
+# Mac) or `gh` is never reached. Each case adds its own fakes on top.
+mkdir -p "$tmp/base"
+for t in bash env openssl jq date mktemp chmod rm base64 tr cat head; do
+  ln -s "$(command -v "$t")" "$tmp/base/$t"
+done
+mkdir -p "$tmp/fake"
+cat >"$tmp/fake/curl" <<'EOF'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in
+    "Authorization: Bearer "*) printf '%s' "${a#Authorization: Bearer }" >"$CURL_JWT" ;;
+  esac
+done
+case "${*: -1}" in
+  */installation) echo '{"id":42}' ;;
+  */access_tokens) echo '{"token":"ghs_test"}' ;;
+  *) exit 22 ;;
+esac
+EOF
+cat >"$tmp/fake/security" <<EOF
+#!/usr/bin/env bash
+echo "security \$*" >>"$tmp/security.calls"
+printf '%s\n' "$key_b"
+EOF
+chmod +x "$tmp/fake/curl" "$tmp/fake/security"
+mkdir -p "$tmp/nosec"
+ln -s "$tmp/fake/curl" "$tmp/nosec/curl"
+
+# run <path> [env...]: run bot-token.sh; sets out, err and rc.
+run() {
+  local path="$1"
+  shift
+  rm -f "$tmp/jwt" "$tmp/security.calls"
+  rc=0
+  out="$(env -i PATH="$path" HOME="$tmp" CURL_JWT="$tmp/jwt" BOT_APP_ID=4242 "$@" \
+    bash "$src/scripts/bot-token.sh" acme/hello 2>"$tmp/err")" || rc=$?
+  err="$(cat "$tmp/err")"
+}
+# jwt_signed_by <pubkey>: the recorded JWT verifies with this public key.
+jwt_signed_by() {
+  [[ -s "$tmp/jwt" ]] || return 1
+  local h p s
+  IFS=. read -r h p s <"$tmp/jwt"
+  printf '%s.%s' "$h" "$p" >"$tmp/signed"
+  s="$(tr '_-' '/+' <<<"$s")"
+  while ((${#s} % 4)); do s="$s="; done
+  base64 -d <<<"$s" >"$tmp/sig"
+  openssl dgst -sha256 -verify "$1" -signature "$tmp/sig" "$tmp/signed" >/dev/null 2>&1
+}
+jwt_iss() {
+  local p
+  IFS=. read -r _ p _ <"$tmp/jwt"
+  p="$(tr '_-' '/+' <<<"$p")"
+  while ((${#p} % 4)); do p="$p="; done
+  base64 -d <<<"$p" | jq -r .iss
+}
+
+with_sec="$tmp/fake:$tmp/base"
+no_sec="$tmp/nosec:$tmp/base"
+
+# 1. Codespace with the secret: signs with it, never asks the Keychain.
+run "$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a"
+if [[ $rc == 0 && "$out" == "ghs_test" ]]; then pass "codespace: prints the token"; else fail "codespace: prints the token (rc $rc, out [$out], err: $err)"; fi
+if jwt_signed_by "$tmp/a.pub"; then pass "codespace: JWT signed with the Codespaces secret"; else fail "codespace: JWT signed with the Codespaces secret"; fi
+if [[ ! -s "$tmp/security.calls" ]]; then pass "codespace: Keychain not used"; else fail "codespace: Keychain not used ($(cat "$tmp/security.calls"))"; fi
+if [[ "$(jwt_iss)" == "4242" ]]; then pass "JWT iss is BOT_APP_ID"; else fail "JWT iss is BOT_APP_ID (got $(jwt_iss))"; fi
+
+# 2. Outside a Codespace the variable is ignored: the Keychain key signs.
+run "$with_sec" BOT_APP_KEY_B64="$key_a"
+if [[ $rc == 0 ]] && jwt_signed_by "$tmp/b.pub"; then
+  pass "outside a Codespace: BOT_APP_KEY_B64 ignored, Keychain used"
+else
+  fail "outside a Codespace: BOT_APP_KEY_B64 ignored, Keychain used (rc $rc, err: $err)"
+fi
+
+# 3. Codespace without the secret and no Keychain: a clear error, no output.
+run "$no_sec" CODESPACES=true
+if [[ $rc != 0 && -z "$out" ]] && grep -q "BOT_APP_KEY_B64" <<<"$err"; then
+  pass "no key source: fails with the Codespaces hint"
+else
+  fail "no key source: fails with the Codespaces hint (rc $rc, out [$out], err: $err)"
+fi
+
+# 4. A value that isn't a PEM key fails without echoing it.
+junk="$(printf 'not-a-key-%s' "$RANDOM$RANDOM" | base64 | tr -d '\n')"
+run "$with_sec" CODESPACES=true BOT_APP_KEY_B64="$junk"
+if [[ $rc != 0 && -z "$out" ]] && ! grep -qF "$junk" <<<"$err" && ! grep -q "not-a-key" <<<"$err"; then
+  pass "bad key: fails without printing it"
+else
+  fail "bad key: fails without printing it (rc $rc, err: $err)"
+fi
+
+exit $((failures > 0))

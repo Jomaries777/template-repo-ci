@@ -124,6 +124,7 @@ check "skip-bot-key: exits 0" '[[ $rc == 0 ]]'
 # set_secret's dry-run line is the only way the key would be set.
 check "skip-bot-key: never sets the bot key" '! grep -q "DRY-RUN: <BOT_APP_PRIVATE_KEY" <<<"$out" && grep -q "BOT_APP_PRIVATE_KEY: skipped" <<<"$out"'
 check "skip-bot-key: prints the Mac commands for later" 'grep -q "security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app dependabot" <<<"$out"'
+check "skip-bot-key: prints the Codespace commands too" 'grep -qF "printf %s \"\$BOT_APP_KEY_B64\" | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app actions" <<<"$out"'
 check "skip-bot-key: still sets the Claude token and BOT_APP_ID" 'grep -q "gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme/hello" <<<"$out" && grep -q "gh variable set BOT_APP_ID --repo acme/hello --body 123" <<<"$out"'
 check "skip-bot-key: still creates production with a reviewer" 'grep -q "environments/production" <<<"$out"'
 
@@ -190,6 +191,64 @@ out="$(cd "$g" && PATH="$tmp/bin3:$PATH" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t 
 check "real mode: new repo is pushed to main" '[[ "$(git -C "$tmp/origin.git" log --oneline main | wc -l)" -eq 2 ]]'
 check "real mode: no Keychain and no terminal stops bootstrap" '[[ $rc == 1 ]] && grep -q "CLAUDE_CODE_OAUTH_TOKEN" <<<"$out"'
 check "real mode: an empty secret is never set" '! grep -q "gh secret set" "$tmp/calls3"'
+
+# --- real mode in a Codespace (spec 0002 phase 1): the bot key comes from the
+# BOT_APP_KEY_B64 Codespaces secret, never from the Keychain, and reaches gh
+# on stdin for both Actions and Dependabot.
+h="$tmp/h"
+copy "$h"
+git init -q --bare "$tmp/origin4.git"
+(cd "$h" && git init -q -b main && git add -A && git -c user.email=t@t -c user.name=t commit -qm init &&
+  git remote add origin "$tmp/origin4.git" && git push -q origin main)
+mkdir -p "$tmp/bin4" "$tmp/sec4"
+cat >"$tmp/bin4/gh" <<EOF4
+#!/usr/bin/env bash
+echo "gh \$*" >>"$tmp/calls4"
+case "\$1 \$2" in
+  "api repos/acme/hello/rulesets?includes_parents=true") echo '[]' ;;
+  "api repos/acme/hello/branches/main") echo '{"protected":false}' ;;
+  "api users/acme") echo '{"type":"User","id":1}' ;;
+  "secret set") cat >"$tmp/sec4/\$3_\${7:-actions}" ;;
+esac
+exit 0
+EOF4
+# The Keychain holds only the Claude token; asking it for the bot key is logged.
+cat >"$tmp/bin4/security" <<EOF4
+#!/usr/bin/env bash
+echo "security \$*" >>"$tmp/calls4"
+case "\$*" in
+  *claude-code-oauth-token*) echo "sk-test-claude" ;;
+  *) exit 44 ;;
+esac
+EOF4
+chmod +x "$tmp/bin4/gh" "$tmp/bin4/security"
+pem="-----BEGIN TEST KEY-----
+abc
+-----END TEST KEY-----"
+: >"$tmp/calls4"
+rc=0
+out="$(cd "$h" && PATH="$tmp/bin4:$PATH" CODESPACES=true BOT_APP_KEY_B64="$(printf '%s' "$pem" | base64 | tr -d '\n')" BOT_APP_ID=1 \
+  GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+  "$h/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
+check "codespace: bot key set for Actions from BOT_APP_KEY_B64" '[[ "$(cat "$tmp/sec4/BOT_APP_PRIVATE_KEY_actions" 2>/dev/null)" == "$pem" ]]'
+check "codespace: bot key set for Dependabot from BOT_APP_KEY_B64" '[[ "$(cat "$tmp/sec4/BOT_APP_PRIVATE_KEY_dependabot" 2>/dev/null)" == "$pem" ]]'
+check "codespace: Keychain never asked for the bot key" '! grep -q "github-app-private-key" "$tmp/calls4"'
+check "codespace: the key is never printed" '! grep -q "TEST KEY" <<<"$out"'
+
+# A Codespaces secret that isn't a PEM key stops bootstrap before gh sees it.
+h2="$tmp/h2"
+copy "$h2"
+git init -q --bare "$tmp/origin5.git"
+(cd "$h2" && git init -q -b main && git add -A && git -c user.email=t@t -c user.name=t commit -qm init &&
+  git remote add origin "$tmp/origin5.git" && git push -q origin main)
+rm -f "$tmp/sec4"/*
+: >"$tmp/calls4"
+rc=0
+out="$(cd "$h2" && PATH="$tmp/bin4:$PATH" CODESPACES=true BOT_APP_KEY_B64="$(printf 'junk-value' | base64)" BOT_APP_ID=1 \
+  GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+  "$h2/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
+check "codespace: a non-PEM secret stops bootstrap" '[[ $rc != 0 ]] && grep -q "PEM" <<<"$out"'
+check "codespace: a non-PEM secret is never stored" '[[ ! -e "$tmp/sec4/BOT_APP_PRIVATE_KEY_actions" ]] && ! grep -q "junk-value" <<<"$out"'
 
 # --- prompts are visible on a terminal (a pty from util-linux `script`)
 if command -v script >/dev/null 2>&1; then
