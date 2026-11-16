@@ -3,13 +3,18 @@
 #
 # Usage:  GH_TOKEN="$(scripts/bot-token.sh [owner/repo])" gh pr create ...
 #
-# Local (macOS) only: reads the App private key from the Keychain, stored
-# base64-encoded under service "github-app-private-key" (see
-# intent/0001-github-cicd-pipeline/spikes/m0-owner-setup.md). In GitHub Actions use
-# actions/create-github-app-token with the BOT_APP_PRIVATE_KEY secret instead.
+# The App private key (base64) comes from the first source that applies
+# (spec 0002, phase 1):
+#   1. In a GitHub Codespace: the Codespaces user secret BOT_APP_KEY_B64.
+#      Outside a Codespace that variable is ignored, so the key isn't
+#      encouraged into ordinary env files.
+#   2. On a Mac: the Keychain, service "github-app-private-key" (see
+#      intent/0001-github-cicd-pipeline/spikes/m0-owner-setup.md).
+# In GitHub Actions use actions/create-github-app-token with the
+# BOT_APP_PRIVATE_KEY secret instead.
 #
 # The token is printed to stdout and nothing else. The key never touches disk
-# except as a 0600 temp file that is removed on exit.
+# except as a 0600 temp file that is removed on exit, and is never printed.
 set -euo pipefail
 
 repo="${1:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
@@ -17,11 +22,32 @@ app_id="${BOT_APP_ID:-$(gh variable get BOT_APP_ID --repo "$repo")}"
 service="${BOT_KEYCHAIN_SERVICE:-github-app-private-key}"
 
 b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+die() {
+  echo "bot-token: $*" >&2
+  exit 1
+}
+
+# key_b64: print the base64 App key from the first source that applies.
+key_b64() {
+  if [[ "${CODESPACES:-}" == "true" && -n "${BOT_APP_KEY_B64:-}" ]]; then
+    printf '%s' "$BOT_APP_KEY_B64"
+  elif command -v security >/dev/null 2>&1; then
+    security find-generic-password -s "$service" -w
+  else
+    echo "bot-token: no bot App key found. In a Codespace: add the Codespaces secret" \
+      "BOT_APP_KEY_B64 (github.com/settings/codespaces) with access to $repo, then restart" \
+      "the Codespace. On a Mac: store it in the Keychain (service $service)." >&2
+    return 1
+  fi
+}
 
 key="$(mktemp)"
 trap 'rm -f "$key"' EXIT
 chmod 600 "$key"
-security find-generic-password -s "$service" -w | base64 -d >"$key"
+key_value="$(key_b64)" || exit 1
+base64 -d <<<"$key_value" >"$key" 2>/dev/null || die "the bot App key isn't valid base64"
+unset key_value
+[[ "$(head -c 10 "$key")" == "-----BEGIN" ]] || die "the bot App key isn't a PEM private key"
 
 now="$(date +%s)"
 header="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"

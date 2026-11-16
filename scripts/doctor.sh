@@ -113,21 +113,38 @@ variables="$(api "repos/$repo/actions/variables?per_page=30")"
 has_name() { jqt "$1" "[.$2[]?.name] | index(\"$3\") != null"; }
 expect "secret: CLAUDE_CODE_OAUTH_TOKEN" "make bootstrap (or: claude setup-token | gh secret set CLAUDE_CODE_OAUTH_TOKEN)" \
   has_name "$secrets" secrets CLAUDE_CODE_OAUTH_TOKEN
-# The bot key comes from a Mac Keychain; bootstrap --skip-bot-key leaves it out.
-bot_key_fix="on a Mac: security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo $repo"
-expect "secret: BOT_APP_PRIVATE_KEY" "$bot_key_fix --app actions" has_name "$secrets" secrets BOT_APP_PRIVATE_KEY
-expect "Dependabot secret: BOT_APP_PRIVATE_KEY" "$bot_key_fix --app dependabot" has_name "$dependabot" secrets BOT_APP_PRIVATE_KEY
+# The bot key comes from a Mac Keychain or, in a Codespace, the Codespaces
+# secret BOT_APP_KEY_B64 (spec 0002 phase 1); bootstrap --skip-bot-key leaves
+# it out. bot_key_fix <app>: both ways to set it.
+bot_key_fix() {
+  # shellcheck disable=SC2016 # a command for the user to run, not expanded here
+  printf '%s' "on a Mac: security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo $repo --app $1" \
+    '; in a Codespace with the BOT_APP_KEY_B64 secret: printf %s "$BOT_APP_KEY_B64" | base64 -d | gh secret set BOT_APP_PRIVATE_KEY'" --repo $repo --app $1"
+}
+expect "secret: BOT_APP_PRIVATE_KEY" "$(bot_key_fix actions)" has_name "$secrets" secrets BOT_APP_PRIVATE_KEY
+expect "Dependabot secret: BOT_APP_PRIVATE_KEY" "$(bot_key_fix dependabot)" has_name "$dependabot" secrets BOT_APP_PRIVATE_KEY
 expect "variable: BOT_APP_ID" "make bootstrap" has_name "$variables" variables BOT_APP_ID
 
 # --- bot App installation: only the App's own token can see it. Minting one
 # (bot-token.sh) is a POST to GitHub but changes no repo state.
 # DOCTOR_BOT_CHECK overrides the command (tests point it at nothing).
 bot_check="${DOCTOR_BOT_CHECK:-$root/scripts/bot-token.sh}"
-if [[ -x "$bot_check" ]] && quiet command -v security; then
+in_codespace=0
+[[ "${CODESPACES:-}" == "true" ]] && in_codespace=1
+have_key=0
+if ((in_codespace)) && [[ -n "${BOT_APP_KEY_B64:-}" ]]; then
+  have_key=1
+elif quiet command -v security; then
+  have_key=1
+fi
+if ((in_codespace)) && [[ -z "${BOT_APP_KEY_B64:-}" ]]; then
+  skip "bot key in this Codespace" "add the Codespaces secret BOT_APP_KEY_B64 at github.com/settings/codespaces with access to $repo, then restart the Codespace"
+fi
+if [[ -x "$bot_check" ]] && ((have_key)); then
   expect "bot App installed on $repo" "install the bot App on $repo (github.com/settings/apps)" \
     quiet "$bot_check"
 else
-  skip "bot App installed" "needs the macOS Keychain key; check github.com/settings/installations"
+  skip "bot App installed" "needs the bot key (Mac Keychain, or BOT_APP_KEY_B64 in a Codespace); check github.com/settings/installations"
 fi
 
 # --- deploy target
