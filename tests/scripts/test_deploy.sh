@@ -276,6 +276,48 @@ if ((have_local)); then
   dr local deploy-dark staging "$sha"
   rc_is "local: unknown env exits 64" 64
   export DEPLOY_CONFIG="$tmp/plain.yml"
+
+  # start_rev outside dry run, against a fake docker and curl: it removes a
+  # same-named container only if `docker container inspect` finds one.
+  mkdir -p "$tmp/real-bin" "$tmp/real-state"
+  # shellcheck disable=SC2016 # expanded by the fake docker, not here
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'echo "docker $*" >>"$FAKE_DOCKER_LOG"' \
+    '[[ "$1 $2" == "container inspect" ]] && exit "${FAKE_INSPECT_RC:-1}"' \
+    'exit 0' >"$tmp/real-bin/docker"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/real-bin/curl"
+  chmod +x "$tmp/real-bin/docker" "$tmp/real-bin/curl"
+  # start_with_inspect_rc <rc>: run start_rev once; prints the docker calls.
+  start_with_inspect_rc() {
+    : >"$tmp/docker.log"
+    (
+      export PATH="$tmp/real-bin:$PATH" FAKE_DOCKER_LOG="$tmp/docker.log" FAKE_INSPECT_RC="$1"
+      unset DEPLOY_DRY_RUN
+      # shellcheck source=deploy/targets/local/lib.sh disable=SC1091
+      source "$root/deploy/targets/local/lib.sh"
+      # shellcheck disable=SC2034 # read by start_rev from lib.sh
+      STATE="$tmp/real-state"
+      start_rev hello-dev-c1234567 "$tmp" 1234567
+    ) >/dev/null 2>&1 || echo "start_rev failed"
+    cat "$tmp/docker.log"
+  }
+  calls_seen="$(start_with_inspect_rc 1)"
+  if grep -q '^docker rm ' <<<"$calls_seen"; then
+    fail "local start_rev: no leftover container, no docker rm"
+  else
+    pass "local start_rev: no leftover container, no docker rm"
+  fi
+  if grep -q '^docker run -d --name hello-dev-c1234567' <<<"$calls_seen"; then
+    pass "local start_rev: starts the container"
+  else
+    fail "local start_rev: starts the container (calls: $calls_seen)"
+  fi
+  calls_seen="$(start_with_inspect_rc 0)"
+  if grep -q '^docker rm -f hello-dev-c1234567' <<<"$calls_seen"; then
+    pass "local start_rev: removes a leftover container first"
+  else
+    fail "local start_rev: removes a leftover container first (calls: $calls_seen)"
+  fi
 fi
 
 if [[ -s "$tmp/calls" ]]; then

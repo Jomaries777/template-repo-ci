@@ -108,6 +108,7 @@ start_rev() {
   fi
   # Remove a leftover container of the same name, if any (quietly: usually
   # there is none, and docker's "No such container" read as an error in logs).
+  # Dry run skips the check so its output still shows the `docker rm` line.
   if [[ "$DRY_RUN" == "1" ]] || docker container inspect "$rev" >/dev/null 2>&1; then
     run docker rm -f "$rev" || true
   fi
