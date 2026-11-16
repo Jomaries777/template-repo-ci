@@ -28,6 +28,7 @@ Facts found during plan mode (they reduce C8 risk):
 | Scripts | `scripts/{classify,gh-settings,bootstrap,doctor,bot-token,agy-run,agy-events,agy-report,deploy,deploy-base,deploy-config,release,sdlc-metrics}.sh`, `scripts/bot-app-manifest.json`, `tests/scripts/**` (plain-bash tests with fixtures) |
 | Stacks | `stacks/{node,python,go}/**`: hello service with `/healthz`, lint/type/test configs, Dockerfile, acceptance suite (service containers), `prod-safe` smoke tag |
 | Deploy adapters | `deploy.yml` (written by bootstrap), `deploy/targets/{cloud-run,none,local,github-pages,cloudflare-workers}/{target.yml,lib.sh,bootstrap,publish,current,deploy-dark,promote,revert,url,discard,cleanup}` |
+| Bot identity (Amendment 2, [spec 0002](../0002-bot-identity-any-device/spec.md)) | `scripts/{bot-token,bot-login,bot-relay,bootstrap,doctor}.sh`, `broker/**` (new: `src/{handler,github,jwt}.js`, `schema.sql`, `wrangler.toml`, `package.json` + lockfile, `README.md`), `tests/broker/**` (new), `tests/scripts/test_bot_{token,relay}.sh` (new), `Makefile` (`make test` also runs `node --test tests/broker` when `broker/` exists), `CLAUDE.md`, `spikes/m0-owner-setup.md`, `spikes/m2-step6-owner-setup.md` |
 
 ## Order of work
 
@@ -70,7 +71,23 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 3. `deploy.yml` + the `release` composite (dark deploy → pre-traffic test → promote → live test ×3 → auto-revert → report with `claude -p` triage). Depends on step 2.
 4. `bootstrap.sh` (STACK/TARGET, cleanup, secret prompts, README stub) and `doctor.sh` (FR-15). Depends on steps 1 and 2.
 5. `dependabot-automerge.yml` (bot approves patch PRs, C1; minor and major updates, security ones included, wait for the owner). Independent of the other steps.
-6. **E2E on a sandbox repo** `sandbox-node-cloudrun` (public, created from the template): prove criteria 1–8 for this slice, including a deliberately broken live smoke test → auto-revert in under 2 min, and a real Dependabot patch auto-merge. Owner setup on the Mac: [spikes/m2-step6-owner-setup.md](spikes/m2-step6-owner-setup.md); the rest runs from a cloud session. Split by the owner (2026-11-15): **6a** first runs it with the test-only `local` target, which needs no cloud account, and **6b** repeats the deploy and revert parts on Cloud Run later.
+6. **E2E on a sandbox repo** `sandbox-node-cloudrun` (public, created from the template): prove criteria 1–8 for this slice, including a deliberately broken live smoke test → auto-revert in under 2 min, and a real Dependabot patch auto-merge. Owner setup on the Mac: [spikes/m2-step6-owner-setup.md](spikes/m2-step6-owner-setup.md); the rest runs from a cloud session. Split by the owner (2026-11-15): **6a** first runs it with the test-only `local` target, which needs no cloud account, and **6b** repeats the deploy and revert parts on Cloud Run after step 7.
+
+7. **Bot identity from any device** (Amendment 2; design and acceptance criteria in [spec 0002](../0002-bot-identity-any-device/spec.md), "S0002-n" below). Runs before 6b. Every sub-step is serial: each builds on the last and shares `bot-token.sh` or `broker/src/handler.js`.
+   - **7a. Phase 1, Codespaces secret** (serial; owns `bot-token.sh` key-source order, the Codespaces path in `bootstrap.sh`, the matching `doctor.sh` check, `tests/scripts/test_bot_token.sh`, and the phone route in `m2-step6-owner-setup.md`).
+     - **Owner:** adds the user secret `BOT_APP_KEY_B64`, limited to the template and sandbox repos.
+     - **Then:** the owner reruns bootstrap's secret step in a Codespace on `sandbox-node-local`, which sets both `BOT_APP_PRIVATE_KEY` secrets. That unblocks the step 6a Dependabot test (criterion 6), which runs right after.
+   - **7b. Login App + broker `/token`** (serial; owns `bot-login.sh`, the broker path of `bot-token.sh`, `broker/**` for `/token` and `/healthz`, `schema.sql`, `tests/broker/**`, and the `Makefile` test hook).
+     - **Owner, before the build:** creates the free Cloudflare account and an API token scoped to Workers + D1. Also creates the login-only GitHub App `<owner>-agent-login`: no permissions, device flow on, token expiry off.
+     - **Owner, after merge:** deploys by hand with `wrangler deploy`, following `broker/README.md` (spec 0002, C6). Measures `/token` CPU against the 10 ms free limit (C7).
+   - **7c. Relay** (serial; owns the `/relay` handler, `bot-relay.sh`, `tests/scripts/test_bot_relay.sh`, and the relay tests in `tests/broker`).
+     - **Owner:** runs `bot-login.sh` once, then saves the identity token on the cloud environment's credential form for the broker host.
+     - **Proof:** the next cloud-session PR goes through the relay, and the owner approves it without the admin bypass. From this point, cloud-session PRs use the relay.
+   - **7d. `/secrets`, doctor, docs, retire phase 1** (serial; owns the `/secrets` handler (`libsodium-wrappers`), bootstrap's broker path, FR-9 in `doctor.sh`, the `CLAUDE.md` bot lines, and `m0-owner-setup.md`).
+     - **Also:** `bootstrap.sh` deletes `broker/` and `tests/broker/` from new projects. The broker is template infrastructure that serves every project (see Deviations).
+     - **Owner:** deletes the Codespaces secret and rotates the App key (spec 0002, C5).
+
+   **6b** (Cloud Run) runs after step 7.
 
 ### M3: Remaining stacks and adapters (PRs #9–#12, all four in parallel)
 - `stacks/python`, `stacks/go`
@@ -88,7 +105,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 |---|---|---|
 | M0: plan, owner setup, spikes | ✅ Done | Jomaries777/template-repo-ci#2 (spike, closed), Jomaries777/template-repo-ci#3 |
 | M1: template core | ✅ Done. The ruleset and repo settings are applied with `scripts/gh-settings.sh --template`, and the repo is a template | Jomaries777/template-repo-ci#4 (CI), Jomaries777/template-repo-ci#5 (agent config), Jomaries777/template-repo-ci#6 (agy bridge), Jomaries777/template-repo-ci#7 (settings and ruleset) |
-| M2: Node + Cloud Run slice | In progress (cloud session, owner PRs). Steps 1–5 merged (#9–#18). Step 6a (`local` target) passed on 2026-11-16 for criteria 1, 3, 4 and 5 ([results](spikes/m2-step6a-results.md)); its Dependabot test (criterion 6) waits for the bot key, and 2, 7 and 8 were not run there (the results say where each is proven). Step 6b (Cloud Run) not started | Jomaries777/template-repo-ci#9, #10, #11, #12, #13, #15, #16, #17, #18; sandbox: Jomaries777/sandbox-node-local#1, #2, #3, #5 |
+| M2: Node + Cloud Run slice | In progress (cloud session, owner PRs). Steps 1–5 merged (#9–#18). Step 6a (`local` target) passed on 2026-11-16 for criteria 1, 3, 4 and 5 ([results](spikes/m2-step6a-results.md)); its Dependabot test (criterion 6) waits for the bot key, and 2, 7 and 8 were not run there (the results say where each is proven). Step 7 (Amendment 2, bot identity) planned; 7a next. Step 6b (Cloud Run) after step 7 | Jomaries777/template-repo-ci#9, #10, #11, #12, #13, #15, #16, #17, #18; sandbox: Jomaries777/sandbox-node-local#1, #2, #3, #5 |
 | M3: remaining stacks and adapters | Not started | — |
 | M4: maintain, metrics, docs | Not started | — |
 
@@ -129,6 +146,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 | 2026-11-15 | `test_deploy.sh`, `test_doctor.sh` and `test_agy_run.sh` no longer assume the template's layout. They use their own `deploy.yml` fixtures, skip adapters that aren't installed, and use a fixture plan when the template's intent is gone. | A bootstrapped project keeps these tests and runs them in `make test`; before this, 4 of its 9 test files failed |
 | 2026-11-15 | Step 4 doesn't add `make bootstrap-target` (spec §4.11, criterion 11) or the README "Start a new project" quick-start (FR-14). Until `bootstrap-target` exists, switching targets is: edit `deploy.yml`, then `DEPLOY_TARGET=<target> scripts/deploy.sh bootstrap`, which is what bootstrap's error message says. Bootstrap also refuses to start on a dirty tree and retries an unpushed commit on rerun. | `bootstrap-target` lands with the second adapter in M3, where criterion 11 is proven; the README quick-start is M4. Claude review on #15 |
 | 2026-11-16 | Step 6a ran in `sandbox-node-local`, not `sandbox-node-cloudrun`. The owner bootstrapped it from a Codespace on an Android tablet with `--skip-bot-key`, and a cloud Claude Code session opened the sandbox PRs as the owner, who approved production and merged with the admin bypass. The Dependabot test (criterion 6) waits for the bot key. Findings ([results](spikes/m2-step6a-results.md)) led to: the owner checklist notes the approval bootstrap's own deploy waits for; the `local` adapter no longer logs `No such container`. A `ci-ok` that reports cancelled runs as skipped needs an owner workflow change, and the `typescript-eslint`/`minimatch` npm advisory (dev-only) is left to Dependabot. | Owner on a tablet, no Mac; the bot key lives only in the Mac Keychain (addressed by intent 0002) |
+| 2026-11-16 | Amendment 2 (intent and spec 0002, bot identity from any device) is built as M2 step 7, before 6b. 0002 keeps no `plan.md` of its own (owner decision). Projects made from the template won't receive `broker/` or `tests/broker/`; bootstrap removes them, which spec 0002's file list didn't name. | One broker serves every project. Tracking it inside 0001 keeps one plan and one Proof table |
 
 ## Risks
 
@@ -144,6 +162,9 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 | Sandbox GCP spend | $10 budget alert. Sandbox Cloud Run services scale to zero. The owner is asked before any sandbox repo or GCP resource is deleted. |
 | Public repo leaks a secret | Push protection, the gitleaks job and the `no-secrets` hook. Secrets live only in the Keychain and GitHub secrets. |
 | Unverified Cloudflare commands and free plan | M3 spike before building the adapter. If it fails, the adapter is deferred to its own intent. |
+| The Workers free plan's 10 ms CPU limit is too small for RS256 signing or large relays (spec 0002, C7) | Measured in 7b and 7c. The relay payload is capped at 2 MB, and binary blobs at 10 per call. Moving to Workers Paid ($5 a month) only with the owner's approval |
+| The login-only identity token is bot-equivalent and has no expiry | Stored as a `0600` file and as an environment credential (never in the session). Every use is in the D1 audit log, with a rate limit and a kill switch. Revoking the App's authorization logs out every device |
+| The Codespaces secret holds the full App key during 7a–7d | Limited to the owner's repos. Deleted and the key rotated in 7d. `doctor` warns while it exists |
 
 ## Proof (spec §8 acceptance criteria → where they are proven)
 
@@ -154,12 +175,13 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 | 3 Docs-only PR → no review, no deploy | M1, M2 sandbox |
 | 4 Code PR full chain + approval + gated prod | M2 sandbox |
 | 5 Broken live smoke → auto-revert < 2 min (each adapter) | M2 (cloud-run), M3 (pages, cloudflare) |
-| 6 Dependabot patch auto-merges, minor waits | M2 sandbox |
+| 6 Dependabot patch auto-merges, minor waits | M2 sandbox (after step 7a sets the bot key) |
 | 7 Non-owner `@claude` ignored | M1: comment from a second account, or a workflow unit test on `author_association` |
 | 8 `agy-run.sh` draft PR + live check run wakes Claude Code | M1 Track C (fixtures), M2 (real run) |
 | 9 Idle project $0 after 30 days | First monthly `sdlc-metrics.sh` run on the M2 sandbox (deferred proof) |
 | 10 Template self-test passes | M1 onward, on every PR |
 | 11 Switching TARGET changes no workflow | M3: switch the M2 sandbox from cloud-run → github-pages → back |
 | 12 README word for word on a clean setup | M4 |
+| 13 Bot identity from any device (Amendment 2) | M2 step 7. 7a: S0002-1, 2, 11 (phase 1), 12. 7b: S0002-3, 4, 5, 6, 9, 10, 14. 7c: S0002-7, 8. 7d: S0002-11 (phase 2). S0002-13 ($0 after 30 days) is a deferred proof, like criterion 9 |
 
 `plan.md` is updated in the same commit whenever implementation departs from it.
