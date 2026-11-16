@@ -35,7 +35,9 @@ This works on the owner's Mac and nowhere else:
 - **`scripts/bot-token.sh`**, plus the key-related steps of `scripts/bootstrap.sh` and the checks in `scripts/doctor.sh`.
 - **Owner docs:** `intent/0001-github-cicd-pipeline/spikes/m0-owner-setup.md` and the step 6 owner setup.
 - **GitHub Actions** keep using the `BOT_APP_PRIVATE_KEY` secret through `actions/create-github-app-token`. How that secret gets set may change.
-- **Possibly a GCP project** (Secret Manager and Cloud Run), if the chosen design needs one.
+- **A token broker**: a small hosted service that holds the App key, possibly in a GCP project (Secret Manager and Cloud Run) shared with M2 step 6b. Where it runs is decided in `spec.md`.
+- **GitHub Codespaces user secrets**, for the first step.
+- **The cloud environment's stored credentials**, for cloud sessions.
 
 ## Constraints
 
@@ -46,10 +48,30 @@ This works on the owner's Mac and nowhere else:
 - **Mac flow keeps working:** the Keychain path stays until the new path is proven.
 - **Artifact loop:** this intent, then `spec.md`, then `plan.md`, then PRs.
 
+## Decisions
+
+Answered by the owner on 2026-11-16. Each was an open question in the first draft.
+
+1. **What proves a device may get a bot token: the owner's GitHub sign-in.**
+   - A device sends its existing `gh` login token. A token broker checks that the token belongs to the owner, then returns a short-lived bot token.
+   - Any device where `gh auth login` works can act as the bot, with nothing new to sign in to.
+   - This adds no new power: someone holding the owner's GitHub token can already do more than the bot.
+   - Rejected: Google sign-in (every device would also need `gcloud`) and per-device credentials (a key to manage per device, close to today's problem).
+2. **A free first step comes first: a GitHub Codespaces user secret.**
+   - The App key is stored once as a Codespaces user secret, limited to the owner's repos, and `bot-token.sh` reads it when it runs inside a Codespace.
+   - This works on any device that can open a Codespace, phone and tablet included, at no cost and without GCP.
+   - The cost is that the key lives in a second place until the broker replaces this step.
+3. **Cloud Claude Code sessions act as the bot from the broker's first release.**
+   - A cloud session has no `gh` login, so it proves itself with one revocable credential stored on the cloud environment, through the environment's secure form.
+   - The network proxy injects that credential; the session never sees it.
+   - Their PRs then come from the bot, the owner approves them normally, and the admin-bypass Deviation in `0001`'s `plan.md` ends.
+4. **Token scope: one repo per token, and every issue logged.**
+   - Each broker token is limited to the single repo it was asked for, with the bot App's existing permissions and nothing more (never `workflows`).
+   - Each issue is logged: who asked, which repo, when. Logs stay within free-tier storage.
+5. **Security review on the spec, before build.**
+   - The `secure-change` checklist and `REVIEW.md` are run against `spec.md` before any build PR.
+   - The review covers at least token theft, abuse of the broker, revocation, and the Codespaces-secret step.
+
 ## Open questions
 
-1. What proves a device may get a bot token: the owner's Google sign-in (`gcloud`), a GitHub sign-in, or a separate per-device credential? **Owner**, with options and trade-offs in `spec.md`.
-2. Is a free first step enough for phones and tablets for now (a GitHub Codespaces user secret read by `bot-token.sh`), with a hosted token broker later? **Owner.**
-3. Should cloud Claude Code sessions act as the bot too, or keep opening PRs as the owner? Acting as the bot would remove the admin bypass for their PRs, but needs a credential stored on the cloud environment. **Owner.**
-4. If a hosted broker is used, which repos and permissions may its tokens carry, and should every token it issues be logged? **Spec author**, for owner review.
-5. Does this change the threat model enough to need a security review against `REVIEW.md` before build? **Owner.**
+None for now. Design choices (where the broker runs, how the cloud-session credential is minted and revoked, how `bootstrap.sh` sets secrets without a Mac) belong in `spec.md`.
