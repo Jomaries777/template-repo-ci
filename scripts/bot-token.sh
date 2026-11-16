@@ -3,29 +3,56 @@
 #
 # Usage:  GH_TOKEN="$(scripts/bot-token.sh [owner/repo])" gh pr create ...
 #
-# The App private key (base64) comes from the first source that applies
-# (spec 0002, phase 1):
-#   1. In a GitHub Codespace: the Codespaces user secret BOT_APP_KEY_B64.
+# The token comes from the first source that applies (spec 0002):
+#   1. The bot token broker, once this device has signed in with
+#      scripts/bot-login.sh: a broker URL (BOT_BROKER_URL, or the file
+#      ~/.config/agent-bot/broker_url) and ~/.config/agent-bot/identity.
+#      No App key on this device.
+#   2. In a GitHub Codespace: the Codespaces user secret BOT_APP_KEY_B64.
 #      Outside a Codespace that variable is ignored, so the key isn't
 #      encouraged into ordinary env files.
-#   2. On a Mac: the Keychain, service "github-app-private-key" (see
+#   3. On a Mac: the Keychain, service "github-app-private-key" (see
 #      intent/0001-github-cicd-pipeline/spikes/m0-owner-setup.md).
 # In GitHub Actions use actions/create-github-app-token with the
 # BOT_APP_PRIVATE_KEY secret instead.
 #
 # The token is printed to stdout and nothing else. The key never touches disk
 # except as a 0600 temp file that is removed on exit, and is never printed.
+# The identity is sent to the broker in a header read from a pipe, so it
+# never appears in a command line.
 set -euo pipefail
 
 repo="${1:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
-app_id="${BOT_APP_ID:-$(gh variable get BOT_APP_ID --repo "$repo")}"
 service="${BOT_KEYCHAIN_SERVICE:-github-app-private-key}"
+config_dir="${BOT_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-bot}"
 
 b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 die() {
   echo "bot-token: $*" >&2
   exit 1
 }
+
+# --- 1. the broker
+broker_url="${BOT_BROKER_URL:-$(cat "$config_dir/broker_url" 2>/dev/null || true)}"
+if [[ -n "$broker_url" && -s "$config_dir/identity" ]]; then
+  name="${repo#*/}"
+  reply="$(curl -sS --max-time 15 -X POST \
+    -H @<(printf 'Authorization: Bearer %s\n' "$(cat "$config_dir/identity")") \
+    -H 'Content-Type: application/json' \
+    --data "$(jq -nc --arg r "$name" '{repo: $r}')" \
+    -w '\n%{http_code}' \
+    "${broker_url%/}/token")" || die "could not reach the broker at $broker_url"
+  code="${reply##*$'\n'}"
+  body="${reply%$'\n'*}"
+  if [[ "$code" == 200 ]]; then
+    jq -r '.token' <<<"$body"
+    exit 0
+  fi
+  die "the broker refused: $(jq -r '.error // "unknown"' <<<"$body" 2>/dev/null || echo unknown) (HTTP $code)"
+fi
+
+# --- 2 and 3: sign locally with the App key
+app_id="${BOT_APP_ID:-$(gh variable get BOT_APP_ID --repo "$repo")}"
 
 # key_b64: print the base64 App key from the first source that applies.
 key_b64() {

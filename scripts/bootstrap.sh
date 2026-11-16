@@ -138,6 +138,11 @@ else
   fs rm -f .github/workflows/template-selftest.yml
   # Tests the template-to-project step itself, which only the template has.
   fs rm -f tests/scripts/test_bootstrap.sh
+  # One bot token broker serves every project (spec 0002). It stays in the
+  # template, so new projects don't carry its code or tests.
+  for d in broker tests/broker; do
+    [[ -d "$d" ]] && fs rm -r "$d"
+  done
 
   template_repo="${TEMPLATE_REPO:-Jomaries777/template-repo-ci}"
   [[ "$template_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || usage_error "invalid TEMPLATE_REPO: $template_repo"

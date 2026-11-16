@@ -1,0 +1,20 @@
+# Bot token broker (spec 0002). Deployed by hand by the owner (C6); see
+# README.md. The App key is a secret (`wrangler secret put APP_KEY_PKCS8`),
+# never in this file.
+name = "agent-bot-broker"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+[vars]
+OWNER_LOGIN = "Jomaries777"
+OWNER_ID = "322333432"
+APP_ID = "5766032"
+# Kill switch: set to "false" and redeploy to refuse every request.
+BROKER_ENABLED = "true"
+
+[[d1_databases]]
+binding = "AUDIT"
+database_name = "agent-bot-audit"
+# Replace with the id printed by `wrangler d1 create agent-bot-audit`.
+database_id = "SET_AT_SETUP"

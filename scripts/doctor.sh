@@ -132,7 +132,10 @@ bot_check="${DOCTOR_BOT_CHECK:-$root/scripts/bot-token.sh}"
 in_codespace=0
 [[ "${CODESPACES:-}" == "true" ]] && in_codespace=1
 have_key=0
-if ((in_codespace)) && [[ -n "${BOT_APP_KEY_B64:-}" ]]; then
+bot_cfg="${BOT_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-bot}"
+if [[ -s "$bot_cfg/identity" ]] && [[ -n "${BOT_BROKER_URL:-}" || -s "$bot_cfg/broker_url" ]]; then
+  have_key=1 # the broker (bot-login.sh), spec 0002 phase 2
+elif ((in_codespace)) && [[ -n "${BOT_APP_KEY_B64:-}" ]]; then
   have_key=1
 elif quiet command -v security; then
   have_key=1
@@ -144,7 +147,7 @@ if [[ -x "$bot_check" ]] && ((have_key)); then
   expect "bot App installed on $repo" "install the bot App on $repo (github.com/settings/apps)" \
     quiet "$bot_check"
 else
-  skip "bot App installed" "needs the bot key (Mac Keychain, or BOT_APP_KEY_B64 in a Codespace); check github.com/settings/installations"
+  skip "bot App installed" "needs scripts/bot-login.sh, the Mac Keychain key, or BOT_APP_KEY_B64 in a Codespace; check github.com/settings/installations"
 fi
 
 # --- deploy target

@@ -69,13 +69,19 @@ fmt: ## Format shell files with shfmt, or only FILE=<path>
 	fi
 	@if [[ -z "$(FILE)" && -n "$(STACK_DIR)" ]]; then $(MAKE) -C "$(STACK_DIR)" fmt; fi
 
-test: ## Run every executable tests/scripts/test_*.sh
+test: ## Run every executable tests/scripts/test_*.sh, and tests/broker with node
 	@pass=0; fail=0; failed=""; \
 	for t in tests/scripts/test_*.sh; do \
 	  [[ -x "$$t" ]] || continue; \
 	  echo "== $$t"; \
 	  if "$$t"; then pass=$$((pass + 1)); else fail=$$((fail + 1)); failed="$$failed $$t"; fi; \
 	done; \
+	if [[ -d tests/broker ]]; then \
+	  if command -v node >/dev/null 2>&1; then \
+	    echo "== tests/broker (node --test)"; \
+	    if node --test tests/broker/*.test.mjs; then pass=$$((pass + 1)); else fail=$$((fail + 1)); failed="$$failed tests/broker"; fi; \
+	  else echo "== tests/broker: skipped (node not installed)"; fi; \
+	fi; \
 	echo "test summary: $$pass passed, $$fail failed"; \
 	if [[ $$fail -gt 0 ]]; then echo "failed:$$failed"; exit 1; fi
 	@if [[ -n "$(STACK_DIR)" ]]; then echo "== stack tests ($(STACK_DIR))"; $(MAKE) -C "$(STACK_DIR)" test; fi
