@@ -141,7 +141,7 @@ else
   # One bot token broker serves every project (spec 0002). It stays in the
   # template, so new projects don't carry its code or tests.
   for d in broker tests/broker; do
-    [[ -d "$d" ]] && fs rm -r "$d"
+    if [[ -d "$d" ]]; then fs rm -r "$d"; fi
   done
 
   template_repo="${TEMPLATE_REPO:-Jomaries777/template-repo-ci}"

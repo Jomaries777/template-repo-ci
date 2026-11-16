@@ -57,6 +57,7 @@ GH_TOKEN="$(scripts/bot-token.sh Jomaries777/sandbox-node-local)" gh pr create .
 ## Operate
 
 - **Kill switch:** set `BROKER_ENABLED = "false"` in `wrangler.toml` and run `$W deploy`. Every request then gets `503 disabled`, and tokens already issued expire within an hour. The switch stops the broker only: `bot-token.sh` then falls back to a device's own key source (the Codespaces secret or the Mac Keychain), if it has one. To cut those off too, delete the Codespaces secret or rotate the App key.
+- **If someone floods it:** requests with junk tokens write nothing, but each one still costs a Worker request and a "Check a token" call to GitHub. Only devices you sign in know the URL; if it leaks and the request count in **Metrics** jumps, turn the kill switch on (your devices fall back to their own keys), then redeploy under a new Worker `name` to get a new URL.
 - **Sign every device out:** <https://github.com/settings/apps/authorizations> → `jomaries777-agent-login` → **Revoke**. To sign out one device, run `scripts/bot-login.sh --logout` on it.
 - **Audit log:**
 
