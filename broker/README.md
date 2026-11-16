@@ -13,10 +13,10 @@ broker:   "Check a token" with the login App's client credentials:
 
 | Endpoint | Answer |
 |---|---|
-| `POST /token` | `200 {token, expires_at}`, or `400 bad_repo` / `wrong_owner` (only the owner's repos) / `bad_json`, `401 no_token` / `bad_token`, `403 not_owner`, `404 not_installed`, `413 too_large`, `429 rate_limited` (30 requests an hour per caller), `502 github_error`, `503 disabled` |
+| `POST /token` | `200 {token, expires_at}`, or `400 bad_repo` / `wrong_owner` (only the owner's repos) / `bad_json`, `401 no_token` / `bad_token`, `403 not_owner`, `404 not_installed`, `413 too_large`, `429 rate_limited` (30 requests an hour for the owner, 1 for anyone else), `502 github_error`, `503 disabled` / `audit_unavailable` |
 | `GET /healthz` | `{ok, enabled}` |
 
-The identity comes from the login-only GitHub App `jomaries777-agent-login`, which has **no permissions**. Its token can only say who you are. The broker accepts only tokens that this App issued: it checks each one with GitHub's [Check a token](https://docs.github.com/en/rest/apps/oauth-applications#check-a-token) endpoint, so a `gh` CLI token, a PAT or another app's token of yours gets `401 bad_token`. Because the broker turns the identity into bot tokens, treat it like a bot credential: the file is mode `0600`, and every use is audited. Requests without a valid identity are refused without writing to the database, so nobody can fill it. The App's **"Expire user authorization tokens" must stay off**; otherwise identities stop working after 8 hours.
+The identity comes from the login-only GitHub App `jomaries777-agent-login`, which has **no permissions**. Its token can only say who you are. The broker accepts only tokens that this App issued: it checks each one with GitHub's [Check a token](https://docs.github.com/en/rest/apps/oauth-applications#check-a-token) endpoint, so a `gh` CLI token, a PAT or another app's token of yours gets `401 bad_token`. Because the broker turns the identity into bot tokens, treat it like a bot credential: the file is mode `0600`, and every use is audited. Requests without a valid identity, and throttled requests, are refused without writing to the database, and another GitHub user who signs in to the login App gets one audited refusal an hour, so nobody can fill it. If the audit database is missing or can't be read, the broker refuses everything with `503 audit_unavailable` rather than issue tokens without a log or a rate limit. The App's **"Expire user authorization tokens" must stay off**; otherwise identities stop working after 8 hours.
 
 ## Deploy (by hand, spec 0002 C6)
 
@@ -31,7 +31,7 @@ Do this once from a **Codespace on `template-repo-ci`**, which already has the `
    W="npx -y wrangler@4.163.0"
    ```
 
-3. **Create the audit database:** run `$W d1 create agent-bot-audit` and copy the printed `database_id` into `wrangler.toml`, replacing `SET_AT_SETUP`. Then create the table with `$W d1 execute agent-bot-audit --remote --file schema.sql`.
+3. **Create the audit database:** run `$W d1 create agent-bot-audit` and copy the printed `database_id` into `wrangler.toml`, replacing `SET_AT_SETUP` (until you do, `wrangler deploy` fails with an error about the D1 binding). Then create the table with `$W d1 execute agent-bot-audit --remote --file schema.sql`.
 4. **Store the App key as a secret.** WebCrypto needs PKCS#8, so the key is converted on the way, and it is never written to disk:
 
    ```bash

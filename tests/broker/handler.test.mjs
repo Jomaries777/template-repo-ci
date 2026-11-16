@@ -27,7 +27,7 @@ const label = ["PRIVATE", "KEY"].join(" ");
 const pem = `-----BEGIN ${label}-----\n${Buffer.from(der).toString("base64")}\n-----END ${label}-----\n`;
 
 // --- in-memory D1 stub for the three statements the handler uses
-function d1() {
+function d1({ failRead = false } = {}) {
   const rows = [];
   return {
     rows,
@@ -46,6 +46,7 @@ function d1() {
             },
             async first() {
               if (!sql.startsWith("SELECT COUNT(*)")) throw new Error(`unexpected first: ${sql}`);
+              if (failRead) throw new Error("D1_ERROR: unavailable");
               const [caller, since] = args;
               const n = rows.filter(
                 (r) => r.caller_id === caller && r.endpoint === "token" && r.ts > since,
@@ -223,6 +224,43 @@ test("refused requests count toward the hourly limit too", async () => {
   const { res, body } = await call(req({ repo: "Jomaries777/sandbox-node-local" }), e);
   assert.equal(res.status, 429);
   assert.equal(body.error, "rate_limited");
+});
+
+test("throttled requests write no audit rows", async () => {
+  const e = env();
+  for (let i = 0; i < 30; i++) await call(req({ repo: "Jomaries777/sandbox-node-local" }), e);
+  for (let i = 0; i < 5; i++) {
+    const { res } = await call(req({ repo: "Jomaries777/sandbox-node-local" }), e);
+    assert.equal(res.status, 429);
+  }
+  assert.equal(e.AUDIT.rows.length, 30, "only the 30 answered requests are stored");
+});
+
+test("another GitHub user gets one audited refusal an hour, then no writes", async () => {
+  const e = env();
+  const first = await call(req({ repo: "Jomaries777/sandbox-node-local" }, OTHER_CRED), e);
+  assert.equal(first.res.status, 403);
+  for (let i = 0; i < 10; i++) {
+    const { res, body } = await call(req({ repo: "Jomaries777/sandbox-node-local" }, OTHER_CRED), e);
+    assert.equal(res.status, 429);
+    assert.equal(body.error, "rate_limited");
+  }
+  assert.equal(e.AUDIT.rows.length, 1);
+  const owner = await call(req({ repo: "Jomaries777/sandbox-node-local" }), e);
+  assert.equal(owner.res.status, 200, "the owner is not limited by others");
+});
+
+test("without a working audit database nothing is issued", async () => {
+  let r = await call(req({ repo: "Jomaries777/sandbox-node-local" }), env({ AUDIT: undefined }));
+  assert.equal(r.res.status, 503);
+  assert.equal(r.body.error, "audit_unavailable");
+  assert.equal(r.gh.calls.length, 0, "refused before any GitHub call");
+  const broken = d1({ failRead: true });
+  r = await call(req({ repo: "Jomaries777/sandbox-node-local" }), env({ AUDIT: broken }));
+  assert.equal(r.res.status, 503);
+  assert.equal(r.body.error, "audit_unavailable");
+  assert.ok(!r.gh.calls.some((c) => c.url.includes("/access_tokens")), "no token minted");
+  assert.equal(broken.rows.length, 0);
 });
 
 test("a body over 1 KB is refused", async () => {
