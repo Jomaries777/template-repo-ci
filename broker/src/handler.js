@@ -1,17 +1,25 @@
 // Bot token broker (spec 0002, phase 2). A caller proves it is the owner with
-// a GitHub token from the login-only App (no permissions); the broker answers
-// with a 1-hour installation token of the bot App, limited to one repo.
-// The App key never leaves this Worker. Every request is audited without
-// tokens. Dependencies are injected so tests run offline:
-//   handle(request, env, { fetch, now })   now() returns milliseconds.
+// a user token of the login-only GitHub App (no permissions). The broker
+// checks that token with GitHub's "Check a token" endpoint, which confirms it
+// was issued by that App and names the user, then answers with a 1-hour
+// installation token of the bot App, limited to one repo. Any other token of
+// the owner's (gh CLI, a PAT, another OAuth app) is refused. The App key never
+// leaves this Worker. Requests from identified callers are audited without
+// tokens; anonymous refusals are not stored, so nobody can fill the database.
+// Dependencies are injected so tests run offline:
+//   handle(request, env, { fetch, now, random })   now() returns milliseconds.
 
 import { appJwt } from "./jwt.js";
 import { gh } from "./github.js";
 
-const MAX_BODY = 1024;
+const MAX_BODY = 1024; // bytes
 const REPO_RE = /^[A-Za-z0-9._-]{1,100}$/;
+// A guard, not a hard limit: the count is read before the row is written, so
+// concurrent requests can pass it together. Enough for one owner's devices.
 const RATE_PER_HOUR = 30;
 const RETENTION_MS = 90 * 24 * 3600 * 1000;
+// Old rows are deleted on about 1 write in 50, not every write (CPU, C7).
+const PRUNE_CHANCE = 0.02;
 // The bot App's own permissions; GitHub refuses anything wider.
 const PERMISSIONS = {
   contents: "write",
@@ -34,7 +42,7 @@ function bearer(request) {
   return m ? m[1] : null;
 }
 
-async function audit(env, row, nowMs) {
+async function audit(env, row, nowMs, random) {
   if (!env.AUDIT) return;
   try {
     await env.AUDIT.prepare(
@@ -42,7 +50,9 @@ async function audit(env, row, nowMs) {
     )
       .bind(nowMs, row.caller_id, row.endpoint, row.repo, row.outcome, row.reason, row.expires_at, row.ip)
       .run();
-    await env.AUDIT.prepare("DELETE FROM audit WHERE ts < ?").bind(nowMs - RETENTION_MS).run();
+    if (random() < PRUNE_CHANCE) {
+      await env.AUDIT.prepare("DELETE FROM audit WHERE ts < ?").bind(nowMs - RETENTION_MS).run();
+    }
   } catch {
     // The answer still goes out; never log row contents.
     console.error("audit write failed");
@@ -59,13 +69,34 @@ async function issuedLastHour(env, callerId, nowMs) {
   return Number(r?.n ?? 0);
 }
 
+// readJson: parse a JSON object body of at most MAX_BODY bytes, reading no
+// more than that from the stream.
 async function readJson(request) {
   const len = Number(request.headers.get("Content-Length") || "0");
   if (len > MAX_BODY) return { error: [413, "too_large"] };
-  const text = await request.text();
-  if (text.length > MAX_BODY) return { error: [413, "too_large"] };
+  const chunks = [];
+  let size = 0;
+  if (request.body) {
+    const reader = request.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_BODY) {
+        await reader.cancel();
+        return { error: [413, "too_large"] };
+      }
+      chunks.push(value);
+    }
+  }
+  const bytes = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    bytes.set(c, at);
+    at += c.byteLength;
+  }
   try {
-    const v = JSON.parse(text);
+    const v = JSON.parse(new TextDecoder().decode(bytes));
     if (v === null || typeof v !== "object" || Array.isArray(v)) return { error: [400, "bad_json"] };
     return { value: v };
   } catch {
@@ -73,9 +104,31 @@ async function readJson(request) {
   }
 }
 
+// whoIs: the GitHub user ID behind a login-App token, or null. "Check a token"
+// answers 200 only for tokens that App issued; it needs the App's client
+// credentials, which only this Worker holds.
+async function whoIs(env, deps, userToken) {
+  const basic = btoa(`${env.LOGIN_CLIENT_ID}:${env.LOGIN_CLIENT_SECRET}`);
+  const r = await gh(deps.fetch, `/applications/${env.LOGIN_CLIENT_ID}/token`, {
+    auth: `Basic ${basic}`,
+    method: "POST",
+    body: { access_token: userToken },
+  });
+  if (r.status !== 200 || r.data?.user?.id === undefined) return null;
+  return String(r.data.user.id);
+}
+
 async function token(request, env, deps, row) {
   const nowMs = deps.now();
   if (env.BROKER_ENABLED !== "true") return [503, { error: "disabled" }];
+
+  // Who is calling, before anything else is read or stored.
+  const callerToken = bearer(request);
+  if (!callerToken) return [401, { error: "no_token" }];
+  const callerId = await whoIs(env, deps, callerToken);
+  if (!callerId) return [401, { error: "bad_token" }];
+  row.caller_id = callerId;
+  if (callerId !== String(env.OWNER_ID)) return [403, { error: "not_owner" }];
 
   const body = await readJson(request);
   if (body.error) return [body.error[0], { error: body.error[1] }];
@@ -84,13 +137,6 @@ async function token(request, env, deps, row) {
     return [400, { error: "bad_repo" }];
   }
   row.repo = repo;
-
-  const callerToken = bearer(request);
-  if (!callerToken) return [401, { error: "no_token" }];
-  const me = await gh(deps.fetch, "/user", { auth: `Bearer ${callerToken}` });
-  if (me.status !== 200 || !me.data || me.data.id === undefined) return [401, { error: "bad_token" }];
-  row.caller_id = String(me.data.id);
-  if (String(me.data.id) !== String(env.OWNER_ID)) return [403, { error: "not_owner" }];
 
   if ((await issuedLastHour(env, row.caller_id, nowMs)) >= RATE_PER_HOUR) {
     return [429, { error: "rate_limited" }];
@@ -114,6 +160,7 @@ async function token(request, env, deps, row) {
 }
 
 export async function handle(request, env, deps) {
+  const random = deps.random ?? Math.random;
   const url = new URL(request.url);
   if (url.pathname === "/healthz") {
     if (request.method !== "GET") return json(405, { error: "method_not_allowed" });
@@ -141,7 +188,8 @@ export async function handle(request, env, deps) {
   } finally {
     row.outcome = status === 200 ? "issued" : "refused";
     row.reason = status === 200 ? null : out.error;
-    await audit(env, row, deps.now());
+    // Anonymous refusals (no or invalid token, kill switch) are not stored.
+    if (row.caller_id) await audit(env, row, deps.now(), random);
   }
   return json(status, out);
 }

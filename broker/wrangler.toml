@@ -10,6 +10,10 @@ workers_dev = true
 OWNER_LOGIN = "Jomaries777"
 OWNER_ID = "322333432"
 APP_ID = "5766032"
+# The login-only App (jomaries777-agent-login). Its client secret is a Worker
+# secret (LOGIN_CLIENT_SECRET): the broker uses it to check that a token was
+# issued by this App, so no other token of the owner's is accepted.
+LOGIN_CLIENT_ID = "Iv23liFOZk5YaGC6CJc9"
 # Kill switch: set to "false" and redeploy to refuse every request.
 BROKER_ENABLED = "true"
 

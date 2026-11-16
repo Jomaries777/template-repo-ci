@@ -19,7 +19,8 @@
 # The token is printed to stdout and nothing else. The key never touches disk
 # except as a 0600 temp file that is removed on exit, and is never printed.
 # The identity is sent to the broker in a header read from a pipe, so it
-# never appears in a command line.
+# never appears in a command line (curl -H @file needs curl 7.55 or later),
+# and only over https.
 set -euo pipefail
 
 repo="${1:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
@@ -35,6 +36,8 @@ die() {
 # --- 1. the broker
 broker_url="${BOT_BROKER_URL:-$(cat "$config_dir/broker_url" 2>/dev/null || true)}"
 if [[ -n "$broker_url" && -s "$config_dir/identity" ]]; then
+  [[ "$broker_url" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]] ||
+    die "the broker URL must be https://host; not sending the identity to $broker_url"
   name="${repo#*/}"
   reply="$(curl -sS --max-time 15 -X POST \
     -H @<(printf 'Authorization: Bearer %s\n' "$(cat "$config_dir/identity")") \

@@ -27,7 +27,11 @@ logout=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --broker)
-      broker="${2:-}"
+      [[ $# -ge 2 && -n "$2" ]] || {
+        echo "bot-login: --broker needs a URL" >&2
+        exit 64
+      }
+      broker="$2"
       shift 2
       ;;
     --logout)
@@ -55,7 +59,6 @@ mkdir -p "$dir"
 chmod 700 "$dir"
 if [[ -n "$broker" ]]; then
   [[ "$broker" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]] || die "the broker URL must be https://host"
-  (umask 077 && printf '%s\n' "${broker%/}" >"$dir/broker_url")
 fi
 
 post() { curl -fsS --max-time 15 -X POST -H 'Accept: application/json' "$@"; }
@@ -81,6 +84,8 @@ while :; do
     (umask 077 && printf '%s' "$identity" >"$dir/identity.new")
     mv -f "$dir/identity.new" "$dir/identity"
     unset identity
+    # Saved only after a successful sign-in.
+    [[ -z "$broker" ]] || (umask 077 && printf '%s\n' "${broker%/}" >"$dir/broker_url")
     echo "bot-login: signed in; bot-token.sh can now ask the broker" >&2
     exit 0
   fi

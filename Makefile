@@ -80,6 +80,8 @@ test: ## Run every executable tests/scripts/test_*.sh, and tests/broker with nod
 	  if command -v node >/dev/null 2>&1; then \
 	    echo "== tests/broker (node --test)"; \
 	    if node --test tests/broker/*.test.mjs; then pass=$$((pass + 1)); else fail=$$((fail + 1)); failed="$$failed tests/broker"; fi; \
+	  elif [[ -n "$${CI:-}" ]]; then \
+	    echo "== tests/broker: node is not installed (required in CI)"; fail=$$((fail + 1)); failed="$$failed tests/broker"; \
 	  else echo "== tests/broker: skipped (node not installed)"; fi; \
 	fi; \
 	echo "test summary: $$pass passed, $$fail failed"; \

@@ -11,6 +11,10 @@ const OTHER_ID = "999";
 const OWNER_CRED = ["owner", "identity", "cred"].join("-");
 const OTHER_CRED = ["other", "identity", "cred"].join("-");
 const INST_TOKEN = ["inst", "token", "value"].join("-");
+// An owner token that the login App did not issue (gh CLI, a PAT, ...).
+const OWNER_OTHER_APP = ["owner", "gh", "cli"].join("-");
+const LOGIN_ID = "Iv23liFOZk5YaGC6CJc9";
+const LOGIN_SECRET = ["login", "client", "secret"].join("-");
 
 // --- a throwaway App key, exported as a PKCS#8 PEM
 const pair = await crypto.subtle.generateKey(
@@ -62,10 +66,16 @@ function github({ installStatus = 200, tokenStatus = 201 } = {}) {
     const auth = init.headers?.Authorization || "";
     calls.push({ url, method: init.method || "GET", auth, body: init.body });
     const reply = (status, obj) => new Response(JSON.stringify(obj), { status });
-    if (url === "https://api.github.com/user") {
-      if (auth === `Bearer ${OWNER_CRED}`) return reply(200, { id: Number(OWNER_ID), login: "Jomaries777" });
-      if (auth === `Bearer ${OTHER_CRED}`) return reply(200, { id: Number(OTHER_ID), login: "someone" });
-      return reply(401, { message: "Bad credentials" });
+    // "Check a token": 200 only for tokens the login App issued, with the
+    // App's client credentials; 404 otherwise.
+    if (url === `https://api.github.com/applications/${LOGIN_ID}/token`) {
+      if (auth !== `Basic ${btoa(`${LOGIN_ID}:${LOGIN_SECRET}`)}` || init.method !== "POST") {
+        return reply(401, { message: "Requires authentication" });
+      }
+      const t = JSON.parse(init.body).access_token;
+      if (t === OWNER_CRED) return reply(200, { user: { id: Number(OWNER_ID), login: "Jomaries777" } });
+      if (t === OTHER_CRED) return reply(200, { user: { id: Number(OTHER_ID), login: "someone" } });
+      return reply(404, { message: "Not Found" });
     }
     if (url === "https://api.github.com/repos/Jomaries777/sandbox-node-local/installation") {
       return installStatus === 200 ? reply(200, { id: 77 }) : reply(installStatus, { message: "x" });
@@ -87,23 +97,37 @@ function env(over = {}) {
     APP_ID: "5766032",
     BROKER_ENABLED: "true",
     APP_KEY_PKCS8: pem,
+    LOGIN_CLIENT_ID: LOGIN_ID,
+    LOGIN_CLIENT_SECRET: LOGIN_SECRET,
     AUDIT: d1(),
     ...over,
   };
 }
 
 const NOW = Date.UTC(2026, 10, 16, 15, 0, 0);
-function req(body, cred = OWNER_CRED, { path = "/token", method = "POST", raw } = {}) {
+function req(body, cred = OWNER_CRED, { path = "/token", method = "POST", raw, stream } = {}) {
   const headers = { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.9" };
   if (cred) headers.Authorization = `Bearer ${cred}`;
+  if (stream) {
+    // A body with no Content-Length, sent in chunks.
+    const chunk = new TextEncoder().encode("x".repeat(512));
+    let n = 0;
+    const rs = new ReadableStream({
+      pull(c) {
+        if (n++ < stream) c.enqueue(chunk);
+        else c.close();
+      },
+    });
+    return new Request(`https://broker.example${path}`, { method, headers, body: rs, duplex: "half" });
+  }
   return new Request(`https://broker.example${path}`, {
     method,
     headers,
     body: method === "GET" ? undefined : (raw ?? JSON.stringify(body)),
   });
 }
-async function call(request, e = env(), gh = github()) {
-  const res = await handle(request, e, { fetch: gh.fetch, now: () => NOW });
+async function call(request, e = env(), gh = github(), random = () => 0.5) {
+  const res = await handle(request, e, { fetch: gh.fetch, now: () => NOW, random });
   return { res, body: await res.json(), e, gh };
 }
 
@@ -151,17 +175,30 @@ test("no token and a bad token are refused", async () => {
   let r = await call(req({ repo: "sandbox-node-local" }, null));
   assert.equal(r.res.status, 401);
   assert.equal(r.body.error, "no_token");
+  assert.equal(r.gh.calls.length, 0, "no GitHub call without a token");
   r = await call(req({ repo: "sandbox-node-local" }, "nonsense"));
   assert.equal(r.res.status, 401);
   assert.equal(r.body.error, "bad_token");
 });
 
-test("repo names are validated before GitHub is called", async () => {
+test("an owner token the login App did not issue is refused", async () => {
+  const { res, body, gh } = await call(req({ repo: "sandbox-node-local" }, OWNER_OTHER_APP));
+  assert.equal(res.status, 401);
+  assert.equal(body.error, "bad_token");
+  assert.ok(!gh.calls.some((c) => c.url.includes("/access_tokens")), "no token minted");
+});
+
+test("the token check uses the login App's client credentials", async () => {
+  const { res } = await call(req({ repo: "sandbox-node-local" }), env({ LOGIN_CLIENT_SECRET: "wrong-secret-x" }));
+  assert.equal(res.status, 401, "a wrong client secret identifies nobody");
+});
+
+test("repo names are validated before the repo is looked up", async () => {
   for (const repo of ["../x", "a/b", "", "..", ".", "x".repeat(101), 42, null]) {
     const { res, body, gh } = await call(req({ repo }));
     assert.equal(res.status, 400, `repo ${JSON.stringify(repo)}`);
     assert.equal(body.error, "bad_repo");
-    assert.equal(gh.calls.length, 0);
+    assert.ok(!gh.calls.some((c) => c.url.includes("/repos/")), "no repo call for a bad name");
   }
   const bad = await call(req(null, OWNER_CRED, { raw: "{not json" }));
   assert.equal(bad.res.status, 400);
@@ -170,6 +207,12 @@ test("repo names are validated before GitHub is called", async () => {
 
 test("a body over 1 KB is refused", async () => {
   const { res, body } = await call(req(null, OWNER_CRED, { raw: JSON.stringify({ repo: "x", pad: "y".repeat(2000) }) }));
+  assert.equal(res.status, 413);
+  assert.equal(body.error, "too_large");
+});
+
+test("a streamed body over 1 KB is refused without reading it all", async () => {
+  const { res, body } = await call(req(null, OWNER_CRED, { stream: 100 }));
   assert.equal(res.status, 413);
   assert.equal(body.error, "too_large");
 });
@@ -204,33 +247,39 @@ test("the 31st token in an hour is rate limited", async () => {
   assert.equal(body.error, "rate_limited");
 });
 
-test("every request is audited, and no token is ever stored", async () => {
+test("identified callers are audited, anonymous refusals are not, and no token is stored", async () => {
   const e = env();
   await call(req({ repo: "sandbox-node-local" }), e);
   await call(req({ repo: "sandbox-node-local" }, OTHER_CRED), e);
   await call(req({ repo: "../x" }), e);
+  await call(req({ repo: "sandbox-node-local" }, null), e);
+  await call(req({ repo: "sandbox-node-local" }, "nonsense"), e);
+  await call(req({ repo: "sandbox-node-local" }, OWNER_OTHER_APP), e);
   const rows = e.AUDIT.rows;
-  assert.equal(rows.length, 3);
+  assert.equal(rows.length, 3, "no, bad and foreign tokens leave no row");
   assert.deepEqual(
     rows.map((r) => [r.outcome, r.reason, r.caller_id]),
     [
       ["issued", null, OWNER_ID],
       ["refused", "not_owner", OTHER_ID],
-      ["refused", "bad_repo", null],
+      ["refused", "bad_repo", OWNER_ID],
     ],
   );
   assert.equal(rows[0].ip, "203.0.113.9");
   const stored = JSON.stringify(rows);
-  for (const secret of [OWNER_CRED, OTHER_CRED, INST_TOKEN]) {
+  for (const secret of [OWNER_CRED, OTHER_CRED, INST_TOKEN, LOGIN_SECRET]) {
     assert.ok(!stored.includes(secret), "audit holds no token");
   }
 });
 
-test("old audit rows are deleted", async () => {
+test("old audit rows are deleted now and then, not on every write", async () => {
   const e = env();
   e.AUDIT.rows.push({ ts: NOW - 91 * 24 * 3600 * 1000, caller_id: "1", endpoint: "token", outcome: "issued" });
-  await call(req({ repo: "sandbox-node-local" }), e);
-  assert.equal(e.AUDIT.rows.length, 1);
+  await call(req({ repo: "sandbox-node-local" }), e, github(), () => 0.5);
+  assert.equal(e.AUDIT.rows.length, 2, "kept when this write doesn't prune");
+  await call(req({ repo: "sandbox-node-local" }), e, github(), () => 0);
+  assert.equal(e.AUDIT.rows.length, 2, "the 91-day-old row is gone, two new rows remain");
+  assert.ok(e.AUDIT.rows.every((r) => r.ts === NOW));
 });
 
 test("healthz, unknown paths and wrong methods", async () => {

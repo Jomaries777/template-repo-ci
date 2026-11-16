@@ -3,6 +3,10 @@ import { handle } from "./handler.js";
 
 export default {
   fetch(request, env) {
-    return handle(request, env, { fetch: (...a) => fetch(...a), now: () => Date.now() });
+    return handle(request, env, {
+      fetch: (...a) => fetch(...a),
+      now: () => Date.now(),
+      random: () => Math.random(),
+    });
   },
 };

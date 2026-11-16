@@ -6,8 +6,9 @@ A Cloudflare Worker that gives a device a **1-hour bot token for one repo** once
 device: scripts/bot-login.sh (once)  → ~/.config/agent-bot/identity
 device: scripts/bot-token.sh owner/repo
           → POST /token {"repo": "repo"}  (Authorization: Bearer <identity>)
-broker:   GET api.github.com/user == OWNER_ID?  → mint a token for that repo only
-          → one audit row in D1 (never a token)
+broker:   "Check a token" with the login App's client credentials:
+          issued by that App, and its user == OWNER_ID?  → mint a token for that repo only
+          → one audit row in D1 for identified callers (never a token)
 ```
 
 | Endpoint | Answer |
@@ -15,7 +16,7 @@ broker:   GET api.github.com/user == OWNER_ID?  → mint a token for that repo o
 | `POST /token` | `200 {token, expires_at}`, or `400 bad_repo` / `bad_json`, `401 no_token` / `bad_token`, `403 not_owner`, `404 not_installed`, `413 too_large`, `429 rate_limited` (30 an hour), `502 github_error`, `503 disabled` |
 | `GET /healthz` | `{ok, enabled}` |
 
-The identity comes from the login-only GitHub App `jomaries777-agent-login`, which has **no permissions**. Its token can only say who you are. Because the broker turns it into bot tokens, treat it like a bot credential: the file is mode `0600`, and every use is audited.
+The identity comes from the login-only GitHub App `jomaries777-agent-login`, which has **no permissions**. Its token can only say who you are. The broker accepts only tokens that this App issued: it checks each one with GitHub's [Check a token](https://docs.github.com/en/rest/apps/oauth-applications#check-a-token) endpoint, so a `gh` CLI token, a PAT or another app's token of yours gets `401 bad_token`. Because the broker turns the identity into bot tokens, treat it like a bot credential: the file is mode `0600`, and every use is audited. Requests without a valid identity are refused without writing to the database, so nobody can fill it. The App's **"Expire user authorization tokens" must stay off**; otherwise identities stop working after 8 hours.
 
 ## Deploy (by hand, spec 0002 C6)
 
@@ -37,7 +38,13 @@ Do this once from a **Codespace on `template-repo-ci`**, which already has the `
    printf %s "$BOT_APP_KEY_B64" | base64 -d | openssl pkcs8 -topk8 -nocrypt | $W secret put APP_KEY_PKCS8
    ```
 
-5. **Deploy:** `$W deploy`. It prints the URL, `https://agent-bot-broker.<your-subdomain>.workers.dev`. Check it with `curl -s <url>/healthz`, which should give `{"ok":true,"enabled":true}`.
+5. **Store the login App's client secret.** It's used only to check identities, and it can't be used to sign in as you. At <https://github.com/settings/apps/jomaries777-agent-login> → **Credentials** (or **General**) → **Client secrets** → **Generate a new client secret**, copy it, then run this and paste it at the prompt:
+
+   ```bash
+   $W secret put LOGIN_CLIENT_SECRET
+   ```
+
+6. **Deploy:** `$W deploy`. It prints the URL, `https://agent-bot-broker.<your-subdomain>.workers.dev`. Check it with `curl -s <url>/healthz`, which should give `{"ok":true,"enabled":true}`.
 
 ## Use it from any device
 

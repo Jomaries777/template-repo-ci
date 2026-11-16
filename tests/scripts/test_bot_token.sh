@@ -152,6 +152,14 @@ else
   fail "broker: a refusal shows its error code (rc $rc, err: $err)"
 fi
 
+# A non-https broker URL never gets the identity.
+run "$with_sec" BOT_BROKER_URL=http://broker.test
+if [[ $rc != 0 && ! -s "$tmp/curl.hdrs" ]] && grep -q "https" <<<"$err"; then
+  pass "broker: refuses a non-https URL before sending anything"
+else
+  fail "broker: refuses a non-https URL before sending anything (rc $rc, err: $err)"
+fi
+
 # 7. BOT_BROKER_URL overrides the saved URL; without an identity the broker is skipped.
 run "$with_sec" BOT_BROKER_URL=https://broker.test FAKE_BROKER_BODY='{"token":"via-env"}'
 if [[ "$out" == "via-env" ]]; then pass "broker: BOT_BROKER_URL works"; else fail "broker: BOT_BROKER_URL works (out [$out])"; fi

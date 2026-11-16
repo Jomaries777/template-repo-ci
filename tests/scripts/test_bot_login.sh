@@ -67,15 +67,18 @@ fi
 if grep -q "client_id=Iv23liFOZk5YaGC6CJc9" "$tmp/curl.args"; then pass "uses the login App's client ID"; else fail "uses the login App's client ID"; fi
 
 printf '%s\n' '{"error":"authorization_pending"}' '{"error":"access_denied"}' >"$tmp/denied.replies"
-run "$tmp/denied.replies"
-if [[ $rc != 0 && ! -e "$tmp/cfg/identity" ]] && grep -q "cancelled" <<<"$err"; then
-  pass "denied: fails and saves nothing"
+run "$tmp/denied.replies" --broker https://agent-bot-broker.example.workers.dev
+if [[ $rc != 0 && ! -e "$tmp/cfg/identity" && ! -e "$tmp/cfg/broker_url" ]] && grep -q "cancelled" <<<"$err"; then
+  pass "denied: fails and saves nothing, not even the broker URL"
 else
   fail "denied: fails and saves nothing (rc $rc, err: $err)"
 fi
 
 run "$tmp/ok.replies" --broker http://insecure.example
 if [[ $rc != 0 ]] && grep -q "https" <<<"$err"; then pass "rejects a non-https broker URL"; else fail "rejects a non-https broker URL"; fi
+
+run "$tmp/ok.replies" --broker
+if [[ $rc == 64 ]] && grep -q "needs a URL" <<<"$err"; then pass "--broker without a URL is a usage error"; else fail "--broker without a URL is a usage error (rc $rc)"; fi
 
 run "$tmp/ok.replies"
 run "$tmp/ok.replies" --logout
