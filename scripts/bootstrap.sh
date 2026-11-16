@@ -4,8 +4,13 @@
 #
 # Usage: scripts/bootstrap.sh --stack <stack> --target <target>
 #                             [--repo owner/name] [--dry-run] [--local-only]
-#   --dry-run     print the file changes and every remote call; change nothing
-#   --local-only  change the files only: no git, GitHub or cloud calls
+#                             [--skip-bot-key]
+#   --dry-run       print the file changes and every remote call; change nothing
+#   --local-only    change the files only: no git, GitHub or cloud calls
+#   --skip-bot-key  don't set the bot App key secrets (for a machine without
+#                   the Mac Keychain, e.g. a Codespace); add them later from a
+#                   Mac with the commands bootstrap prints. Only Dependabot
+#                   auto-merge needs them.
 #
 # Run it from the new project's clone, logged in with `gh` as the owner.
 #
@@ -35,6 +40,7 @@ target=""
 repo=""
 dry_run=0
 local_only=0
+skip_bot_key=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --stack) stack="${2:-}"; shift 2 ;;
@@ -42,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     --repo) repo="${2:-}"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     --local-only) local_only=1; shift ;;
+    --skip-bot-key) skip_bot_key=1; shift ;;
     -h | --help) sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "bootstrap: unknown argument: $1" >&2; exit 64 ;;
   esac
@@ -325,8 +332,15 @@ bot_key() {
   base64 -d <<<"$v"
 }
 set_secret CLAUDE_CODE_OAUTH_TOKEN actions claude_token
-set_secret BOT_APP_PRIVATE_KEY actions bot_key
-set_secret BOT_APP_PRIVATE_KEY dependabot bot_key
+if ((skip_bot_key)); then
+  echo "    BOT_APP_PRIVATE_KEY: skipped (--skip-bot-key); add it later from a Mac with:"
+  for app in actions dependabot; do
+    echo "      security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo $repo --app $app"
+  done
+else
+  set_secret BOT_APP_PRIVATE_KEY actions bot_key
+  set_secret BOT_APP_PRIVATE_KEY dependabot bot_key
+fi
 app_id="${BOT_APP_ID:-}"
 if [[ -z "$app_id" ]] && ! ((dry_run)); then
   app_id="$(gh variable get BOT_APP_ID --repo "$repo" 2>/dev/null || true)"

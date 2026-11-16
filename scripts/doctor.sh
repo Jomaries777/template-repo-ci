@@ -113,8 +113,10 @@ variables="$(api "repos/$repo/actions/variables?per_page=30")"
 has_name() { jqt "$1" "[.$2[]?.name] | index(\"$3\") != null"; }
 expect "secret: CLAUDE_CODE_OAUTH_TOKEN" "make bootstrap (or: claude setup-token | gh secret set CLAUDE_CODE_OAUTH_TOKEN)" \
   has_name "$secrets" secrets CLAUDE_CODE_OAUTH_TOKEN
-expect "secret: BOT_APP_PRIVATE_KEY" "make bootstrap" has_name "$secrets" secrets BOT_APP_PRIVATE_KEY
-expect "Dependabot secret: BOT_APP_PRIVATE_KEY" "make bootstrap" has_name "$dependabot" secrets BOT_APP_PRIVATE_KEY
+# The bot key comes from a Mac Keychain; bootstrap --skip-bot-key leaves it out.
+bot_key_fix="on a Mac: security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo $repo"
+expect "secret: BOT_APP_PRIVATE_KEY" "$bot_key_fix --app actions" has_name "$secrets" secrets BOT_APP_PRIVATE_KEY
+expect "Dependabot secret: BOT_APP_PRIVATE_KEY" "$bot_key_fix --app dependabot" has_name "$dependabot" secrets BOT_APP_PRIVATE_KEY
 expect "variable: BOT_APP_ID" "make bootstrap" has_name "$variables" variables BOT_APP_ID
 
 # --- bot App installation: only the App's own token can see it. Minting one

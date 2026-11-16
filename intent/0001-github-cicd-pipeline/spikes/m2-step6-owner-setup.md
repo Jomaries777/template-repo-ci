@@ -32,6 +32,31 @@ Step 6 is split (plan.md Deviations):
 
 Nothing to tear down: no cloud resources are created. Delete the sandbox repo when done.
 
+### Step 6a from a phone (Android or iPhone, no Mac)
+
+The bot key stays on the Mac, so a phone sets up everything except the key, and you add it from a Mac later. Only the Dependabot auto-merge test needs it.
+
+1. **Create the repo:** in the GitHub app or browser, on the template's page, tap **Use this template** → **Create a new repository**. Name it `sandbox-node-local` and make it **Public**.
+2. **Open a Codespace:** on the new repo, tap **Code** → **Codespaces** → **Create codespace on main**, using the browser's desktop-site mode if the button is hidden. It gives a Linux terminal with `git`, `make` and `jq`.
+3. **Log in as yourself.** The Codespace's built-in token can't change repo settings:
+
+   ```bash
+   unset GITHUB_TOKEN
+   gh auth login        # GitHub.com → HTTPS → "Login with a web browser"; open the code link on the phone
+   ```
+
+4. **Bootstrap without the bot key.** Paste the Claude token (from `claude setup-token`) at the hidden prompt:
+
+   ```bash
+   export BOT_APP_ID="$(gh variable get BOT_APP_ID --repo Jomaries777/template-repo-ci)"
+   scripts/bootstrap.sh --stack node --target local --skip-bot-key
+   ```
+
+5. **Install the bot App** on the repo: <https://github.com/settings/installations> → **jomaries777-agent-bot** → **Configure**.
+6. **Run `make doctor`.** Expect two FAILs for the missing `BOT_APP_PRIVATE_KEY`, each showing the Mac command that fixes it. Everything else should pass. Then stop the Codespace: **Codespaces** → **⋯** → **Stop**.
+7. **Hand over** as in step 6 above: Claude runs everything except the Dependabot test.
+8. **Later, on a Mac:** run the two commands from the doctor hints, which pipe the key from the Keychain into the repo's secrets. Then tell Claude to run the Dependabot test.
+
 ---
 
 The rest of this page is the **6b** checklist for Cloud Run.
