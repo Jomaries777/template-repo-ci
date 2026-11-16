@@ -6,6 +6,8 @@
 | Intent | [intent.md](intent.md), accepted 2026-11-16 (#19) |
 | Created | 2026-11-16 |
 | Owner decisions | C1–C4 decided 2026-11-16; C6 has a recommended default (see [Flagged concerns](#flagged-concerns-and-policy-conflicts)) |
+| Amends | [0001 spec](../0001-github-cicd-pipeline/spec.md) §4.5 and §8, as **Amendment 2** |
+| Plan | No `plan.md` here. Once this spec is accepted, the build is written as **M2 step 7** in [0001's plan.md](../0001-github-cicd-pipeline/plan.md), before step 6b, and the acceptance criteria below become its Proof rows |
 
 ## Requirements
 
@@ -186,7 +188,7 @@ Because the bot makes the commit and the push, it is the last pusher, and the ow
 
 ## Acceptance criteria
 
-Each criterion is checkable by a command; together they become `plan.md` "Proof". `$B` is `$BOT_BROKER_URL`, and `$ID` is `$(cat ~/.config/agent-bot/identity)`.
+Each criterion is checkable by a command; together they become the Proof rows of M2 step 7 in 0001's `plan.md`. `$B` is `$BOT_BROKER_URL`, and `$ID` is `$(cat ~/.config/agent-bot/identity)`.
 
 1. **Phase 1, Codespace:** in a Codespace with `BOT_APP_KEY_B64` set and no Keychain, `GH_TOKEN="$(scripts/bot-token.sh)" gh api /installation/repositories --jq '.repositories[].full_name'` lists the repo. A test PR opened with that token shows the bot as its author (`gh pr view N --json author`).
 2. **Phase 1, scoping:** outside a Codespace, `BOT_APP_KEY_B64=… scripts/bot-token.sh` ignores the variable and uses the Keychain (`test_bot_token.sh`).

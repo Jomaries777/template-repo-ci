@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** by the product owner on 2026-11-15. Amendment 1 (pluggable deploy targets) accepted 2026-11-15 (PR #1). Spec accepted; now in Stage 3, Build (`plan.md`) |
+| Status | **Accepted** by the product owner on 2026-11-15. Amendment 1 (pluggable deploy targets) accepted 2026-11-15 (PR #1). Amendment 2 (bot identity from any device, [intent 0002](../0002-bot-identity-any-device/intent.md)) accepted 2026-11-16 (#19); its spec is pending. Spec accepted; now in Stage 3, Build (`plan.md`) |
 | Product owner | Repo owner (sole human: product owner, engineer and release manager) |
 | Created | 2026-11-15 |
 | SDLC stage | Stage 1, Plan: "Capture as intent.md" |
