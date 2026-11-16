@@ -8,6 +8,7 @@
 | SDLC stage | Stage 1, Plan: "Capture as intent.md" |
 | Framework | [The AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook) |
 | Next artifact | `spec.md` in this folder, written only after this file is accepted and committed |
+| Tracked as | **Amendment 2 to [intent 0001](../0001-github-cicd-pipeline/intent.md)** (owner, 2026-11-16). This folder keeps the detailed intent and spec. There is no separate `plan.md`: the build is **M2 step 7** in 0001's `plan.md`, before step 6b |
 
 ## Problem
 

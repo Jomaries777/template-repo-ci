@@ -188,6 +188,11 @@ Why `claude-review` isn't required: review findings are advisory (playbook) and 
   - Check runs can only be created by GitHub Apps, which is a second reason for the App.
 - **`scripts/bot-token.sh`** mints a 1-hour installation token from the App private key, which is stored in the macOS Keychain on each of the owner's computers. Antigravity runs and Claude Code build sessions export `GH_TOKEN=$(scripts/bot-token.sh)` before `git push` / `gh pr create`. Commits are authored as the bot, with `Co-Authored-By` crediting the agent.
 - **Why this works**: the bot authors, Claude reviews (advisory), the owner approves. The owner isn't the author, so the approval is real.
+- **Amendment 2 (accepted 2026-11-16, [intent 0002](../0002-bot-identity-any-device/intent.md)): bot identity from any device.** The Keychain-only key kept agents on other PCs, phones (through Codespaces) and cloud sessions from acting as the bot. [Spec 0002](../0002-bot-identity-any-device/spec.md) replaces that in two phases:
+  - **Phase 1:** a Codespaces user secret.
+  - **Phase 2:** a token broker on Cloudflare Workers. It checks a login-only GitHub App token against the owner's ID and mints 1-hour, one-repo bot tokens. It also offers a relay, so cloud sessions commit and open PRs as the bot, and it sets new repos' bot secrets.
+
+  The Keychain path stays as the Mac fallback. Spec 0002 is the authority for the design; the build is M2 step 7 in `plan.md`.
 
 ### 4.6 Ruleset on the default branch (`.github/rulesets/main.json`)
 
@@ -430,6 +435,7 @@ These jobs never call AI. When the owner picks up an issue, they triage it in an
 10. The template's own self-test CI (`.template/selftest.yml`) passes: actionlint, shellcheck, markdownlint, bootstrap dry-runs for all three stacks, and `DEPLOY_DRY_RUN=1` runs of every adapter verb.
 11. Changing `target` in `deploy.yml` and running `make bootstrap-target` moves an existing project's deploys to the new adapter **without any workflow file changing**.
 12. Following `README.md` **word for word** on a clean machine produces a working project, and its final step, `make doctor`, passes with every check green (FR-14, FR-15).
+13. **Amendment 2:** the owner acts as the bot from a non-Mac device and from a cloud session (whose PR the owner approves without the admin bypass), and bootstraps a project without a Mac. Each of these is checked as in [spec 0002's acceptance criteria](../0002-bot-identity-any-device/spec.md#acceptance-criteria) 1–14.
 
 ---
 
