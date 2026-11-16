@@ -94,6 +94,6 @@ Added at the owner's request (2026-11-16), so the host is chosen on the merits r
 
 ## Open questions
 
-1. Which broker host: A (Cloudflare Workers, recommended), B (Cloud Run) or another? **Owner.**
+1. Which broker host: A (Cloudflare Workers, recommended) or B (Cloud Run)? The owner chose (2026-11-16) to decide in `spec.md`, which compares A and B in detail: re-checked free tiers, setup steps, audit log and revocation. **Owner**, at spec review.
 
 Other design choices (how the cloud-session credential is minted and revoked, how `bootstrap.sh` sets secrets without a Mac) belong in `spec.md`.
