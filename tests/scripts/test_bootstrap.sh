@@ -34,6 +34,13 @@ copy() {
   (cd "$src" && git ls-files -co --exclude-standard -z | tar --null -cf - -T -) | tar -xf - -C "$1"
 }
 
+# Every stack ships the Dependabot updates that bootstrap appends (FR-7).
+missing=""
+for d in "$src"/stacks/*/; do
+  [[ -f "$d/dependabot-updates.yml" ]] || missing+=" $(basename "$d")"
+done
+check "every stack ships dependabot-updates.yml" '[[ -z "$missing" ]] || { echo "missing:$missing"; false; }'
+
 # --- local-only: node on cloud-run
 a="$tmp/a"
 copy "$a"
@@ -52,6 +59,19 @@ check "CODEOWNERS names the new owner" 'grep -qx "\* @acme" "$a/.github/CODEOWNE
 check "README stub names the stack and target" 'grep -q "Stack: \`node\`" "$a/README.md" && grep -q "Deploy target: \`cloud-run\`" "$a/README.md"'
 check "root make delegates to the stack" 'make -C "$a" -n typecheck 2>/dev/null | grep -q "stacks/node"'
 check "deploy.sh reads the new target" '[[ "$(APP_NAME=hello DEPLOY_DRY_RUN=1 "$a/scripts/deploy.sh" url dev 2>/dev/null)" == https://hello-dev-dryrun.a.run.app ]]'
+# Dependabot covers the stack's ecosystems too (FR-7): bootstrap appends the
+# stack's fragment to .github/dependabot.yml.
+dbot="$a/.github/dependabot.yml"
+check "dependabot: keeps github-actions" 'grep -q "package-ecosystem: github-actions" "$dbot"'
+check "dependabot: adds the stack's npm packages" 'grep -q "package-ecosystem: npm" "$dbot" && grep -q "directory: /stacks/node" "$dbot"'
+check "dependabot: adds the stack's Docker image" 'grep -q "package-ecosystem: docker" "$dbot"'
+check "dependabot: npm patch updates are their own group" 'grep -A2 "npm-patch:" "$dbot" | grep -q "update-types:" && grep -A3 "npm-patch:" "$dbot" | grep -q -- "- patch"'
+check "dependabot: the stack fragment is removed" '[[ ! -e "$a/stacks/node/dependabot-updates.yml" ]]'
+if python3 -c 'import yaml' 2>/dev/null; then
+  check "dependabot: valid YAML with three update entries" '[[ "$(python3 -c "import sys,yaml; print(len(yaml.safe_load(open(sys.argv[1]))[\"updates\"]))" "$dbot")" == 3 ]]'
+else
+  check "dependabot: three update entries" '[[ "$(grep -c "package-ecosystem:" "$dbot")" == 3 ]]'
+fi
 
 # The bootstrapped project's own script tests must pass (they ship with it).
 # Stack tests need npm and are run by its CI; these need only bash and git.
@@ -107,6 +127,7 @@ has "dry run: production limited to main" "deployment-branch-policies --silent -
 has "dry run: Claude token secret" "gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme/hello --app actions"
 has "dry run: bot key mirrored to Dependabot" "gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app dependabot"
 has "dry run: BOT_APP_ID variable" "DRY-RUN: gh variable set BOT_APP_ID --repo acme/hello --body 123"
+has "dry run: appends the stack's Dependabot updates" "DRY-RUN: append stacks/node/dependabot-updates.yml to .github/dependabot.yml"
 has "dry run: runs the adapter bootstrap" "DRY-RUN: gh variable set APP_NAME --repo acme/hello --body hello"
 has "dry run: adapter uses the repo for WIF" "assertion.repository==\\'acme/hello\\'"
 if [[ -s "$tmp/calls" ]]; then
