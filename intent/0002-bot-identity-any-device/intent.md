@@ -72,6 +72,28 @@ Answered by the owner on 2026-11-16. Each was an open question in the first draf
    - The `secure-change` checklist and `REVIEW.md` are run against `spec.md` before any build PR.
    - The review covers at least token theft, abuse of the broker, revocation, and the Codespaces-secret step.
 
+## Approaches considered
+
+Added at the owner's request (2026-11-16), so the host is chosen on the merits rather than defaulting to GCP. Decisions 1 and 4 hold on every host. A device sends its `gh` token. The broker checks it with GitHub's `GET /user` and requires the owner's account ID. It then signs a JWT with the App key and returns a 1-hour installation token for one repo. The cloud-session credential (decision 3) can be a fine-grained GitHub token of the owner's with no repository access, which proves identity only and can be revoked in GitHub settings. Free-tier figures below are from memory and are re-checked in `spec.md`.
+
+| Option | Idle cost / card | Key storage | Audit log | Ops and fit | Verdict |
+|---|---|---|---|---|---|
+| **A. Cloudflare Workers** | $0, free plan with no card; about 100k requests/day | Workers secret (encrypted, write-only) | Workers Logs (short retention on free); a durable log in D1 or KV, also free | No cold start, no server to patch. WebCrypto signs RS256, but the App's PKCS#1 key is converted to PKCS#8 once. A Cloudflare account is already planned for M3 | **Recommended**: cheapest and simplest, and needs no card |
+| **B. GCP Cloud Run + Secret Manager** | About $0, but billing must be on (card) | Secret Manager | Cloud Logging, free tier | Cold start about 1 s. Shares the new GCP project with M2 step 6b, so billing is set up once. More IAM to configure | Good alternative if 6b's project exists first |
+| **C. AWS Lambda + SSM Parameter Store** | About $0, card needed | SSM SecureString (Secrets Manager costs $0.40 a month) | CloudWatch, free tier | Lambda function URL. A new cloud account and IAM only for this | Works, but a third cloud for one small service |
+| **D. Deno Deploy or Vercel functions** | $0 hobby tiers | Environment variables | Short built-in logs; no durable log without another service | Similar to A, but no other use in the template. Vercel's hobby tier is non-commercial only | Possible; A fits better |
+| **E. Always-on VM** (e.g. a free-tier VM) | $0 to a few $ | Disk or env | Self-managed | A server to patch and keep up; a larger attack surface | Rejected |
+| **F. GitHub only, no host** (Actions mints the token) | $0 | Actions secret | Actions logs | No safe way to deliver a token to the device. On a public repo, artifacts and logs are readable | Rejected |
+| **G. Password manager** (e.g. 1Password or Bitwarden CLI) | $0 to a few $ | The vault | The vault's log | Puts the App key itself on every device, which breaks "short-lived tokens only" | Rejected |
+
+**Recommendation: A (Cloudflare Workers)**, plus the Codespaces-secret step from decision 2 until the broker is live.
+
+- It meets "$0 idle" without a payment card, and it has no cold start, no server to patch and no IAM project to set up.
+- If the owner prefers to keep cloud accounts to one, B is the fallback, sharing step 6b's GCP project.
+- The broker is roughly 100 lines in either case. Moving later means moving the secret and changing one URL in `bot-token.sh`.
+
 ## Open questions
 
-None for now. Design choices (where the broker runs, how the cloud-session credential is minted and revoked, how `bootstrap.sh` sets secrets without a Mac) belong in `spec.md`.
+1. Which broker host: A (Cloudflare Workers, recommended), B (Cloud Run) or another? **Owner.**
+
+Other design choices (how the cloud-session credential is minted and revoked, how `bootstrap.sh` sets secrets without a Mac) belong in `spec.md`.
