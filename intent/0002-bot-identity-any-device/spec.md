@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | **Accepted** by the product owner on 2026-11-16, with C1–C4 and C6 decided |
 | Intent | [intent.md](intent.md), accepted 2026-11-16 (#19) |
 | Created | 2026-11-16 |
-| Owner decisions | C1–C4 decided 2026-11-16; C6 has a recommended default (see [Flagged concerns](#flagged-concerns-and-policy-conflicts)) |
+| Owner decisions | C1–C4 and C6 decided 2026-11-16; C5 accepted with decision 2; C7 measured in the build (see [Flagged concerns](#flagged-concerns-and-policy-conflicts)) |
 | Amends | [0001 spec](../0001-github-cicd-pipeline/spec.md) §4.5 and §8, as **Amendment 2** |
 | Plan | No `plan.md` here. Once this spec is accepted, the build is written as **M2 step 7** in [0001's plan.md](../0001-github-cicd-pipeline/plan.md), before step 6b, and the acceptance criteria below become its Proof rows |
 
@@ -183,7 +183,7 @@ Because the bot makes the commit and the push, it is the last pusher, and the ow
 | C3 | Cloud sessions can't push as the bot through their own git connection | Decision 3 wants cloud sessions in the first release | **Build the relay** (owner, 2026-11-16): `POST /relay` plus `bot-relay.sh`, with the rules above. A relayed change arrives as one commit per call, so local history isn't kept |
 | C4 | How bootstrap sets the repo secrets without a Mac | `/secrets` gives the broker a write path and briefly sees a `gh` token | **Codespace secret now, broker `/secrets` in phase 2, OIDC spike later** (owner, 2026-11-16) |
 | C5 | The Codespaces secret holds the full App key during phase 1 | NFR-2's "never on a device" while phase 1 lasts | Accepted (decision 2). The key is rotated when phase 1 ends |
-| C6 | Deploying the broker from CI would need a Cloudflare API token as a CI secret and a workflow change | `.github/workflows/` changes go through the owner with `ALLOW_WORKFLOW_EDIT=1`; a new long-lived CI secret | **Recommended:** the owner deploys by hand with `wrangler deploy` from a Codespace or a Mac, following `broker/README.md`. CI deploy is a later option. Change at spec acceptance if needed |
+| C6 | Deploying the broker from CI would need a Cloudflare API token as a CI secret and a workflow change | `.github/workflows/` changes go through the owner with `ALLOW_WORKFLOW_EDIT=1`; a new long-lived CI secret | **Deploy by hand** (owner, 2026-11-16): the owner runs `wrangler deploy` from a Codespace or a Mac, following `broker/README.md`. No CI secret and no workflow change; CI deploy is a later option |
 | C7 | The relay's CPU on the Workers free plan (10 ms) | Large relays may exceed it | Measured in the build PR. Moving to Workers Paid ($5 a month) needs the owner's approval |
 
 ## Acceptance criteria
