@@ -13,9 +13,13 @@ import { appJwt } from "./jwt.js";
 import { gh } from "./github.js";
 
 const MAX_BODY = 1024; // bytes
-const REPO_RE = /^[A-Za-z0-9._-]{1,100}$/;
-// A guard, not a hard limit: the count is read before the row is written, so
-// concurrent requests can pass it together. Enough for one owner's devices.
+// "owner/name"; the owner must be OWNER_LOGIN, so a token is never minted for
+// a same-named repo of another owner.
+const REPO_RE = /^([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})$/;
+// Every request of an identified caller counts, refused ones included, so
+// repeated failures that reach GitHub are limited too. A guard, not a hard
+// limit: the count is read before the row is written, so concurrent requests
+// can pass it together. Enough for one owner's devices.
 const RATE_PER_HOUR = 30;
 const RETENTION_MS = 90 * 24 * 3600 * 1000;
 // Old rows are deleted on about 1 write in 50, not every write (CPU, C7).
@@ -59,10 +63,10 @@ async function audit(env, row, nowMs, random) {
   }
 }
 
-async function issuedLastHour(env, callerId, nowMs) {
+async function requestsLastHour(env, callerId, nowMs) {
   if (!env.AUDIT) return 0;
   const r = await env.AUDIT.prepare(
-    "SELECT COUNT(*) AS n FROM audit WHERE caller_id = ? AND endpoint = 'token' AND outcome = 'issued' AND ts > ?",
+    "SELECT COUNT(*) AS n FROM audit WHERE caller_id = ? AND endpoint = 'token' AND ts > ?",
   )
     .bind(callerId, nowMs - 3600 * 1000)
     .first();
@@ -128,19 +132,19 @@ async function token(request, env, deps, row) {
   const callerId = await whoIs(env, deps, callerToken);
   if (!callerId) return [401, { error: "bad_token" }];
   row.caller_id = callerId;
+  if ((await requestsLastHour(env, callerId, nowMs)) >= RATE_PER_HOUR) {
+    return [429, { error: "rate_limited" }];
+  }
   if (callerId !== String(env.OWNER_ID)) return [403, { error: "not_owner" }];
 
   const body = await readJson(request);
   if (body.error) return [body.error[0], { error: body.error[1] }];
-  const repo = body.value.repo;
-  if (typeof repo !== "string" || !REPO_RE.test(repo) || repo === "." || repo === "..") {
-    return [400, { error: "bad_repo" }];
-  }
-  row.repo = repo;
-
-  if ((await issuedLastHour(env, row.caller_id, nowMs)) >= RATE_PER_HOUR) {
-    return [429, { error: "rate_limited" }];
-  }
+  const full = body.value.repo;
+  const m = typeof full === "string" ? REPO_RE.exec(full) : null;
+  if (!m || m[2] === "." || m[2] === "..") return [400, { error: "bad_repo" }];
+  row.repo = full;
+  if (m[1].toLowerCase() !== String(env.OWNER_LOGIN).toLowerCase()) return [400, { error: "wrong_owner" }];
+  const repo = m[2];
 
   const jwt = await appJwt(env.APP_ID, env.APP_KEY_PKCS8, Math.floor(nowMs / 1000));
   const inst = await gh(deps.fetch, `/repos/${env.OWNER_LOGIN}/${repo}/installation`, {

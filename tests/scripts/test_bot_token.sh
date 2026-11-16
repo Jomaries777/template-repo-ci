@@ -140,7 +140,7 @@ printf '%s\n' "https://broker.test" >"$tmp/.config/agent-bot/broker_url"
 run "$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a"
 if [[ $rc == 0 && "$out" == "from-broker" ]]; then pass "broker: used before the Codespaces secret"; else fail "broker: used before the Codespaces secret (rc $rc, out [$out], err: $err)"; fi
 if [[ ! -s "$tmp/jwt" ]]; then pass "broker: no local signing"; else fail "broker: no local signing"; fi
-if grep -q '"repo":"hello"' "$tmp/curl.args"; then pass "broker: asks for the repo name only"; else fail "broker: asks for the repo name only ($(cat "$tmp/curl.args"))"; fi
+if grep -q '"repo":"acme/hello"' "$tmp/curl.args"; then pass "broker: sends owner/name"; else fail "broker: sends owner/name ($(cat "$tmp/curl.args"))"; fi
 if grep -qF "Authorization: Bearer $ident" "$tmp/curl.hdrs" 2>/dev/null; then pass "broker: sends the identity as a bearer header"; else fail "broker: sends the identity as a bearer header"; fi
 if ! grep -qF "$ident" "$tmp/curl.args"; then pass "broker: identity never on the command line"; else fail "broker: identity never on the command line"; fi
 
@@ -150,6 +150,21 @@ if [[ $rc != 0 && -z "$out" ]] && grep -q "not_owner" <<<"$err" && ! grep -qF "$
   pass "broker: a refusal shows its error code"
 else
   fail "broker: a refusal shows its error code (rc $rc, err: $err)"
+fi
+
+# A broker that is down or switched off (5xx, or no answer) falls back to the
+# local key; a refusal (4xx) does not.
+run "$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" FAKE_BROKER_BODY='{"error":"disabled"}' FAKE_BROKER_CODE=503
+if [[ $rc == 0 && "$out" == "ghs_test" ]] && jwt_signed_by "$tmp/a.pub" && grep -q "unavailable (503)" <<<"$err"; then
+  pass "broker: a 503 falls back to the Codespaces secret"
+else
+  fail "broker: a 503 falls back to the Codespaces secret (rc $rc, out [$out], err: $err)"
+fi
+run "$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" FAKE_BROKER_BODY='{"error":"wrong_owner"}' FAKE_BROKER_CODE=400
+if [[ $rc != 0 && -z "$out" ]] && grep -q "wrong_owner" <<<"$err"; then
+  pass "broker: a 4xx refusal does not fall back"
+else
+  fail "broker: a 4xx refusal does not fall back (rc $rc, out [$out])"
 fi
 
 # A non-https broker URL never gets the identity.

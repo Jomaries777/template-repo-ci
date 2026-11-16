@@ -7,7 +7,9 @@
 #   1. The bot token broker, once this device has signed in with
 #      scripts/bot-login.sh: a broker URL (BOT_BROKER_URL, or the file
 #      ~/.config/agent-bot/broker_url) and ~/.config/agent-bot/identity.
-#      No App key on this device.
+#      No App key on this device. If the broker can't be reached or answers
+#      5xx (down, or its kill switch is on), the sources below are tried; a
+#      refusal (bad identity, wrong owner, not installed, rate limit) stops.
 #   2. In a GitHub Codespace: the Codespaces user secret BOT_APP_KEY_B64.
 #      Outside a Codespace that variable is ignored, so the key isn't
 #      encouraged into ordinary env files.
@@ -38,20 +40,26 @@ broker_url="${BOT_BROKER_URL:-$(cat "$config_dir/broker_url" 2>/dev/null || true
 if [[ -n "$broker_url" && -s "$config_dir/identity" ]]; then
   [[ "$broker_url" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]] ||
     die "the broker URL must be https://host; not sending the identity to $broker_url"
-  name="${repo#*/}"
-  reply="$(curl -sS --max-time 15 -X POST \
+  [[ "$repo" == */* ]] || die "give the repo as owner/name, not $repo"
+  # The full owner/name goes to the broker, which refuses any other owner.
+  code=""
+  if reply="$(curl -sS --max-time 15 -X POST \
     -H @<(printf 'Authorization: Bearer %s\n' "$(cat "$config_dir/identity")") \
     -H 'Content-Type: application/json' \
-    --data "$(jq -nc --arg r "$name" '{repo: $r}')" \
+    --data "$(jq -nc --arg r "$repo" '{repo: $r}')" \
     -w '\n%{http_code}' \
-    "${broker_url%/}/token")" || die "could not reach the broker at $broker_url"
-  code="${reply##*$'\n'}"
-  body="${reply%$'\n'*}"
+    "${broker_url%/}/token")"; then
+    code="${reply##*$'\n'}"
+    body="${reply%$'\n'*}"
+  fi
   if [[ "$code" == 200 ]]; then
     jq -r '.token' <<<"$body"
     exit 0
   fi
-  die "the broker refused: $(jq -r '.error // "unknown"' <<<"$body" 2>/dev/null || echo unknown) (HTTP $code)"
+  if [[ -n "$code" && "$code" != 5* ]]; then
+    die "the broker refused: $(jq -r '.error // "unknown"' <<<"$body" 2>/dev/null || echo unknown) (HTTP $code)"
+  fi
+  echo "bot-token: the broker at $broker_url is unavailable (${code:-no answer}); trying the local key" >&2
 fi
 
 # --- 2 and 3: sign locally with the App key

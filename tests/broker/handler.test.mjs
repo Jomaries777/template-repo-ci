@@ -48,7 +48,7 @@ function d1() {
               if (!sql.startsWith("SELECT COUNT(*)")) throw new Error(`unexpected first: ${sql}`);
               const [caller, since] = args;
               const n = rows.filter(
-                (r) => r.caller_id === caller && r.endpoint === "token" && r.outcome === "issued" && r.ts > since,
+                (r) => r.caller_id === caller && r.endpoint === "token" && r.ts > since,
               ).length;
               return { n };
             },
@@ -136,7 +136,7 @@ function b64urlDecode(s) {
 }
 
 test("owner gets a one-repo token signed by the App key", async () => {
-  const { res, body, gh } = await call(req({ repo: "sandbox-node-local" }));
+  const { res, body, gh } = await call(req({ repo: "Jomaries777/sandbox-node-local" }));
   assert.equal(res.status, 200);
   assert.equal(body.token, INST_TOKEN);
   assert.equal(body.expires_at, "2026-11-16T17:00:00Z");
@@ -165,36 +165,36 @@ test("owner gets a one-repo token signed by the App key", async () => {
 });
 
 test("another GitHub user is refused", async () => {
-  const { res, body, gh } = await call(req({ repo: "sandbox-node-local" }, OTHER_CRED));
+  const { res, body, gh } = await call(req({ repo: "Jomaries777/sandbox-node-local" }, OTHER_CRED));
   assert.equal(res.status, 403);
   assert.equal(body.error, "not_owner");
   assert.ok(!gh.calls.some((c) => c.url.includes("/access_tokens")), "no token minted");
 });
 
 test("no token and a bad token are refused", async () => {
-  let r = await call(req({ repo: "sandbox-node-local" }, null));
+  let r = await call(req({ repo: "Jomaries777/sandbox-node-local" }, null));
   assert.equal(r.res.status, 401);
   assert.equal(r.body.error, "no_token");
   assert.equal(r.gh.calls.length, 0, "no GitHub call without a token");
-  r = await call(req({ repo: "sandbox-node-local" }, "nonsense"));
+  r = await call(req({ repo: "Jomaries777/sandbox-node-local" }, "nonsense"));
   assert.equal(r.res.status, 401);
   assert.equal(r.body.error, "bad_token");
 });
 
 test("an owner token the login App did not issue is refused", async () => {
-  const { res, body, gh } = await call(req({ repo: "sandbox-node-local" }, OWNER_OTHER_APP));
+  const { res, body, gh } = await call(req({ repo: "Jomaries777/sandbox-node-local" }, OWNER_OTHER_APP));
   assert.equal(res.status, 401);
   assert.equal(body.error, "bad_token");
   assert.ok(!gh.calls.some((c) => c.url.includes("/access_tokens")), "no token minted");
 });
 
 test("the token check uses the login App's client credentials", async () => {
-  const { res } = await call(req({ repo: "sandbox-node-local" }), env({ LOGIN_CLIENT_SECRET: "wrong-secret-x" }));
+  const { res } = await call(req({ repo: "Jomaries777/sandbox-node-local" }), env({ LOGIN_CLIENT_SECRET: "wrong-secret-x" }));
   assert.equal(res.status, 401, "a wrong client secret identifies nobody");
 });
 
 test("repo names are validated before the repo is looked up", async () => {
-  for (const repo of ["../x", "a/b", "", "..", ".", "x".repeat(101), 42, null]) {
+  for (const repo of ["Jomaries777/..", "Jomaries777/.", "sandbox-node-local", "a/b/c", "", "Jomaries777/" + "x".repeat(101), "Jomaries777/a b", 42, null]) {
     const { res, body, gh } = await call(req({ repo }));
     assert.equal(res.status, 400, `repo ${JSON.stringify(repo)}`);
     assert.equal(body.error, "bad_repo");
@@ -203,6 +203,26 @@ test("repo names are validated before the repo is looked up", async () => {
   const bad = await call(req(null, OWNER_CRED, { raw: "{not json" }));
   assert.equal(bad.res.status, 400);
   assert.equal(bad.body.error, "bad_json");
+});
+
+test("a repo of another owner is refused, never mapped to the owner's", async () => {
+  const { res, body, gh } = await call(req({ repo: "other-org/sandbox-node-local" }));
+  assert.equal(res.status, 400);
+  assert.equal(body.error, "wrong_owner");
+  assert.ok(!gh.calls.some((c) => c.url.includes("/repos/")), "no repo lookup");
+  const ok = await call(req({ repo: "jomaries777/sandbox-node-local" }));
+  assert.equal(ok.res.status, 200, "the owner's login is matched without case");
+});
+
+test("refused requests count toward the hourly limit too", async () => {
+  const e = env();
+  for (let i = 0; i < 30; i++) {
+    const { res } = await call(req({ repo: "Jomaries777/sandbox-node-local" }), e, github({ installStatus: 404 }));
+    assert.equal(res.status, 404);
+  }
+  const { res, body } = await call(req({ repo: "Jomaries777/sandbox-node-local" }), e);
+  assert.equal(res.status, 429);
+  assert.equal(body.error, "rate_limited");
 });
 
 test("a body over 1 KB is refused", async () => {
@@ -218,20 +238,20 @@ test("a streamed body over 1 KB is refused without reading it all", async () => 
 });
 
 test("the kill switch refuses everything", async () => {
-  const { res, body, gh } = await call(req({ repo: "sandbox-node-local" }), env({ BROKER_ENABLED: "false" }));
+  const { res, body, gh } = await call(req({ repo: "Jomaries777/sandbox-node-local" }), env({ BROKER_ENABLED: "false" }));
   assert.equal(res.status, 503);
   assert.equal(body.error, "disabled");
   assert.equal(gh.calls.length, 0);
 });
 
 test("a repo without the bot installed is 404", async () => {
-  const { res, body } = await call(req({ repo: "sandbox-node-local" }), env(), github({ installStatus: 404 }));
+  const { res, body } = await call(req({ repo: "Jomaries777/sandbox-node-local" }), env(), github({ installStatus: 404 }));
   assert.equal(res.status, 404);
   assert.equal(body.error, "not_installed");
 });
 
 test("GitHub failures become 502", async () => {
-  const { res, body } = await call(req({ repo: "sandbox-node-local" }), env(), github({ tokenStatus: 500 }));
+  const { res, body } = await call(req({ repo: "Jomaries777/sandbox-node-local" }), env(), github({ tokenStatus: 500 }));
   assert.equal(res.status, 502);
   assert.equal(body.error, "github_error");
 });
@@ -239,22 +259,22 @@ test("GitHub failures become 502", async () => {
 test("the 31st token in an hour is rate limited", async () => {
   const e = env();
   for (let i = 0; i < 30; i++) {
-    const { res } = await call(req({ repo: "sandbox-node-local" }), e);
+    const { res } = await call(req({ repo: "Jomaries777/sandbox-node-local" }), e);
     assert.equal(res.status, 200);
   }
-  const { res, body } = await call(req({ repo: "sandbox-node-local" }), e);
+  const { res, body } = await call(req({ repo: "Jomaries777/sandbox-node-local" }), e);
   assert.equal(res.status, 429);
   assert.equal(body.error, "rate_limited");
 });
 
 test("identified callers are audited, anonymous refusals are not, and no token is stored", async () => {
   const e = env();
-  await call(req({ repo: "sandbox-node-local" }), e);
-  await call(req({ repo: "sandbox-node-local" }, OTHER_CRED), e);
-  await call(req({ repo: "../x" }), e);
-  await call(req({ repo: "sandbox-node-local" }, null), e);
-  await call(req({ repo: "sandbox-node-local" }, "nonsense"), e);
-  await call(req({ repo: "sandbox-node-local" }, OWNER_OTHER_APP), e);
+  await call(req({ repo: "Jomaries777/sandbox-node-local" }), e);
+  await call(req({ repo: "Jomaries777/sandbox-node-local" }, OTHER_CRED), e);
+  await call(req({ repo: "Jomaries777/.." }), e);
+  await call(req({ repo: "Jomaries777/sandbox-node-local" }, null), e);
+  await call(req({ repo: "Jomaries777/sandbox-node-local" }, "nonsense"), e);
+  await call(req({ repo: "Jomaries777/sandbox-node-local" }, OWNER_OTHER_APP), e);
   const rows = e.AUDIT.rows;
   assert.equal(rows.length, 3, "no, bad and foreign tokens leave no row");
   assert.deepEqual(
@@ -275,9 +295,9 @@ test("identified callers are audited, anonymous refusals are not, and no token i
 test("old audit rows are deleted now and then, not on every write", async () => {
   const e = env();
   e.AUDIT.rows.push({ ts: NOW - 91 * 24 * 3600 * 1000, caller_id: "1", endpoint: "token", outcome: "issued" });
-  await call(req({ repo: "sandbox-node-local" }), e, github(), () => 0.5);
+  await call(req({ repo: "Jomaries777/sandbox-node-local" }), e, github(), () => 0.5);
   assert.equal(e.AUDIT.rows.length, 2, "kept when this write doesn't prune");
-  await call(req({ repo: "sandbox-node-local" }), e, github(), () => 0);
+  await call(req({ repo: "Jomaries777/sandbox-node-local" }), e, github(), () => 0);
   assert.equal(e.AUDIT.rows.length, 2, "the 91-day-old row is gone, two new rows remain");
   assert.ok(e.AUDIT.rows.every((r) => r.ts === NOW));
 });

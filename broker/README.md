@@ -5,7 +5,7 @@ A Cloudflare Worker that gives a device a **1-hour bot token for one repo** once
 ```text
 device: scripts/bot-login.sh (once)  → ~/.config/agent-bot/identity
 device: scripts/bot-token.sh owner/repo
-          → POST /token {"repo": "repo"}  (Authorization: Bearer <identity>)
+          → POST /token {"repo": "owner/repo"}  (Authorization: Bearer <identity>)
 broker:   "Check a token" with the login App's client credentials:
           issued by that App, and its user == OWNER_ID?  → mint a token for that repo only
           → one audit row in D1 for identified callers (never a token)
@@ -13,7 +13,7 @@ broker:   "Check a token" with the login App's client credentials:
 
 | Endpoint | Answer |
 |---|---|
-| `POST /token` | `200 {token, expires_at}`, or `400 bad_repo` / `bad_json`, `401 no_token` / `bad_token`, `403 not_owner`, `404 not_installed`, `413 too_large`, `429 rate_limited` (30 an hour), `502 github_error`, `503 disabled` |
+| `POST /token` | `200 {token, expires_at}`, or `400 bad_repo` / `wrong_owner` (only the owner's repos) / `bad_json`, `401 no_token` / `bad_token`, `403 not_owner`, `404 not_installed`, `413 too_large`, `429 rate_limited` (30 requests an hour per caller), `502 github_error`, `503 disabled` |
 | `GET /healthz` | `{ok, enabled}` |
 
 The identity comes from the login-only GitHub App `jomaries777-agent-login`, which has **no permissions**. Its token can only say who you are. The broker accepts only tokens that this App issued: it checks each one with GitHub's [Check a token](https://docs.github.com/en/rest/apps/oauth-applications#check-a-token) endpoint, so a `gh` CLI token, a PAT or another app's token of yours gets `401 bad_token`. Because the broker turns the identity into bot tokens, treat it like a bot credential: the file is mode `0600`, and every use is audited. Requests without a valid identity are refused without writing to the database, so nobody can fill it. The App's **"Expire user authorization tokens" must stay off**; otherwise identities stop working after 8 hours.
@@ -56,7 +56,7 @@ GH_TOKEN="$(scripts/bot-token.sh Jomaries777/sandbox-node-local)" gh pr create .
 
 ## Operate
 
-- **Kill switch:** set `BROKER_ENABLED = "false"` in `wrangler.toml` and run `$W deploy`. Every request then gets `503 disabled`, and tokens already issued expire within an hour.
+- **Kill switch:** set `BROKER_ENABLED = "false"` in `wrangler.toml` and run `$W deploy`. Every request then gets `503 disabled`, and tokens already issued expire within an hour. The switch stops the broker only: `bot-token.sh` then falls back to a device's own key source (the Codespaces secret or the Mac Keychain), if it has one. To cut those off too, delete the Codespaces secret or rotate the App key.
 - **Sign every device out:** <https://github.com/settings/apps/authorizations> → `jomaries777-agent-login` → **Revoke**. To sign out one device, run `scripts/bot-login.sh --logout` on it.
 - **Audit log:**
 
