@@ -106,7 +106,11 @@ start_rev() {
     port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
     echo "$port" >"$STATE/$rev.port"
   fi
-  run docker rm -f "$rev" || true
+  # Remove a leftover container of the same name, if any (quietly: usually
+  # there is none, and docker's "No such container" read as an error in logs).
+  if [[ "$DRY_RUN" == "1" ]] || docker container inspect "$rev" >/dev/null 2>&1; then
+    run docker rm -f "$rev" || true
+  fi
   run docker run -d --name "$rev" -p "127.0.0.1:$port:8080" -e "APP_VERSION=$version" "local/$rev"
   [[ "$DRY_RUN" == "1" ]] && return 0
   local i
