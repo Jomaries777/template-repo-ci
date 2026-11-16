@@ -16,3 +16,8 @@ Minimal Node 22 HTTP service with zero runtime framework dependencies.
 - `make build` — compile TypeScript to `dist/` and build `app:local` image
 - `make acceptance` — start `compose.yaml`, run Playwright API tests, and tear down
 - `make smoke URL=<url>` — run `@prod-safe` Playwright API checks against `URL`
+
+## Dependencies
+
+- Change `package-lock.json` only through npm 11 (`npx -y npm@11 install …`). npm 10.9 drops the `libc` fields of the optional native packages, so npm could then pick the wrong binary on musl hosts.
+- Dependabot keeps them current (`dependabot-updates.yml`, which bootstrap appends to `.github/dependabot.yml`): patch updates are approved by the bot and auto-merge; minor and major updates wait for the owner.

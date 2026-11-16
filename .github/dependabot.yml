@@ -1,6 +1,7 @@
 # Dependabot (spec §4.7). Weekly on Monday, one grouped PR per ecosystem.
 # Security updates are not grouped here, so each one arrives on its own PR.
-# Stacks add their ecosystems (npm / pip / gomod, docker) at bootstrap.
+# Bootstrap appends the chosen stack's entries (npm / pip / gomod, docker)
+# from stacks/<stack>/dependabot-updates.yml.
 version: 2
 updates:
   - package-ecosystem: github-actions

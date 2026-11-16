@@ -1,0 +1,31 @@
+  # Node stack (spec FR-7). Bootstrap appends these entries to the `updates:`
+  # list in .github/dependabot.yml, then deletes this file.
+  # npm: patch updates share one PR, which the bot approves and auto-merges
+  # once ci-ok passes; minor updates share another, which waits for the owner;
+  # major updates arrive one per PR and also wait. Proven in the sandbox
+  # (sandbox-node-local #6 and #7).
+  - package-ecosystem: npm
+    directory: /stacks/node
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      npm-patch:
+        update-types:
+          - patch
+      npm-minor:
+        update-types:
+          - minor
+  # The Dockerfile's base image (node:<major>-slim). Each update is its own PR
+  # and waits for the owner unless it is a patch.
+  - package-ecosystem: docker
+    directory: /stacks/node
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore
+      include: scope

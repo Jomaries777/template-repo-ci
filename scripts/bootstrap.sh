@@ -175,14 +175,21 @@ merge; the owner approves.
 | \`make smoke URL=<url>\` | \`prod-safe\` smoke tests against a URL |
 | \`make doctor\` | Check repo settings, secrets and the deploy target |
 "
+  # Dependabot covers the stack's ecosystems too (FR-7): every stack ships
+  # the entries to add to the `updates:` list.
+  dependabot_fragment="stacks/$stack/dependabot-updates.yml"
+  [[ -f "$dependabot_fragment" ]] || die "$dependabot_fragment is missing; every stack ships its Dependabot updates"
   if ((dry_run)); then
     echo "DRY-RUN: write deploy.yml (target: $target, stack: $stack)"
     echo "DRY-RUN: write .github/CODEOWNERS (* @$owner)"
     echo "DRY-RUN: write README.md (project stub)"
+    echo "DRY-RUN: append $dependabot_fragment to .github/dependabot.yml"
   else
     printf '%s' "$deploy_yml" >deploy.yml
     printf '%s' "$codeowners" >.github/CODEOWNERS
     printf '%s' "$readme" >README.md
+    cat "$dependabot_fragment" >>.github/dependabot.yml
+    rm -f "$dependabot_fragment"
   fi
 fi
 
