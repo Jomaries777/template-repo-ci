@@ -130,7 +130,10 @@ if ((failed)); then
     log "revert failed; manual action needed"
     exit 1
   fi
-  if live_check "$url"; then
+  # Ask again: on some targets the live URL follows the serving revision.
+  url="$("$deploy_sh" url "$env_name")" || url=""
+  url="${url%/}"
+  if [[ -n "$url" ]] && live_check "$url"; then
     log "revert confirmed: $prev is serving and healthy"
     # Annotations let the report issue and triage tell the two outcomes apart.
     echo "::error title=release $env_name::live test failed; reverted to $prev (revert confirmed)"

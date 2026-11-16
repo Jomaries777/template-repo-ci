@@ -1,6 +1,42 @@
 # M2 step 6: owner setup on the Mac (one time)
 
-Step 6 is the end-to-end test of the Node + Cloud Run slice on a real sandbox repo and a real GCP project. Only the owner can do this setup, because it needs your GitHub login, your Keychain (bot key, Claude token) and your Google login. After it, the rest of step 6 runs from a Claude Code cloud session: deploys run in GitHub Actions with keyless OIDC, so the session needs no credentials.
+Step 6 is split (plan.md Deviations):
+
+- **6a, now (no cloud account):** the sandbox E2E runs with the test-only `local` target. Each version runs as a Docker container on the GitHub Actions runner. This proves the real `deploy.yml` and `release.sh`, the automatic revert, the failure issue, docs-only PRs and Dependabot auto-merge, at $0. Use the short checklist right below.
+- **6b, later:** the deploy and revert parts again on Cloud Run, the default target. This proves the parts only Google Cloud can show: keyless sign-in, IAM, the image registry and its cleanup, the budget and cold starts. Use the full checklist from section 0 on.
+
+## Step 6a: the short route (about 5 minutes, no Google)
+
+1. **Tools:** `gh`, `jq` and `git`, logged in to `gh`. The bot key must be in the Keychain; check it as in [section 0](#0-before-you-start). Keep the Claude token from `claude setup-token` ready for the hidden prompt.
+2. **Sandbox repo:**
+
+   ```bash
+   gh repo create sandbox-node-local --template Jomaries777/template-repo-ci --public --clone
+   cd sandbox-node-local
+   ```
+
+3. **Bootstrap** with the `local` target. No GCP variables are needed:
+
+   ```bash
+   export BOT_APP_ID="$(gh variable get BOT_APP_ID --repo Jomaries777/template-repo-ci)"
+   make bootstrap STACK=node TARGET=local
+   ```
+
+4. **Install the bot App** on `sandbox-node-local`, as in [section 4](#4-install-the-bot-app-on-the-sandbox-repo).
+5. **Run `make doctor`** until it ends with `doctor: all checks passed`.
+6. **Hand over:** start a cloud session with `Jomaries777/sandbox-node-local` attached and say "run step 6a". From there, Claude:
+   - deploys a code change through dev to production. You approve production with one tap in the GitHub app.
+   - merges a version that degrades a few seconds after launch, and checks that the live checks revert it automatically, and that the revert is confirmed, in under 2 minutes
+   - checks a docs-only PR skips the review and the deploy
+   - checks a Dependabot patch PR auto-merges and a minor one waits
+
+Nothing to tear down: no cloud resources are created. Delete the sandbox repo when done.
+
+---
+
+The rest of this page is the **6b** checklist for Cloud Run.
+
+Step 6b is the end-to-end test of the Node + Cloud Run slice on a real sandbox repo and a real GCP project. Only the owner can do this setup, because it needs your GitHub login, your Keychain (bot key, Claude token) and your Google login. After it, the rest of step 6 runs from a Claude Code cloud session: deploys run in GitHub Actions with keyless OIDC, so the session needs no credentials.
 
 Claude never handles the bot key, the Claude token or your Google credentials. Expect about 15 minutes. Idle cost is $0: Cloud Run scales to zero, and bootstrap creates a $10 budget alert.
 

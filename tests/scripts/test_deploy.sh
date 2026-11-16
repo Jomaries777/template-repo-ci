@@ -27,6 +27,8 @@ export DEPLOY_CONFIG="$tmp/plain.yml"
 have_none=0 have_cr=0
 [[ -d "$root/deploy/targets/none" ]] && have_none=1
 [[ -d "$root/deploy/targets/cloud-run" ]] && have_cr=1
+have_local=0
+[[ -d "$root/deploy/targets/local" ]] && have_local=1
 
 pass() { echo "ok - $1"; }
 fail() {
@@ -245,6 +247,36 @@ env -u GCP_PROJECT_ID -u APP_NAME DEPLOY_DRY_RUN=0 DEPLOY_TARGET=cloud-run "$dep
 rc_is "cloud-run: missing variables fail outside dry run" 1
 
 fi # have_cr
+
+# --- local (test-only target: Docker containers on the job's machine)
+if ((have_local)); then
+  printf 'target: local\nstack: node\n' >"$tmp/local.yml"
+  export DEPLOY_CONFIG="$tmp/local.yml"
+  dr local current dev
+  out_is "local current: prints the serving revision" "hello-dev-c0000000"
+  dr local deploy-dark dev "$sha"
+  rc_is "local deploy-dark: exits 0" 0
+  has "local deploy-dark: builds the candidate" "docker build -q -t local/hello-dev-c1234567"
+  has "local deploy-dark: runs it on localhost only" "-p 127.0.0.1:18080:8080"
+  has "local deploy-dark: sets APP_VERSION" "-e APP_VERSION=$sha"
+  out_is "local deploy-dark: stdout is only the candidate URL" "http://127.0.0.1:18080"
+  dr local promote production "$sha"
+  has "local promote: points live at the candidate" "live <- hello-production-c1234567"
+  dr local revert dev hello-dev-c0000000
+  has "local revert: points live back" "live <- hello-dev-c0000000"
+  dr local url dev
+  out_is "local url: the serving container's port" "http://127.0.0.1:18080"
+  dr local discard dev "$sha"
+  has "local discard: removes the candidate" "docker rm -f hello-dev-c1234567"
+  dr local cleanup dev
+  has "local cleanup: removes other revisions" "docker rm -f hello-dev-c1111111"
+  lacks "local cleanup: keeps the serving one" "docker rm -f hello-dev-c0000000"
+  dr local publish "$sha"
+  rc_is "local publish: nothing to push" 0
+  dr local deploy-dark staging "$sha"
+  rc_is "local: unknown env exits 64" 64
+  export DEPLOY_CONFIG="$tmp/plain.yml"
+fi
 
 if [[ -s "$tmp/calls" ]]; then
   fail "dry run never calls a real CLI (called: $(tr '\n' ';' <"$tmp/calls"))"

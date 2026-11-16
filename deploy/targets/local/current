@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/local/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# current <env>: print the revision serving <env>. A deploy job starts on an
+# empty runner, so the first call starts the parent commit as the "previous"
+# version: release.sh then has a real revision to revert to. Prints nothing on
+# a repo's first commit (no parent), like a first deploy elsewhere.
+env_vars "${1:-}"
+
+rev="$(live)"
+if [[ -n "$rev" ]]; then
+  printf '%s\n' "$rev"
+  exit 0
+fi
+
+if [[ "$DRY_RUN" == "1" ]]; then
+  parent=0000000000000000000000000000000000000000
+else
+  # actions/checkout fetches one commit; a public repo can deepen anonymously.
+  git -C "$root" fetch -q --deepen=1 origin 2>/dev/null ||
+    echo "local: warning: could not fetch the parent commit; a revert will have nothing to go back to" >&2
+  parent="$(git -C "$root" rev-parse -q --verify HEAD~1 2>/dev/null || true)"
+fi
+if [[ -z "$parent" ]]; then
+  echo "local: no parent commit; nothing is serving $ENV_NAME yet" >&2
+  exit 0
+fi
+
+stack="$(stack_dir)"
+src="${RUNNER_TEMP:-/tmp}/deploy-local-src-${parent:0:7}"
+rev="${APP}-${ENV_NAME}-c${parent:0:7}"
+echo "local: starting the parent commit ${parent:0:7} as the serving version" >&2
+run rm -rf "$src"
+run mkdir -p "$src"
+if [[ "$DRY_RUN" == "1" ]]; then
+  echo "DRY-RUN: git archive $parent $stack | tar -x -C $src" >&2
+else
+  git -C "$root" archive "$parent" "$stack" | tar -x -C "$src"
+fi
+# A parent that doesn't start healthy (e.g. a broken commit that was reverted
+# earlier) is no revert target: report nothing serving, like a first deploy,
+# so the release of a fix still goes ahead.
+if ! start_rev "$rev" "$src/$stack" "$parent"; then
+  echo "local: the parent commit ${parent:0:7} isn't healthy; treating $ENV_NAME as empty" >&2
+  run docker rm -f "$rev" || true
+  exit 0
+fi
+set_live "$rev"
+printf '%s\n' "$rev"
