@@ -196,7 +196,7 @@ exit 1
 EOF
 chmod +x "$tmp/gh403/gh"
 run "$tmp/gh403:$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" BOT_APP_ID=
-if [[ $rc != 0 && -z "$out" ]] && grep -q "Codespaces secret BOT_APP_ID" <<<"$err"; then
+if [[ $rc != 0 && -z "$out" ]] && grep -q "Codespaces secret BOT_APP_ID" <<<"$err" && grep -q "HTTP 403" <<<"$err"; then
   pass "app ID unreadable: fails with the BOT_APP_ID hint"
 else
   fail "app ID unreadable: fails with the BOT_APP_ID hint (rc $rc, out [$out], err: $err)"
@@ -208,5 +208,15 @@ echo 4343
 EOF
 run "$tmp/gh403:$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" BOT_APP_ID=
 if [[ $rc == 0 && "$(jwt_iss)" == "4343" ]]; then pass "app ID from the repo variable"; else fail "app ID from the repo variable (rc $rc, err: $err)"; fi
+# BOT_APP_ID wins over the repo variable, and gh isn't needed when it's set.
+cat >"$tmp/gh403/gh" <<'EOF2'
+#!/usr/bin/env bash
+exit 1
+EOF2
+run "$tmp/gh403:$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" BOT_APP_ID=1234
+if [[ $rc == 0 && "$(jwt_iss)" == "1234" ]]; then pass "app ID from BOT_APP_ID first"; else fail "app ID from BOT_APP_ID first (rc $rc, err: $err)"; fi
+# A non-numeric ID is refused before anything is signed.
+run "$tmp/gh403:$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" BOT_APP_ID=abc
+if [[ $rc != 0 && -z "$out" && ! -s "$tmp/jwt" ]] && grep -q "must be a number" <<<"$err"; then pass "non-numeric app ID refused"; else fail "non-numeric app ID refused (rc $rc, err: $err)"; fi
 
 exit $((failures > 0))
