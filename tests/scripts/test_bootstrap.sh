@@ -131,6 +131,18 @@ has "dry run: BOT_APP_ID variable" "DRY-RUN: gh variable set BOT_APP_ID --repo a
 has "dry run: appends the stack's Dependabot updates" "DRY-RUN: append stacks/node/dependabot-updates.yml to .github/dependabot.yml"
 has "dry run: runs the adapter bootstrap" "DRY-RUN: gh variable set APP_NAME --repo acme/hello --body hello"
 has "dry run: adapter uses the repo for WIF" "assertion.repository==\\'acme/hello\\'"
+# The push to main starts the first deploy, so everything that deploy needs
+# (Environments, secrets, the target's resources and variables) comes first;
+# the ruleset comes after, since it blocks direct pushes to main.
+line_of() { grep -nF -- "$1" <<<"$out" | head -1 | cut -d: -f1; }
+o_env="$(line_of "environments/production")"
+o_secret="$(line_of "gh secret set CLAUDE_CODE_OAUTH_TOKEN")"
+o_target="$(line_of "gh variable set APP_NAME")"
+o_push="$(line_of "DRY-RUN: git push origin HEAD:main")"
+o_rules="$(line_of "DRY-RUN: gh repo edit acme/hello")"
+check "dry run: Environments, secrets and target come before the push" \
+  '[[ -n "$o_push" && "$o_env" -lt "$o_push" && "$o_secret" -lt "$o_push" && "$o_target" -lt "$o_push" ]]'
+check "dry run: repo settings and ruleset come after the push" '[[ -n "$o_rules" && "$o_push" -lt "$o_rules" ]]'
 if [[ -s "$tmp/calls" ]]; then
   fail "no real gh or Keychain call (called: $(tr '\n' ';' <"$tmp/calls"))"
 else
@@ -154,17 +166,33 @@ check "skip-bot-key: still creates production with a reviewer" 'grep -q "environ
 d="$tmp/d"
 copy "$d"
 (cd "$d" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm init)
-: >"$tmp/calls"
+# Setup before the push succeeds; only reading the rulesets fails.
+mkdir -p "$tmp/bind"
+cat >"$tmp/bind/gh" <<EOFD
+#!/usr/bin/env bash
+echo "gh \$*" >>"$tmp/callsd"
+case "\$*" in
+  *rulesets*) exit 1 ;;
+  "api users/acme") echo '{"type":"User","id":1}' ;;
+  "secret set"*) cat >/dev/null ;;
+esac
+exit 0
+EOFD
+printf '#!/usr/bin/env bash\necho sk-test-claude\n' >"$tmp/bind/security"
+chmod +x "$tmp/bind/gh" "$tmp/bind/security"
+dpath="$tmp/bind:$PATH"
+: >"$tmp/callsd"
 rc=0
-out="$(cd "$d" && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-  "$d/scripts/bootstrap.sh" --stack node --target none --repo acme/hello 2>&1)" || rc=$?
-check "unreadable rulesets: stops with an error" '[[ $rc == 1 ]] && grep -q "not pushing" <<<"$out"'
+out="$(cd "$d" && PATH="$dpath" BOT_APP_ID=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+  "$d/scripts/bootstrap.sh" --stack node --target none --repo acme/hello --skip-bot-key </dev/null 2>&1)" || rc=$?
+check "unreadable rulesets: stops with an error" '[[ $rc == 1 ]] && grep -q "not pushing" <<<"$out" || { echo "$out" | tail -3; false; }'
 # The copy has no remote, so any git push would print "fatal: ... origin".
-check "unreadable rulesets: never pushes" '! grep -q "fatal:" <<<"$out" && [[ "$(cat "$tmp/calls")" == "gh api repos/acme/hello/rulesets?includes_parents=true" ]]'
+check "unreadable rulesets: never pushes" '! grep -q "fatal:" <<<"$out" && [[ "$(tail -n 1 "$tmp/callsd")" == "gh api repos/acme/hello/rulesets?includes_parents=true" ]]'
+check "unreadable rulesets: no ruleset applied" '! grep -q "gh repo edit" "$tmp/callsd"'
 check "unreadable rulesets: the commit stays local" '[[ "$(cd "$d" && git log --oneline | wc -l)" -eq 2 ]]'
 # A rerun must retry the push, not stop at "nothing to commit".
 rc=0
-out="$(cd "$d" && "$d/scripts/bootstrap.sh" --stack node --target none --repo acme/hello 2>&1)" || rc=$?
+out="$(cd "$d" && PATH="$dpath" BOT_APP_ID=1 "$d/scripts/bootstrap.sh" --stack node --target none --repo acme/hello --skip-bot-key </dev/null 2>&1)" || rc=$?
 check "rerun after a failed push: tries to push again" '[[ $rc == 1 ]] && grep -q "not pushing" <<<"$out"'
 check "rerun after a failed push: no second commit" '[[ "$(cd "$d" && git log --oneline | wc -l)" -eq 2 ]]'
 
@@ -186,7 +214,7 @@ out="$(BOT_APP_ID=1 GCP_PROJECT_ID=hello-proj-1 BILLING_ACCOUNT=0A1B2C-3D4E5F-6A
 check "digit-leading repo: APP_NAME gets app- prefix" 'grep -q "gh variable set APP_NAME --repo acme/9lives --body app-9lives" <<<"$out"'
 : >"$tmp/calls"
 
-# --- real mode against a new repo: pushes to main, and never stores an empty
+# --- real mode against a new repo: a failed setup step pushes nothing, and never stores an empty
 # secret when the Keychain and the terminal are both unavailable.
 g="$tmp/g"
 copy "$g"
@@ -210,8 +238,8 @@ chmod +x "$tmp/bin3/gh"
 rc=0
 out="$(cd "$g" && PATH="$tmp/bin3:$PATH" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
   "$g/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
-check "real mode: new repo is pushed to main" '[[ "$(git -C "$tmp/origin.git" log --oneline main | wc -l)" -eq 2 ]]'
 check "real mode: no Keychain and no terminal stops bootstrap" '[[ $rc == 1 ]] && grep -q "CLAUDE_CODE_OAUTH_TOKEN" <<<"$out"'
+check "real mode: a failed setup step pushes nothing (no early deploy)" '[[ "$(git -C "$tmp/origin.git" log --oneline main | wc -l)" -eq 1 ]]'
 check "real mode: an empty secret is never set" '! grep -q "gh secret set" "$tmp/calls3"'
 
 # --- real mode in a Codespace (spec 0002 phase 1): the bot key comes from the
@@ -256,6 +284,8 @@ check "codespace: bot key set for Actions from BOT_APP_KEY_B64" '[[ "$(cat "$tmp
 check "codespace: bot key set for Dependabot from BOT_APP_KEY_B64" '[[ "$(cat "$tmp/sec4/BOT_APP_PRIVATE_KEY_dependabot" 2>/dev/null)" == "$pem" ]]'
 check "codespace: Keychain never asked for the bot key" '! grep -q "github-app-private-key" "$tmp/calls4"'
 check "codespace: the key is never printed" '! grep -q "TEST KEY" <<<"$out"'
+check "real mode: a complete run pushes to main" '[[ $rc == 0 && "$(git -C "$tmp/origin4.git" log --oneline main | wc -l)" -eq 2 ]] || { echo "$out" | tail -3; false; }'
+check "real mode: the ruleset is applied after the push" '[[ "$(grep -n "gh repo edit" "$tmp/calls4" | head -1 | cut -d: -f1)" -gt "$(grep -n "rulesets?includes_parents" "$tmp/calls4" | head -1 | cut -d: -f1)" ]]'
 
 # A Codespaces secret that isn't a PEM key stops bootstrap before gh sees it.
 h2="$tmp/h2"
