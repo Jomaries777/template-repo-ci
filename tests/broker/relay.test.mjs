@@ -41,7 +41,9 @@ function repo({ branches = {}, failRef, openPr = false } = {}) {
       if (!c) return reply(404, {});
       return reply(200, {
         author: { login: c.login },
-        committer: { login: c.login },
+        // Like GitHub: a commit the App makes through the API has GitHub's
+        // web-flow as committer (seen live on 2026-11-17, S0002-7).
+        committer: { login: c.login === BOT ? "web-flow" : c.login },
         commit: { tree: { sha: c.tree }, verification: { verified: c.verified ?? c.login === BOT } },
       });
     }
@@ -318,4 +320,10 @@ test("text with NUL bytes goes through a blob", async () => {
   const { res } = await call(relayReq(payload({ files: [{ path: "n.bin", content_b64: nul }] })), env(), gh);
   assert.equal(res.status, 200);
   assert.deepEqual(bodyOf(gh, "POST", "/git/trees").tree[0], { path: "n.bin", mode: "100644", type: "blob", sha: "blob1" });
+});
+
+test("/relay/ (trailing slash) is the same endpoint, for path-limited secrets", async () => {
+  const { gh } = repo();
+  const { res, body } = await call(req(payload(), OWNER_CRED, { path: "/relay/" }), env(), gh);
+  assert.equal(res.status, 200, JSON.stringify(body));
 });
