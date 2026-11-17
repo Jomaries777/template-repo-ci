@@ -253,7 +253,8 @@ export async function handle(request, env, deps) {
     return json(200, { ok: true, enabled: env.BROKER_ENABLED === "true" });
   }
   // "/relay/" too: a cloud environment's network secret limited to the path
-  // prefix /relay is only attached under /relay/.
+  // prefix /relay is only attached under /relay/. Exact aliases only:
+  // "/relay//" or "/relay/x" stay 404 on purpose.
   const routes = { "/token": token, "/relay": relayRoute, "/relay/": relayRoute };
   const route = routes[url.pathname];
   if (!route) return json(404, { error: "not_found" });

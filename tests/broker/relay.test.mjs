@@ -10,6 +10,7 @@ const MAIN = "a".repeat(40);
 const BOT_HEAD = "b".repeat(40);
 const OWNER_HEAD = "c".repeat(40);
 const SPOOF_HEAD = "f".repeat(40);
+const OTHER_COMMITTER_HEAD = "9".repeat(40);
 const BOT = "jomaries777-agent-bot[bot]";
 const b64 = (s) => Buffer.from(s).toString("base64");
 
@@ -24,6 +25,8 @@ function repo({ branches = {}, failRef, openPr = false } = {}) {
     // Pushed by someone with the bot's email: the login matches, but GitHub
     // didn't verify it.
     [SPOOF_HEAD]: { login: BOT, tree: "t-spoof", verified: false },
+    // Verified, bot as author, but committed by someone else.
+    [OTHER_COMMITTER_HEAD]: { login: BOT, tree: "t-other", verified: true, committer: "someone-else" },
   };
   let blobN = 0;
   const routes = (url, init, reply) => {
@@ -43,7 +46,7 @@ function repo({ branches = {}, failRef, openPr = false } = {}) {
         author: { login: c.login },
         // Like GitHub: a commit the App makes through the API has GitHub's
         // web-flow as committer (seen live on 2026-11-17, S0002-7).
-        committer: { login: c.login === BOT ? "web-flow" : c.login },
+        committer: { login: c.committer ?? (c.login === BOT ? "web-flow" : c.login) },
         commit: { tree: { sha: c.tree }, verification: { verified: c.verified ?? c.login === BOT } },
       });
     }
@@ -327,4 +330,12 @@ test("/relay/ (trailing slash) is the same endpoint, for path-limited secrets", 
   const { res, body, e } = await call(req(payload(), OWNER_CRED, { path: "/relay/" }), env(), gh);
   assert.equal(res.status, 200, JSON.stringify(body));
   assert.equal(e.AUDIT.rows.at(-1).endpoint, "relay", "same audit row and hourly limit as /relay");
+});
+
+test("a Verified head committed by anyone but the bot or web-flow is refused", async () => {
+  const { gh, refs } = repo({ branches: { "test/relay-check": OTHER_COMMITTER_HEAD } });
+  const { res, body } = await call(relayReq(payload({ parent: OTHER_COMMITTER_HEAD })), env(), gh);
+  assert.equal(res.status, 409);
+  assert.equal(body.error, "not_bot_branch");
+  assert.equal(refs["test/relay-check"], OTHER_COMMITTER_HEAD);
 });
