@@ -129,6 +129,14 @@ rc=0
 out="$(CODESPACES=true DOCTOR_BOT_CHECK="$tmp/bot-ok" "$none_proj/scripts/doctor.sh" --repo acme/hello 2>&1)" || rc=$?
 has "codespace without the secret: says how to add it" "SKIP  bot key in this Codespace (add the Codespaces secret BOT_APP_KEY_B64"
 if [[ "$rc" == 0 ]]; then pass "codespace without the secret: not a failure"; else fail "codespace without the secret: not a failure (rc $rc)"; fi
+
+# Signed in to the broker (bot-login.sh, spec 0002 phase 2): the bot check runs.
+mkdir -p "$tmp/botcfg"
+printf 'x' >"$tmp/botcfg/identity"
+printf 'https://broker.test\n' >"$tmp/botcfg/broker_url"
+rc=0
+out="$(BOT_CONFIG_DIR="$tmp/botcfg" PATH="$tmp/bin:/usr/bin:/bin" DOCTOR_BOT_CHECK="$tmp/bot-ok" "$none_proj/scripts/doctor.sh" --repo acme/hello 2>&1)" || rc=$?
+has "broker sign-in: bot check runs" "PASS  bot App installed on acme/hello"
 break_one "missing Dependabot key fails" "${R}_dependabot_secrets?per_page=100" '.secrets = []' "Dependabot secret: BOT_APP_PRIVATE_KEY"
 break_one "missing BOT_APP_ID fails" "${R}_actions_variables?per_page=30" '.variables |= map(select(.name != "BOT_APP_ID"))' "variable: BOT_APP_ID"
 
