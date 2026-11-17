@@ -17,7 +17,7 @@
 set -euo pipefail
 
 config_dir="${BOT_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-bot}"
-max_bytes=$((2 * 1024 * 1024))
+max_bytes=$((1024 * 1024)) # the broker's /relay cap
 branch_re='^(feat|fix|docs|chore|test|ci)/[a-z0-9._/-]{1,80}$'
 
 die() {
@@ -69,6 +69,7 @@ if [[ -z "$message" ]]; then
   [[ "$count" == 1 ]] || die "$count local commits become one bot commit: give its message with -m"
   message="$(git log -1 --format=%B HEAD)"
 fi
+((${#message} <= 5000)) || die "the commit message is ${#message} characters; the relay takes at most 5000"
 
 # Build the payload in a temp dir, one file entry at a time.
 work="$(mktemp -d)"

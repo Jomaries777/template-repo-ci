@@ -6,7 +6,9 @@
 
 import { gh } from "./github.js";
 
-export const RELAY_MAX_BODY = 2 * 1024 * 1024; // bytes
+// 1 MB, not the spec's 2 MB: parsing and decoding 2 MB took about 6 ms of
+// the free plan's 10 ms CPU in a local benchmark (spec C7 allows lowering it).
+export const RELAY_MAX_BODY = 1024 * 1024; // bytes
 const MAX_FILES = 100;
 // Binary files need one blob call each; 10 keeps a relay well inside the
 // Workers free plan's 50 subrequests (about 21 at most).
@@ -101,6 +103,8 @@ function validate(p) {
     try {
       // ignoreBOM keeps a leading byte-order mark, so the commit matches the file.
       text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+      // NUL is valid UTF-8 but not text: send such files as blobs.
+      if (text.includes("\0")) text = null;
     } catch {
       text = null;
     }

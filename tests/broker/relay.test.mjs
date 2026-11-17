@@ -231,7 +231,7 @@ test("limits: files, blobs, modes, body size, fields", async () => {
     assert.equal(body.error, code);
     assert.equal(repoCalls(gh).length, 0);
   }
-  const big = { files: [{ path: "big", content_b64: "A".repeat(2 * 1024 * 1024 + 4) }] };
+  const big = { files: [{ path: "big", content_b64: "A".repeat(1024 * 1024 + 4) }] };
   const { res, body } = await call(relayReq(payload(big)), env(), repo().gh);
   assert.equal(res.status, 413);
   assert.equal(body.error, "too_large");
@@ -310,4 +310,12 @@ test("a leading byte-order mark is kept in text files", async () => {
   assert.equal(res.status, 200);
   const entry = bodyOf(gh, "POST", "/git/trees").tree[0];
   assert.equal(entry.content, "\ufeffx\n");
+});
+
+test("text with NUL bytes goes through a blob", async () => {
+  const { gh } = repo();
+  const nul = Buffer.from("a\0b").toString("base64");
+  const { res } = await call(relayReq(payload({ files: [{ path: "n.bin", content_b64: nul }] })), env(), gh);
+  assert.equal(res.status, 200);
+  assert.deepEqual(bodyOf(gh, "POST", "/git/trees").tree[0], { path: "n.bin", mode: "100644", type: "blob", sha: "blob1" });
 });
