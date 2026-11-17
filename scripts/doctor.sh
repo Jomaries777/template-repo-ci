@@ -25,6 +25,7 @@ fail() {
   fails=$((fails + 1))
 }
 skip() { printf 'SKIP  %s (%s)\n' "$1" "$2"; }
+warn() { printf 'WARN  %s (%s)\n' "$1" "$2"; }
 # expect <name> <fix> <condition...>: PASS if the condition command succeeds.
 expect() {
   local name="$1" fix="$2"
@@ -131,17 +132,32 @@ expect "variable: BOT_APP_ID" "make bootstrap" has_name "$variables" variables B
 bot_check="${DOCTOR_BOT_CHECK:-$root/scripts/bot-token.sh}"
 in_codespace=0
 [[ "${CODESPACES:-}" == "true" ]] && in_codespace=1
-have_key=0
+have_key=0 broker=0
 bot_cfg="${BOT_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-bot}"
-if [[ -s "$bot_cfg/identity" ]] && [[ -n "${BOT_BROKER_URL:-}" || -s "$bot_cfg/broker_url" ]]; then
-  have_key=1 # the broker (bot-login.sh), spec 0002 phase 2
+broker_url="${BOT_BROKER_URL:-$(cat "$bot_cfg/broker_url" 2>/dev/null || true)}"
+if [[ -s "$bot_cfg/identity" && -n "$broker_url" ]]; then
+  have_key=1 broker=1 # the broker (bot-login.sh), spec 0002 phase 2
 elif ((in_codespace)) && [[ -n "${BOT_APP_KEY_B64:-}" ]]; then
   have_key=1
 elif quiet command -v security; then
   have_key=1
 fi
-if ((in_codespace)) && [[ -z "${BOT_APP_KEY_B64:-}" ]]; then
-  skip "bot key in this Codespace" "add the Codespaces secret BOT_APP_KEY_B64 at github.com/settings/codespaces with access to $repo, then restart the Codespace"
+# FR-9: the broker answers and its kill switch is off. DOCTOR_HEALTHZ
+# overrides the command that prints /healthz (tests).
+broker_enabled() {
+  local out
+  if [[ -n "${DOCTOR_HEALTHZ:-}" ]]; then out="$("$DOCTOR_HEALTHZ")"; else out="$(curl -fsS --max-time 10 "${broker_url%/}/healthz")"; fi
+  jq -e '.enabled == true' <<<"$out" >/dev/null
+}
+if ((broker)); then
+  expect "bot token broker answers and is enabled" "check ${broker_url%/}/healthz; the kill switch is BROKER_ENABLED in broker/wrangler.toml (broker/README.md)" \
+    quiet broker_enabled
+  # Phase 1 is retired once the broker is live (spec 0002 C5).
+  if ((in_codespace)) && [[ -n "${BOT_APP_KEY_B64:-}" ]]; then
+    warn "phase 1 bot key still in this Codespace" "delete the Codespaces secret BOT_APP_KEY_B64 at github.com/settings/codespaces and rotate the App key (broker/README.md)"
+  fi
+elif ((in_codespace)) && [[ -z "${BOT_APP_KEY_B64:-}" ]]; then
+  skip "bot key in this Codespace" "sign in to the broker with scripts/bot-login.sh, or add the Codespaces secret BOT_APP_KEY_B64 at github.com/settings/codespaces with access to $repo, then restart the Codespace"
 fi
 if [[ -x "$bot_check" ]] && ((have_key)); then
   expect "bot App installed on $repo" "install the bot App on $repo (github.com/settings/apps)" \

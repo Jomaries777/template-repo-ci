@@ -111,8 +111,8 @@ export function env(over = {}) {
 }
 
 export const NOW = Date.UTC(2026, 10, 16, 15, 0, 0);
-export function req(body, cred = OWNER_CRED, { path = "/token", method = "POST", raw, stream } = {}) {
-  const headers = { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.9" };
+export function req(body, cred = OWNER_CRED, { path = "/token", method = "POST", raw, stream, extraHeaders = {} } = {}) {
+  const headers = { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.9", ...extraHeaders };
   if (cred) headers.Authorization = `Bearer ${cred}`;
   if (stream) {
     // A body with no Content-Length, sent in chunks.

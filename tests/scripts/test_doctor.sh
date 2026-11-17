@@ -127,7 +127,7 @@ has "codespace with the secret: bot check runs" "PASS  bot App installed on acme
 if grep -q "bot key in this Codespace" <<<"$out"; then fail "codespace with the secret: no setup hint"; else pass "codespace with the secret: no setup hint"; fi
 rc=0
 out="$(CODESPACES=true DOCTOR_BOT_CHECK="$tmp/bot-ok" "$none_proj/scripts/doctor.sh" --repo acme/hello 2>&1)" || rc=$?
-has "codespace without the secret: says how to add it" "SKIP  bot key in this Codespace (add the Codespaces secret BOT_APP_KEY_B64"
+has "codespace without the secret: says how to add it" "SKIP  bot key in this Codespace (sign in to the broker with scripts/bot-login.sh, or add the Codespaces secret BOT_APP_KEY_B64"
 if [[ "$rc" == 0 ]]; then pass "codespace without the secret: not a failure"; else fail "codespace without the secret: not a failure (rc $rc)"; fi
 
 # Signed in to the broker (bot-login.sh, spec 0002 phase 2): the bot check runs.
@@ -135,8 +135,22 @@ mkdir -p "$tmp/botcfg"
 printf 'x' >"$tmp/botcfg/identity"
 printf 'https://broker.test\n' >"$tmp/botcfg/broker_url"
 rc=0
-out="$(BOT_CONFIG_DIR="$tmp/botcfg" PATH="$tmp/bin:/usr/bin:/bin" DOCTOR_BOT_CHECK="$tmp/bot-ok" "$none_proj/scripts/doctor.sh" --repo acme/hello 2>&1)" || rc=$?
+cat >"$tmp/healthz" <<'EOF'
+#!/usr/bin/env bash
+echo "{\"ok\":true,\"enabled\":${HEALTH_ENABLED:-true}}"
+EOF
+chmod +x "$tmp/healthz"
+out="$(BOT_CONFIG_DIR="$tmp/botcfg" PATH="$tmp/bin:/usr/bin:/bin" DOCTOR_HEALTHZ="$tmp/healthz" DOCTOR_BOT_CHECK="$tmp/bot-ok" "$none_proj/scripts/doctor.sh" --repo acme/hello 2>&1)" || rc=$?
 has "broker sign-in: bot check runs" "PASS  bot App installed on acme/hello"
+has "broker sign-in: the broker answers" "PASS  bot token broker answers and is enabled"
+if grep -q "WARN" <<<"$out"; then fail "broker sign-in, no phase 1 secret: no warning"; else pass "broker sign-in, no phase 1 secret: no warning"; fi
+rc=0
+out="$(BOT_CONFIG_DIR="$tmp/botcfg" PATH="$tmp/bin:/usr/bin:/bin" HEALTH_ENABLED=false DOCTOR_HEALTHZ="$tmp/healthz" DOCTOR_BOT_CHECK="$tmp/bot-ok" "$none_proj/scripts/doctor.sh" --repo acme/hello 2>&1)" || rc=$?
+has "broker kill switch on: fails" "FAIL  bot token broker answers and is enabled"
+if [[ "$rc" != 0 ]]; then pass "broker kill switch on: exit non-zero"; else fail "broker kill switch on: exit non-zero"; fi
+rc=0
+out="$(CODESPACES=true BOT_APP_KEY_B64=x BOT_CONFIG_DIR="$tmp/botcfg" PATH="$tmp/bin:/usr/bin:/bin" DOCTOR_HEALTHZ="$tmp/healthz" DOCTOR_BOT_CHECK="$tmp/bot-ok" "$none_proj/scripts/doctor.sh" --repo acme/hello 2>&1)" || rc=$?
+has "phase 1 secret alongside the broker: warns" "WARN  phase 1 bot key still in this Codespace (delete the Codespaces secret BOT_APP_KEY_B64"
 break_one "missing Dependabot key fails" "${R}_dependabot_secrets?per_page=100" '.secrets = []' "Dependabot secret: BOT_APP_PRIVATE_KEY"
 break_one "missing BOT_APP_ID fails" "${R}_actions_variables?per_page=30" '.variables |= map(select(.name != "BOT_APP_ID"))' "variable: BOT_APP_ID"
 

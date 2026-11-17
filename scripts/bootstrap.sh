@@ -355,8 +355,17 @@ bot_key() {
   printf '%s' "$pem"
 }
 set_secret CLAUDE_CODE_OAUTH_TOKEN actions claude_token
+# broker_signed_in: this device signed in with scripts/bot-login.sh (spec 0002
+# phase 2). Then the broker sets the bot key secrets and the key never comes
+# here; a broker refusal stops bootstrap rather than fall back to a phase-1 key.
+broker_signed_in() {
+  local cfg="${BOT_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-bot}"
+  [[ -s "$cfg/identity" ]] && [[ -n "${BOT_BROKER_URL:-}" || -s "$cfg/broker_url" ]]
+}
 if ((skip_bot_key)); then
-  echo "    BOT_APP_PRIVATE_KEY: skipped (--skip-bot-key); add it later from a Mac with:"
+  echo "    BOT_APP_PRIVATE_KEY: skipped (--skip-bot-key); add it later from a device signed in to the broker with:"
+  echo "      scripts/bot-secrets.sh $repo"
+  echo "    or from a Mac with:"
   for app in actions dependabot; do
     echo "      security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo $repo --app $app"
   done
@@ -365,6 +374,18 @@ if ((skip_bot_key)); then
     # shellcheck disable=SC2016 # printed for the user to run, not expanded here
     echo '      printf %s "$BOT_APP_KEY_B64" | base64 -d | gh secret set BOT_APP_PRIVATE_KEY'" --repo $repo --app $app"
   done
+elif broker_signed_in; then
+  missing=()
+  grep -qx BOT_APP_PRIVATE_KEY <<<"$names_actions" && echo "    BOT_APP_PRIVATE_KEY (actions): already set" || missing+=(actions)
+  grep -qx BOT_APP_PRIVATE_KEY <<<"$names_dependabot" && echo "    BOT_APP_PRIVATE_KEY (dependabot): already set" || missing+=(dependabot)
+  if ((${#missing[@]})); then
+    apps="$(IFS=,; echo "${missing[*]}")"
+    if ((dry_run)); then
+      echo "DRY-RUN: scripts/bot-secrets.sh --apps $apps $repo (the broker seals and sets BOT_APP_PRIVATE_KEY)"
+    else
+      "$(dirname "${BASH_SOURCE[0]}")/bot-secrets.sh" --apps "$apps" "$repo" || die "the broker didn't set BOT_APP_PRIVATE_KEY (see above)"
+    fi
+  fi
 else
   set_secret BOT_APP_PRIVATE_KEY actions bot_key
   set_secret BOT_APP_PRIVATE_KEY dependabot bot_key

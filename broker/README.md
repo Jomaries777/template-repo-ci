@@ -15,6 +15,7 @@ broker:   "Check a token" with the login App's client credentials:
 |---|---|
 | `POST /token` | `200 {token, expires_at}`, or `400 bad_repo` / `wrong_owner` (only the owner's repos) / `bad_json`, `401 no_token` / `bad_token`, `403 not_owner`, `404 not_installed`, `413 too_large`, `429 rate_limited` (30 requests an hour for the owner, 1 for anyone else), `502 github_error`, `503 disabled` / `audit_unavailable` |
 | `POST /relay` | One bot commit on a `feat/ fix/ docs/ chore/ test/ ci/` branch, plus an optional draft PR: `200 {commit, branch, pr_url}`. Refusals: `400 bad_branch` / `bad_base` / `bad_parent` / `bad_message` / `bad_files` / `path_denied` (workflows, `.git`, `..`, absolute) / `bad_mode` / `bad_content` / `too_many_blobs` (10 binary files) / `bad_pr`, `409 stale_parent` (the branch or base moved) / `not_bot_branch` (its head isn't a Verified commit with the bot as author and the bot or GitHub's `web-flow` as committer; someone with write access could imitate that, which is accepted while the owner is the only writer), `413 too_large` (1 MB), `429 rate_limited` (20 an hour), plus the `/token` identity errors. A PR is opened only if the branch has no **open** one; after a PR is closed or merged, the next relay with `--pr` opens a new one |
+| `POST /secrets` | Sets `BOT_APP_PRIVATE_KEY` for `{repo, apps: ["actions","dependabot"]}` with the caller's GitHub token in `X-GitHub-Token` (the bot has no secrets permission): `200 {set}`. The token must be the owner's (`403 github_token_not_owner`); the broker reads each repo public key itself and seals the key there, so the key and the token are never stored or returned. `400 bad_apps` / `no_github_token`, `401 bad_github_token`, `403 github_denied`, `429` (10 an hour), plus the identity errors. Not reachable from cloud sessions (their secret is limited to `/relay`). Use it with `scripts/bot-secrets.sh owner/repo` |
 | `GET /healthz` | `{ok, enabled}` |
 
 The identity comes from the login-only GitHub App `jomaries777-agent-login`, which has **no permissions**. Its token can only say who you are. The broker accepts only tokens that this App issued: it checks each one with GitHub's [Check a token](https://docs.github.com/en/rest/apps/oauth-applications#check-a-token) endpoint, so a `gh` CLI token, a PAT or another app's token of yours gets `401 bad_token`. Because the broker turns the identity into bot tokens, treat it like a bot credential: the file is mode `0600`, and every use is audited. Requests without a valid identity, and throttled requests, are refused without writing to the database, and another GitHub user who signs in to the login App gets one audited refusal an hour, so nobody can fill it. If the audit database is missing or can't be read, the broker refuses everything with `503 audit_unavailable` rather than issue tokens without a log or a rate limit. The App's **"Expire user authorization tokens" must stay off**; otherwise identities stop working after 8 hours.
@@ -45,7 +46,7 @@ Do this once from a **Codespace on `template-repo-ci`**, which already has the `
    $W secret put LOGIN_CLIENT_SECRET
    ```
 
-6. **Deploy:** `$W deploy`. It prints the URL, `https://agent-bot-broker.<your-subdomain>.workers.dev`. Check it with `curl -s <url>/healthz`, which should give `{"ok":true,"enabled":true}`. The subdomain comes from your Cloudflare account and can be changed under **Workers & Pages → Account details → Subdomain**; the URL is not kept in the repo, since each device saves it when it signs in.
+6. **Deploy:** `npm ci --ignore-scripts && $W deploy` (wrangler bundles the two sealing libraries, `tweetnacl` and `@noble/hashes`). It prints the URL, `https://agent-bot-broker.<your-subdomain>.workers.dev`. Check it with `curl -s <url>/healthz`, which should give `{"ok":true,"enabled":true}`. The subdomain comes from your Cloudflare account and can be changed under **Workers & Pages → Account details → Subdomain**; the URL is not kept in the repo, since each device saves it when it signs in.
 
 ## Upgrade an existing broker
 
@@ -54,6 +55,7 @@ When a release adds audit columns, run its migration **before** deploying. If yo
 ```bash
 cd broker
 $W d1 execute agent-bot-audit --remote --file migrations/0002_relay.sql   # step 7c: relay columns
+npm ci --ignore-scripts                                                     # step 7d: sealing libraries
 $W deploy
 ```
 
@@ -88,11 +90,12 @@ Anyone who can start a session on that environment can act as the bot through it
 
   Rows older than 90 days are deleted automatically.
 - **CPU time (C7):** dashboard → **Workers & Pages** → `agent-bot-broker` → **Metrics** → CPU time. It must stay under the free plan's 10 ms per request.
-- **Rotate the App key:**
-  1. Generate a new key in the bot App's **Credentials**.
-  2. Put it in the broker with `base64 -d < new.pem.b64 | openssl pkcs8 -topk8 -nocrypt | $W secret put APP_KEY_PKCS8`.
-  3. Update the repos' `BOT_APP_PRIVATE_KEY` secrets and the Codespaces secret.
-  4. Delete the old key in the App.
+- **Rotate the App key** (and retire phase 1, spec 0002 C5). From a Codespace on this repo that is signed in (`scripts/bot-login.sh`), with the Cloudflare token loaded:
+  1. In the bot App's settings → **Private keys** → **Generate a private key**. A `.pem` file downloads to your device; upload it to the Codespace (drag it into the file explorer) as `~/new.pem`.
+  2. Put it in the broker, then delete the file: `openssl pkcs8 -topk8 -nocrypt -in ~/new.pem | $W secret put APP_KEY_PKCS8 && shred -u ~/new.pem` (or `rm`). Delete the download on your device too.
+  3. Update every repo's secrets through the broker: `scripts/bot-secrets.sh Jomaries777/template-repo-ci Jomaries777/sandbox-node-local` (add each project repo).
+  4. Check: `scripts/bot-token.sh Jomaries777/sandbox-node-local >/dev/null && echo OK`, and rerun a bot workflow (for example a Dependabot PR's automerge job).
+  5. In the App settings, **delete the old private key**. Delete the Codespaces secret `BOT_APP_KEY_B64` (github.com/settings/codespaces) and the Mac Keychain item if there is one; `make doctor` warns while the Codespaces secret is still there.
 
 ## Tests
 

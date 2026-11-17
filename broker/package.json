@@ -1,0 +1,13 @@
+{
+  "name": "agent-bot-broker",
+  "private": true,
+  "type": "module",
+  "description": "Bot token broker (spec 0002). Deployed by hand with wrangler; see README.md.",
+  "dependencies": {
+    "@noble/hashes": "2.4.0",
+    "tweetnacl": "1.0.3"
+  },
+  "devDependencies": {
+    "libsodium-wrappers": "0.8.4"
+  }
+}
