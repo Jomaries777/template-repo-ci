@@ -15,7 +15,9 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Marking a draft ready re-runs the same SHA, so don't cancel the draft run:
+  # a cancelled run made ci-ok red.
+  cancel-in-progress: ${{ github.event.action != 'ready_for_review' }}
 
 permissions:
   contents: read
@@ -95,6 +97,8 @@ jobs:
         with:
           args: --offline --no-progress ${{ steps.md.outputs.quoted }}
           fail: true
+          # A changed Markdown file with no links must not fail the check.
+          failIfEmpty: false
 
   secrets:
     needs: classify
