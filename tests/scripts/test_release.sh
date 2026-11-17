@@ -77,11 +77,11 @@ smoke https://cand.example
 promote dev $sha
 url dev
 smoke https://live.example
-curl https://live.example/healthz
+curl https://live.example/health
 smoke https://live.example
-curl https://live.example/healthz
+curl https://live.example/health
 smoke https://live.example
-curl https://live.example/healthz
+curl https://live.example/health
 cleanup dev"
 if [[ "$calls" == "$want" ]]; then pass "happy: steps run in spec order"; else fail "happy: order was: $(tr '\n' ';' <<<"$calls")"; fi
 lacks "happy: no revert" "revert"
@@ -102,14 +102,14 @@ lacks "live failure: no cleanup" "cleanup"
 lacks "live failure: no discard" "discard"
 count_is "live failure: re-checks once after revert" "smoke https://live.example" 3
 
-# --- /healthz failure counts as a live failure
-run healthz CURL_FAIL_URL=https://live.example/healthz
-rc_is "healthz failure: exits 1" 1
-has "healthz failure: reverts" "revert dev svc-00001-old"
+# --- /health failure counts as a live failure
+run health CURL_FAIL_URL=https://live.example/health
+rc_is "health failure: exits 1" 1
+has "health failure: reverts" "revert dev svc-00001-old"
 
 # --- live checks count comes from RELEASE_LIVE_CHECKS
 run five RELEASE_LIVE_CHECKS=5
-count_is "live checks: honours RELEASE_LIVE_CHECKS" "curl https://live.example/healthz" 5
+count_is "live checks: honours RELEASE_LIVE_CHECKS" "curl https://live.example/health" 5
 
 # --- no dark deploy (C9): promote is the deploy
 run nodark RELEASE_DARK_DEPLOY=false
@@ -138,9 +138,9 @@ if grep -q "^::error.*(revert confirmed)" "$tmp/out.confirm"; then pass "confirm
 run revfail SMOKE_FAIL_AFTER=2 REVERT_FAIL=1
 if [[ "$rc" == 1 ]] && grep -q "revert failed; manual action needed" "$tmp/err.revfail"; then pass "failed revert: logs it and exits 1"; else fail "failed revert (rc $rc)"; fi
 
-# --- the live URL's trailing slash is stripped before /healthz
+# --- the live URL's trailing slash is stripped before /health
 run slash
-has "trailing slash: /healthz has a single slash" "curl https://live.example/healthz"
+has "trailing slash: /health has a single slash" "curl https://live.example/health"
 
 # --- fail closed without a stack smoke suite
 printf 'target: cloud-run\n' >"$tmp/nostack.yml"
