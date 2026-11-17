@@ -82,6 +82,26 @@ async function audit(env, row, nowMs, random) {
 
 // requestsLastHour: the caller's audited requests in the last hour. Throws if
 // D1 fails; the caller then refuses (fail closed), since the limit needs it.
+// schemaOk: the audit table has every column the INSERT names. Checked once
+// per isolate, so deploying before a migration refuses requests instead of
+// answering them without an audit row or a rate limit.
+let schemaChecked = false;
+async function schemaOk(env) {
+  if (schemaChecked) return true;
+  try {
+    await env.AUDIT.prepare("SELECT ts, caller_id, endpoint, repo, outcome, reason, expires_at, ip, branch, files, paths FROM audit LIMIT 0").all();
+    schemaChecked = true;
+    return true;
+  } catch {
+    console.error("audit schema check failed: run the migrations");
+    return false;
+  }
+}
+// For tests: forget the cached check.
+export function resetSchemaCheck() {
+  schemaChecked = false;
+}
+
 async function requestsLastHour(env, callerId, endpoint, nowMs) {
   const r = await env.AUDIT.prepare(
     "SELECT COUNT(*) AS n FROM audit WHERE caller_id = ? AND endpoint = ? AND ts > ?",
@@ -148,7 +168,7 @@ async function whoIs(env, deps, userToken) {
 async function identify(request, env, deps, row, endpoint, nowMs) {
   if (env.BROKER_ENABLED !== "true") return { error: [503, { error: "disabled" }] };
   // Without the audit database there is no log and no rate limit: refuse.
-  if (!env.AUDIT) return { error: [503, { error: "audit_unavailable" }] };
+  if (!env.AUDIT || !(await schemaOk(env))) return { error: [503, { error: "audit_unavailable" }] };
   const callerToken = bearer(request);
   if (!callerToken) return { error: [401, { error: "no_token" }] };
   const callerId = await whoIs(env, deps, callerToken);

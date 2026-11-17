@@ -163,6 +163,7 @@ export async function relay(env, deps, p, row, nowMs, { checkRepo, mintToken }) 
   const tree = [];
   for (const f of files) {
     if (f.delete) {
+      // GitHub ignores the mode of a deleted (sha null) entry.
       tree.push({ path: f.path, mode: "100644", type: "blob", sha: null });
     } else if (f.text !== null) {
       tree.push({ path: f.path, mode: f.mode, type: "blob", content: f.text });
@@ -173,6 +174,8 @@ export async function relay(env, deps, p, row, nowMs, { checkRepo, mintToken }) 
     }
   }
   const t = await call("/git/trees", { method: "POST", body: { base_tree: pc.data.commit.tree.sha, tree } });
+  // 422: GitHub refused the tree, e.g. deleting a path that isn't there.
+  if (t.status === 422) return err(400, "tree_rejected");
   if (t.status !== 201 || !t.data?.sha) return err(502, "github_error");
   // No author or committer: the App is both, and GitHub marks it Verified.
   const c = await call("/git/commits", { method: "POST", body: { message, tree: t.data.sha, parents: [parent] } });

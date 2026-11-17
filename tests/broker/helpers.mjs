@@ -24,12 +24,17 @@ const label = ["PRIVATE", "KEY"].join(" ");
 export const pem = `-----BEGIN ${label}-----\n${Buffer.from(der).toString("base64")}\n-----END ${label}-----\n`;
 
 // --- in-memory D1 stub for the three statements the handler uses
-export function d1({ failRead = false } = {}) {
+export function d1({ failRead = false, oldSchema = false } = {}) {
   const rows = [];
   return {
     rows,
     prepare(sql) {
       return {
+        async all() {
+          if (!sql.startsWith("SELECT ts, caller_id")) throw new Error(`unexpected all: ${sql}`);
+          if (oldSchema) throw new Error("D1_ERROR: no such column: branch");
+          return { results: [] };
+        },
         bind(...args) {
           return {
             async run() {

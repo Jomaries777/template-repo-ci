@@ -2,7 +2,8 @@
 // GitHub repo keeps refs and commits in memory and records every call.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { OWNER_ID, OTHER_CRED, OWNER_CRED, github, env, req, call } from "./helpers.mjs";
+import { OWNER_ID, OTHER_CRED, OWNER_CRED, d1, github, env, req, call } from "./helpers.mjs";
+import { resetSchemaCheck } from "../../broker/src/handler.js";
 
 const R = "https://api.github.com/repos/Jomaries777/sandbox-node-local";
 const MAIN = "a".repeat(40);
@@ -259,4 +260,29 @@ test("relay shares the identity checks and has its own hourly limit", async () =
   const tok = await call(req({ repo: "Jomaries777/sandbox-node-local" }), e);
   assert.equal(tok.res.status, 200);
   assert.ok(e.AUDIT.rows.every((r) => r.caller_id === OWNER_ID));
+});
+
+test("a broker deployed before its migration refuses instead of losing audit rows", async () => {
+  resetSchemaCheck();
+  const old = d1({ oldSchema: true });
+  for (const r of [relayReq(payload()), req({ repo: "Jomaries777/sandbox-node-local" })]) {
+    const { res, body, gh } = await call(r, env({ AUDIT: old }), repo().gh);
+    assert.equal(res.status, 503);
+    assert.equal(body.error, "audit_unavailable");
+    assert.equal(gh.calls.length, 0, "refused before any GitHub call");
+  }
+  resetSchemaCheck();
+  const ok = await call(relayReq(payload()), env(), repo().gh);
+  assert.equal(ok.res.status, 200, "the check passes once the columns exist");
+});
+
+test("a tree GitHub rejects is a clear 400, and nothing moves", async () => {
+  const { gh, refs } = repo();
+  const real = gh.fetch;
+  gh.fetch = async (url, init = {}) =>
+    url === `${R}/git/trees` ? new Response("{}", { status: 422 }) : real(url, init);
+  const { res, body } = await call(relayReq(payload()), env(), gh);
+  assert.equal(res.status, 400);
+  assert.equal(body.error, "tree_rejected");
+  assert.equal(refs["test/relay-check"], undefined);
 });
