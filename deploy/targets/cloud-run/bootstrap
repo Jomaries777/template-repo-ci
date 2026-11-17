@@ -105,9 +105,12 @@ done
 # dedicated project per app (as step 6 does) so this covers only its services.
 run gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
   --member "serviceAccount:${deploy_sa}" --role roles/run.developer --condition None --quiet
-# Registry writes are scoped to the "app" repository, not the project.
+# Registry access is scoped to the "app" repository, not the project.
+# repoAdmin, not writer: promote moves the "<env>" and "<env>-prev" tags, and
+# replacing an existing tag needs artifactregistry.tags.delete. repoAdmin can't
+# change the repository's IAM (that is artifactregistry.admin).
 run gcloud artifacts repositories add-iam-policy-binding app "${p[@]}" --location "$GCP_REGION" \
-  --member "serviceAccount:${deploy_sa}" --role roles/artifactregistry.writer --quiet
+  --member "serviceAccount:${deploy_sa}" --role roles/artifactregistry.repoAdmin --quiet
 # The deploy SA may act as the runtime SA only; the runtime SA has no roles.
 run gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" "${p[@]}" \
   --member "serviceAccount:${deploy_sa}" --role roles/iam.serviceAccountUser --quiet
