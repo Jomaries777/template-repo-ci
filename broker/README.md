@@ -31,7 +31,7 @@ Do this once from a **Codespace on `template-repo-ci`**, which already has the `
    W="npx -y wrangler@4.163.0"
    ```
 
-3. **Create the audit database:** run `$W d1 create agent-bot-audit` and copy the printed `database_id` into `wrangler.toml` (the template's own broker already has one; a new owner replaces it). If wrangler offers to add the binding itself, answer no: `wrangler.toml` already has it as `AUDIT`. Then create the table with `$W d1 execute agent-bot-audit --remote --file schema.sql`.
+3. **Create the audit database:** run `$W d1 create agent-bot-audit` and copy the printed `database_id` into `wrangler.toml` (the template's own broker already has one; a new owner replaces it). Keep `preview_urls = false`: per-version preview URLs would let an old version answer after the kill switch. If wrangler offers to add the binding itself, answer no: `wrangler.toml` already has it as `AUDIT`. Then create the table with `$W d1 execute agent-bot-audit --remote --file schema.sql`.
 4. **Store the App key as a secret.** WebCrypto needs PKCS#8, so the key is converted on the way, and it is never written to disk:
 
    ```bash
