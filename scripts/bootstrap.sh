@@ -17,13 +17,15 @@
 # 1. Files: keep stacks/<stack> and deploy/targets/<target>, delete the other
 #    stacks and adapters, the template's intent/ folders, self-test workflow
 #    and bootstrap test; write deploy.yml, CODEOWNERS and a README stub.
-# 2. Git: commit; push to main only while the repo has no ruleset and no
-#    branch protection (a brand-new repo, run by its owner: the one exception
-#    to "never push to main"), otherwise push a branch and open a PR.
-# 3. GitHub: scripts/gh-settings.sh, the dev and production Environments
-#    (production: the owner as required reviewer, branch main only), secrets
-#    and variables.
+# 2. Git: commit.
+# 3. GitHub: the dev and production Environments (production: the owner as
+#    required reviewer, branch main only), secrets and variables.
 # 4. Target: the adapter's bootstrap (scripts/deploy.sh bootstrap).
+# 5. Git: push to main only while the repo has no ruleset and no branch
+#    protection (a brand-new repo, run by its owner: the one exception to
+#    "never push to main"), otherwise push a branch and open a PR. The push
+#    starts the first deploy, so it waits until 3 and 4 are done.
+# 6. GitHub: scripts/gh-settings.sh (repo settings and the ruleset).
 #
 # Secrets are read from the macOS Keychain or a hidden prompt and piped to
 # `gh secret set`; they are never written to disk or printed.
@@ -203,58 +205,15 @@ if ((local_only)); then
   exit 0
 fi
 
-# --- 2. git
-step "Git: commit and push"
+# --- 2. git: commit now; push in step 5, once the first deploy has all it needs
+step "Git: commit"
 if ((dry_run)) || [[ -n "$(git status --porcelain)" ]]; then
   run git add -A
   run git commit -q -m "chore: bootstrap $stack on $target"
 else
   echo "    nothing to commit"
 fi
-# Push whenever the commit isn't on origin/main yet, so a rerun retries a
-# push that failed or was interrupted after the commit.
-need_push=1
-if ! ((dry_run)) && git fetch -q origin main 2>/dev/null && git merge-base --is-ancestor HEAD origin/main; then
-  need_push=0
-fi
-if ((need_push)); then
-  # Fail closed: if the rulesets can't be read, never push to main.
-  # "Protected" means any ruleset at all, or classic protection on main; only
-  # a repo with neither (a new one) takes the direct push.
-  protected=""
-  if ! ((dry_run)); then
-    # includes_parents: rulesets inherited from an organization count too.
-    rulesets="$(gh api "repos/$repo/rulesets?includes_parents=true")" || die "cannot read the rulesets of $repo; not pushing"
-    branch="$(gh api "repos/$repo/branches/main")" || die "cannot read the main branch of $repo; not pushing"
-    if [[ "$(jq 'length' <<<"$rulesets")" != 0 || "$(jq -r '.protected' <<<"$branch")" == true ]]; then
-      protected=1
-    fi
-  fi
-  if [[ -z "$protected" ]]; then
-    # A new repo: main is not protected yet; gh-settings.sh protects it next.
-    run git push origin HEAD:main
-  else
-    run git push -u origin HEAD:refs/heads/chore/bootstrap
-    open_prs=""
-    ((dry_run)) || open_prs="$(gh pr list --repo "$repo" --head chore/bootstrap --json number -q length)"
-    if [[ "${open_prs:-0}" == 0 ]]; then
-      run gh pr create --repo "$repo" --head chore/bootstrap --base main \
-        --title "chore: bootstrap $stack on $target" --body "Files written by scripts/bootstrap.sh."
-    else
-      echo "    PR from chore/bootstrap already open"
-    fi
-  fi
-else
-  echo "    already pushed"
-fi
-
 # --- 3. GitHub
-step "GitHub: repo settings and ruleset"
-settings_args=(--repo "$repo")
-((dry_run)) && settings_args+=(--dry-run)
-# gh-settings.sh prints its own DRY-RUN lines, so it is called directly.
-"$root/scripts/gh-settings.sh" "${settings_args[@]}"
-
 step "GitHub: Environments dev and production"
 # The production reviewer must be a user. An organization owner names one
 # with BOOTSTRAP_REVIEWER.
@@ -426,5 +385,54 @@ else
     DEPLOY_TARGET="$target" "$root/scripts/deploy.sh" bootstrap
   fi
 fi
+
+# --- 5. push. Pushing main starts the first deploy, so this comes after the
+# Environments (production's reviewer), secrets and the target's resources and
+# variables; a step that fails above leaves the commit local for a rerun.
+step "Git: push"
+# Push whenever the commit isn't on origin/main yet, so a rerun retries a
+# push that failed or was interrupted after the commit.
+need_push=1
+if ! ((dry_run)) && git fetch -q origin main 2>/dev/null && git merge-base --is-ancestor HEAD origin/main; then
+  need_push=0
+fi
+if ((need_push)); then
+  # Fail closed: if the rulesets can't be read, never push to main.
+  # "Protected" means any ruleset at all, or classic protection on main; only
+  # a repo with neither (a new one) takes the direct push.
+  protected=""
+  if ! ((dry_run)); then
+    # includes_parents: rulesets inherited from an organization count too.
+    rulesets="$(gh api "repos/$repo/rulesets?includes_parents=true")" || die "cannot read the rulesets of $repo; not pushing"
+    branch="$(gh api "repos/$repo/branches/main")" || die "cannot read the main branch of $repo; not pushing"
+    if [[ "$(jq 'length' <<<"$rulesets")" != 0 || "$(jq -r '.protected' <<<"$branch")" == true ]]; then
+      protected=1
+    fi
+  fi
+  if [[ -z "$protected" ]]; then
+    # A new repo: main is not protected yet; gh-settings.sh protects it next.
+    run git push origin HEAD:main
+  else
+    run git push -u origin HEAD:refs/heads/chore/bootstrap
+    open_prs=""
+    ((dry_run)) || open_prs="$(gh pr list --repo "$repo" --head chore/bootstrap --json number -q length)"
+    if [[ "${open_prs:-0}" == 0 ]]; then
+      run gh pr create --repo "$repo" --head chore/bootstrap --base main \
+        --title "chore: bootstrap $stack on $target" --body "Files written by scripts/bootstrap.sh."
+    else
+      echo "    PR from chore/bootstrap already open"
+    fi
+  fi
+else
+  echo "    already pushed"
+fi
+
+# --- 6. GitHub: protect main. After the push: the ruleset blocks direct
+# pushes to main.
+step "GitHub: repo settings and ruleset"
+settings_args=(--repo "$repo")
+((dry_run)) && settings_args+=(--dry-run)
+# gh-settings.sh prints its own DRY-RUN lines, so it is called directly.
+"$root/scripts/gh-settings.sh" "${settings_args[@]}"
 
 step "Done. Next: install the bot App on $repo, then run make doctor."
