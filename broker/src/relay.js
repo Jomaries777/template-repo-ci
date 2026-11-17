@@ -161,12 +161,13 @@ export async function relay(env, deps, p, row, nowMs, { checkRepo, mintToken }) 
   }
   const pc = await call(`/commits/${parent}`);
   if (pc.status !== 200 || !pc.data?.commit?.tree?.sha) return err(502, "github_error");
-  // The relay never moves someone else's branch. The logins come from the
-  // commit's email, which anyone who can push could fake; GitHub verifies a
-  // commit the App made through the API, so require that too.
+  // The relay never moves someone else's branch. A commit the App made
+  // through the API has the bot as author and GitHub (web-flow) as committer,
+  // and GitHub verifies it. The author login comes from the commit's email,
+  // which anyone who can push could fake, so the Verified mark is required too.
   const botHead =
     pc.data.author?.login === bot &&
-    pc.data.committer?.login === bot &&
+    [bot, "web-flow"].includes(pc.data.committer?.login) &&
     pc.data.commit?.verification?.verified === true;
   if (exists && !botHead) {
     return err(409, "not_bot_branch");

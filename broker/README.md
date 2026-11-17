@@ -69,7 +69,7 @@ GH_TOKEN="$(scripts/bot-token.sh Jomaries777/sandbox-node-local)" gh pr create .
 
 A cloud Claude Code session can't push as the bot, so it sends its changes to `POST /relay`, and the broker makes the commit and the draft PR as the bot. The commit is Verified, and the bot is the last pusher, so the owner can approve without the admin bypass.
 
-1. **Give the environment the identity, once.** In the session, Claude asks for a credential for the broker's host. Paste the identity there: in a signed-in Codespace, `cat ~/.config/agent-bot/identity` shows it (don't screenshot it). The environment's network proxy then adds `Authorization: Bearer <identity>` to every request to the broker; the session never sees the value. Saving it also allows the host.
+1. **Give the environment the identity, once.** Add it as a network secret for the broker's host with the path prefix `/relay`, so sessions can reach only the relay, not `/token`. (`bot-relay.sh` calls `/relay/`, which the prefix matches.) In the session, Claude asks for a credential for the broker's host. Paste the identity there: in a signed-in Codespace, `cat ~/.config/agent-bot/identity` shows it (don't screenshot it). The environment's network proxy then adds `Authorization: Bearer <identity>` to every request to the broker; the session never sees the value. Saving it also allows the host.
 2. **Set `BOT_BROKER_URL`** as an environment variable of the cloud environment.
 3. **Relay a branch:** commit on a `feat/…` (or `fix/`, `docs/`, `chore/`, `test/`, `ci/`) branch, then run `scripts/bot-relay.sh --pr "title"`. The changes since `origin/<branch>` (or `origin/main` for a new branch) become one bot commit; the local branch is then reset onto it, so the next relay is a fast-forward.
 

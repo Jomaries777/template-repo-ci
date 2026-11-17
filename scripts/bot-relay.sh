@@ -119,10 +119,10 @@ send() {
   if [[ -s "$config_dir/identity" ]]; then
     curl -sS --max-time 60 -X POST -H 'Content-Type: application/json' \
       -H @<(printf 'Authorization: Bearer %s\n' "$(cat "$config_dir/identity")") \
-      --data @"$work/payload.json" -w '\n%{http_code}' "${broker_url%/}/relay"
+      --data @"$work/payload.json" -w '\n%{http_code}' "${broker_url%/}/relay/"
   else
     curl -sS --max-time 60 -X POST -H 'Content-Type: application/json' \
-      --data @"$work/payload.json" -w '\n%{http_code}' "${broker_url%/}/relay"
+      --data @"$work/payload.json" -w '\n%{http_code}' "${broker_url%/}/relay/"
   fi
 }
 code=""
