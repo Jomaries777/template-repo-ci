@@ -252,14 +252,17 @@ export async function handle(request, env, deps) {
     if (request.method !== "GET") return json(405, { error: "method_not_allowed" });
     return json(200, { ok: true, enabled: env.BROKER_ENABLED === "true" });
   }
-  const routes = { "/token": token, "/relay": relayRoute };
+  // "/relay/" too: a cloud environment's network secret limited to the path
+  // prefix /relay is only attached under /relay/. Exact aliases only:
+  // "/relay//" or "/relay/x" stay 404 on purpose.
+  const routes = { "/token": token, "/relay": relayRoute, "/relay/": relayRoute };
   const route = routes[url.pathname];
   if (!route) return json(404, { error: "not_found" });
   if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
 
   const row = {
     caller_id: null,
-    endpoint: url.pathname.slice(1),
+    endpoint: url.pathname.replace(/^\/|\/$/g, ""),
     repo: null,
     outcome: "refused",
     reason: null,

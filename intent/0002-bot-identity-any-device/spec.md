@@ -103,7 +103,7 @@ Every response carries `Cache-Control: no-store`. Every request body is capped: 
 1. **Branch.** `branch` must match `^(feat|fix|docs|chore|test|ci)/[a-z0-9._/-]{1,80}$`. It may never be the default branch or `main`.
 2. **Paths.** Every path is normalized and must not start with `.github/workflows/` or contain `..`, a leading `/`, or `.git/`. There are at most 100 files per call.
 3. **New branch.** If `branch` doesn't exist, it is created from `base` (default `main`).
-4. **Existing branch.** The update is fast-forward only: `parent` must equal the branch's current head, otherwise `409 stale_parent`. The branch's head commit must also be the bot's, otherwise `409 not_bot_branch`. The relay never moves someone else's branch.
+4. **Existing branch.** The update is fast-forward only: `parent` must equal the branch's current head, otherwise `409 stale_parent`. The branch's head commit must also be the bot's, otherwise `409 not_bot_branch`. The relay never moves someone else's branch. *Amended 2026-11-17 (live test, #29): a commit the App makes through the API has GitHub's `web-flow` as committer, so the head counts as the bot's when its author is the bot, its committer is the bot or `web-flow`, and GitHub marks it Verified. Someone with write access could imitate this; accepted while the owner is the only writer.*
 5. **Commit.** `POST /git/trees` with `base_tree = parent's tree`. Text files go inline as `content`. Binary files become blobs first, at most 10 per call, which keeps the call within the free plan's 50-subrequest limit. Then `POST /git/commits`, whose author and committer are the bot. GitHub marks API commits by an App as **Verified**.
 6. **Branch update.** `POST /git/refs` for a new branch, or `PATCH /git/refs/heads/{branch}` with `force: false`.
 7. **PR.** If `pr` is set and no PR exists for the branch, `POST /pulls`, with `draft` defaulting to `true`.
@@ -113,7 +113,7 @@ Because the bot makes the commit and the push, it is the last pusher, and the ow
 
 **`scripts/bot-relay.sh [--pr "title"]` in a cloud session:**
 1. Build the payload from `git diff --name-status --no-renames origin/<base>...HEAD` (renames are sent as a delete plus an add) and the file contents at `HEAD`.
-2. `POST` it to `$BOT_BROKER_URL/relay`, where the environment's proxy adds the identity token.
+2. `POST` it to `$BOT_BROKER_URL/relay/` (the broker also accepts `/relay`; *amended 2026-11-17, #29: a network secret limited to the path `/relay` is attached only under `/relay/`*), where the environment's proxy adds the identity token.
 3. Afterwards, run `git fetch origin <branch>` and `git reset --soft origin/<branch>`, so the local branch matches the bot's commit and the next relay passes the fast-forward check.
 
 **`bot-token.sh` with a broker:** `curl -fsS -X POST "$BOT_BROKER_URL/token" -H "Authorization: Bearer $(cat ~/.config/agent-bot/identity)" -d "{\"repo\":\"$name\"}" | jq -r .token`. The token is only sent over HTTPS, and `curl` never echoes headers.

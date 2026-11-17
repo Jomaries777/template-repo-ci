@@ -89,6 +89,7 @@ main_sha="$(git rev-parse origin/main)"
 cd "$src"
 relay --pr "test: relay" --pr-body "body"
 if [[ $rc == 0 ]]; then pass "new branch: relayed"; else fail "new branch: relayed (rc $rc, err: $err)"; fi
+if grep -q "https://broker.test/relay/$" "$tmp/args"; then pass "posts to /relay/ (matches a /relay path-limited secret)"; else fail "posts to /relay/ ($(cat "$tmp/args"))"; fi
 if [[ "$(payload .parent)" == "$main_sha" ]]; then pass "new branch: parent is origin/main"; else fail "new branch: parent is origin/main"; fi
 if [[ "$(payload .repo)" == "Jomaries777/sandbox" ]]; then pass "repo from the origin URL"; else fail "repo from the origin URL ($(payload .repo))"; fi
 if [[ "$(payload .message)" == "feat: add things" ]]; then pass "message from the one commit"; else fail "message from the one commit"; fi
