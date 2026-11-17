@@ -36,6 +36,17 @@ brew install actionlint shellcheck node go
    gh variable set BOT_APP_ID --repo Jomaries777/template-repo-ci --body "<APP_ID>"
    ```
 
+## 2b. Bot identity without the key on any device (spec 0002)
+
+Since M2 step 7, the bot App key lives only in the bot token broker (`broker/README.md`), not in the Keychain or a Codespaces secret:
+
+1. Deploy the broker once (`broker/README.md`, "Deploy").
+2. On each device, sign in once: `scripts/bot-login.sh --broker https://<broker>`. Then `scripts/bot-token.sh owner/repo` gives a 1-hour bot token for that repo.
+3. For cloud Claude Code sessions, create a cloud environment with a network secret for the broker host: header `Authorization`, prefix `Bearer`, path prefix `/relay`, the value from `~/.config/agent-bot/identity`. Sessions there run `scripts/bot-relay.sh --pr "title"`.
+4. `make bootstrap` sets a new repo's `BOT_APP_PRIVATE_KEY` through the broker (`scripts/bot-secrets.sh`).
+
+Steps 6 and 7 above (Keychain) are only needed on a Mac without the broker.
+
 ## 3. Claude Pro token for CI review (Decision 4, C7)
 
 ```bash

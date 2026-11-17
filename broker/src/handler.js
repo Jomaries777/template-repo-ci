@@ -13,6 +13,7 @@
 import { appJwt } from "./jwt.js";
 import { gh } from "./github.js";
 import { relay, RELAY_MAX_BODY } from "./relay.js";
+import { secrets } from "./secrets.js";
 
 const MAX_BODY = 1024; // bytes, /token
 // "owner/name"; the owner must be OWNER_LOGIN, so a token is never minted for
@@ -24,7 +25,7 @@ const REPO_RE = /^([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})$/;
 // can pass it together. Enough for one owner's devices. Any GitHub user can
 // sign in to the login App, so a non-owner gets one audited refusal an hour;
 // throttled requests write nothing, so no caller can fill the database.
-const RATE_PER_HOUR = { token: 30, relay: 20 };
+const RATE_PER_HOUR = { token: 30, relay: 20, secrets: 10 };
 const NON_OWNER_PER_HOUR = 1;
 const RETENTION_MS = 90 * 24 * 3600 * 1000;
 // Old rows are deleted on about 1 write in 50, not every write (CPU, C7).
@@ -245,6 +246,15 @@ async function relayRoute(request, env, deps, row) {
   return relay(env, deps, body.value, row, nowMs, { checkRepo, mintToken });
 }
 
+async function secretsRoute(request, env, deps, row) {
+  const nowMs = deps.now();
+  const who = await identify(request, env, deps, row, "secrets", nowMs);
+  if (who.error) return who.error;
+  const body = await readJson(request);
+  if (body.error) return [body.error[0], { error: body.error[1] }];
+  return secrets(env, deps, body.value, row, request, { checkRepo });
+}
+
 export async function handle(request, env, deps) {
   const random = deps.random ?? Math.random;
   const url = new URL(request.url);
@@ -255,7 +265,7 @@ export async function handle(request, env, deps) {
   // "/relay/" too: a cloud environment's network secret limited to the path
   // prefix /relay is only attached under /relay/. Exact aliases only:
   // "/relay//" or "/relay/x" stay 404 on purpose.
-  const routes = { "/token": token, "/relay": relayRoute, "/relay/": relayRoute };
+  const routes = { "/token": token, "/relay": relayRoute, "/relay/": relayRoute, "/secrets": secretsRoute };
   const route = routes[url.pathname];
   if (!route) return json(404, { error: "not_found" });
   if (request.method !== "POST") return json(405, { error: "method_not_allowed" });

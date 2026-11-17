@@ -272,6 +272,35 @@ out="$(cd "$h2" && PATH="$tmp/bin4:$PATH" CODESPACES=true BOT_APP_KEY_B64="$(pri
 check "codespace: a non-PEM secret stops bootstrap" '[[ $rc != 0 ]] && grep -q "PEM" <<<"$out"'
 check "codespace: a non-PEM secret is never stored" '[[ ! -e "$tmp/sec4/BOT_APP_PRIVATE_KEY_actions" ]] && ! grep -q "junk-value" <<<"$out"'
 
+# --- signed in to the broker (spec 0002 phase 2): the broker sets the bot key;
+# the key never comes to this device, and a refusal stops bootstrap instead of
+# falling back to a phase 1 key.
+mkdir -p "$tmp/botcfg"
+printf 'x' >"$tmp/botcfg/identity"
+printf 'https://broker.test\n' >"$tmp/botcfg/broker_url"
+b="$tmp/b"
+copy "$b"
+rc=0
+out="$(BOT_APP_ID=123 BOT_CONFIG_DIR="$tmp/botcfg" "$b/scripts/bootstrap.sh" --stack node --target none --repo acme/hello --dry-run 2>&1)" || rc=$?
+check "broker: dry run exits 0" '[[ $rc == 0 ]]'
+check "broker: dry run uses bot-secrets.sh for both apps" 'grep -qF "DRY-RUN: scripts/bot-secrets.sh --apps actions,dependabot acme/hello" <<<"$out"'
+check "broker: no local key source is asked" '! grep -q "DRY-RUN: <BOT_APP_PRIVATE_KEY" <<<"$out"'
+h3="$tmp/h3"
+copy "$h3"
+printf '#!/usr/bin/env bash\necho "bot-secrets $*" >>%q\necho "bot-secrets: the broker refused acme/hello: github_denied (HTTP 403)" >&2\nexit 1\n' "$tmp/calls4" >"$h3/scripts/bot-secrets.sh"
+git init -q --bare "$tmp/origin6.git"
+(cd "$h3" && git init -q -b main && git add -A && git -c user.email=t@t -c user.name=t commit -qm init &&
+  git remote add origin "$tmp/origin6.git" && git push -q origin main)
+rm -f "$tmp/sec4"/*
+: >"$tmp/calls4"
+rc=0
+out="$(cd "$h3" && PATH="$tmp/bin4:$PATH" CODESPACES=true BOT_APP_KEY_B64="$(printf '%s' "$pem" | base64 | tr -d '\n')" BOT_APP_ID=1 BOT_CONFIG_DIR="$tmp/botcfg" \
+  GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+  "$h3/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
+check "broker: bot-secrets.sh called for both apps" 'grep -q "bot-secrets --apps actions,dependabot acme/hello" "$tmp/calls4"'
+check "broker: a refusal stops bootstrap" '[[ $rc != 0 ]] && grep -q "github_denied" <<<"$out"'
+check "broker: no fallback to the phase 1 key" '[[ ! -e "$tmp/sec4/BOT_APP_PRIVATE_KEY_actions" ]]'
+
 # --- prompts are visible on a terminal (a pty from util-linux `script`)
 if command -v script >/dev/null 2>&1; then
   sed -n '/^ask() {$/,/^}$/p' "$src/scripts/bootstrap.sh" >"$tmp/ask.sh"
