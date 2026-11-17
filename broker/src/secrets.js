@@ -12,8 +12,8 @@ import { seal } from "./seal.js";
 const APPS = new Set(["actions", "dependabot"]);
 const SECRET = "BOT_APP_PRIVATE_KEY";
 
-function err(status, code) {
-  return [status, { error: code }];
+function err(status, code, set) {
+  return [status, set && set.length ? { error: code, set } : { error: code }];
 }
 
 export async function secrets(env, deps, p, row, request, { checkRepo }) {
@@ -40,22 +40,24 @@ export async function secrets(env, deps, p, row, request, { checkRepo }) {
   const set = [];
   for (const app of apps) {
     const pk = await gh(deps.fetch, `${r}/${app}/secrets/public-key`, { auth });
-    if (pk.status === 403) return err(403, "github_denied");
-    if (pk.status === 404) return err(404, "not_found");
-    if (pk.status !== 200 || typeof pk.data?.key !== "string" || !pk.data?.key_id) return err(502, "github_error");
+    // Errors after the first app name the apps already set, so a rotation
+    // never leaves the caller unaware that the two secrets now differ.
+    if (pk.status === 403) return err(403, "github_denied", set);
+    if (pk.status === 404) return err(404, "not_found", set);
+    if (pk.status !== 200 || typeof pk.data?.key !== "string" || !pk.data?.key_id) return err(502, "github_error", set);
     let encrypted;
     try {
       encrypted = seal(env.APP_KEY_PKCS8, pk.data.key);
     } catch {
-      return err(502, "github_error");
+      return err(502, "github_error", set);
     }
     const put = await gh(deps.fetch, `${r}/${app}/secrets/${SECRET}`, {
       auth,
       method: "PUT",
       body: { encrypted_value: encrypted, key_id: pk.data.key_id },
     });
-    if (put.status === 403) return err(403, "github_denied");
-    if (put.status !== 201 && put.status !== 204) return err(502, "github_error");
+    if (put.status === 403) return err(403, "github_denied", set);
+    if (put.status !== 201 && put.status !== 204) return err(502, "github_error", set);
     set.push(app);
   }
   return [200, { set }];

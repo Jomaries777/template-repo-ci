@@ -74,6 +74,8 @@ check "--apps limits the apps" grep -q '"apps":\["dependabot"\]' "$tmp/body"
 FAKE_CODE=403 FAKE_BODY='{"error":"github_token_not_owner"}' run Jomaries777/two
 check "refusal fails" test "$rc" != 0
 check "refusal names the code and a hint" grep -q "github_token_not_owner (HTTP 403); gh is logged in as another account" <<<"$err"
+FAKE_CODE=403 FAKE_BODY='{"error":"github_denied","set":["actions"]}' run Jomaries777/two
+check "partial failure says what was already set" grep -q "already set for actions before the error" <<<"$err"
 
 run --apps codespaces Jomaries777/two
 check "bad --apps refused before sending" test "$rc" != 0 -a ! -s "$tmp/args"

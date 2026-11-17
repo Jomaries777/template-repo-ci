@@ -115,6 +115,7 @@ test("GitHub refusals, kill switch and the hourly limit", async () => {
   let r = await call(secretsReq(BODY), env(), repoKeys({ deny: "dependabot" }).gh);
   assert.equal(r.res.status, 403);
   assert.equal(r.body.error, "github_denied");
+  assert.deepEqual(r.body.set, ["actions"], "a partial failure names what was already set");
   r = await call(secretsReq(BODY), env({ BROKER_ENABLED: "false" }), repoKeys().gh);
   assert.equal(r.res.status, 503);
   const e = env();

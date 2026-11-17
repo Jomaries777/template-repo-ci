@@ -35,7 +35,7 @@
 | NFR-3 | Bot tokens a device receives last at most 1 hour (GitHub's installation-token lifetime). | Constraint "Short-lived credentials" |
 | NFR-4 | The bot gains no permission. The broker can't widen a token past the App's grant, and the App keeps no `workflows` and no `administration` permission. The relay refuses `.github/workflows/**` and the default branch even before GitHub would. | Constraint "No widening of the bot's power" |
 | NFR-5 | The broker answers `/token` in under 3 s, and a `/relay` with 20 files in under 10 s. | Outcome 2 |
-| NFR-6 | The broker is plain `fetch` and WebCrypto, with no framework; the one dependency is `libsodium-wrappers` for `/secrets`. Its handler tests run offline in `make test` with GitHub API fixtures. | Template simplicity |
+| NFR-6 | The broker is plain `fetch` and WebCrypto, with no framework; the one dependency is `libsodium-wrappers` for `/secrets`. *Amended 2026-11-17 (#33): `libsodium-wrappers` can't load its WebAssembly on Workers, so `/secrets` seals with `tweetnacl` + `@noble/hashes` (pure JS, audited), and `libsodium-wrappers` is a test-only dependency that opens every sealed value.* Its handler tests run offline in `make test` with GitHub API fixtures. | Template simplicity |
 
 ## Design
 
@@ -141,7 +141,7 @@ Because the bot makes the commit and the push, it is the last pusher, and the ow
 | `scripts/bot-relay.sh` (new) | Build the payload from `git diff`, `POST /relay`, then resync the local branch |
 | `scripts/bootstrap.sh` | Bot secrets from the Codespaces secret (phase 1) or `POST /secrets` (phase 2) |
 | `scripts/doctor.sh` | FR-9 checks; SKIP for a source that doesn't apply |
-| `broker/` (new) | `src/handler.js` (routing, auth, `/token`, `/relay`, `/secrets`), `src/github.js`, `src/jwt.js`, `schema.sql` (D1 `audit`, `rate`), `wrangler.toml`, `package.json` (`libsodium-wrappers`, `wrangler` as a dev dependency), `README.md` (setup, kill switch, rotation) |
+| `broker/` (new) | `src/handler.js` (routing, auth, `/token`, `/relay`, `/secrets`), `src/github.js`, `src/jwt.js`, `schema.sql` (D1 `audit`, `rate`), `wrangler.toml`, `package.json` (`tweetnacl`, `@noble/hashes`; `libsodium-wrappers` for tests only, amended in #33, `wrangler` as a dev dependency), `README.md` (setup, kill switch, rotation) |
 | `tests/scripts/test_bot_token.sh`, `test_bot_relay.sh` (new) | Key-source order and payload building, with fake `curl`, `security` and `git` |
 | `tests/broker/` (new) | Handler tests on Node's test runner with fetch fixtures: owner accepted; other user `403`; bad repo `400`; kill switch `503`; relay refuses workflow paths, `main`, `..`, stale parent and non-bot branches; tokens and contents never in the audit row; permissions body exact |
 | `Makefile` | `make test` also runs `node --test tests/broker` when `broker/` exists |

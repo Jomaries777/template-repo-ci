@@ -49,7 +49,7 @@ if ((dry_run)); then
 fi
 
 gh_token="$(gh auth token 2>/dev/null)" || true
-[[ -n "$gh_token" ]] || die "no GitHub CLI login: run gh auth login (an account that can set $repo's secrets)"
+[[ -n "$gh_token" ]] || die "no GitHub CLI login: run gh auth login as the owner (an account that can set the repos' secrets)"
 
 apps_json="$(jq -nc --arg a "$apps" '$a | split(",")')"
 for repo in "${repos[@]}"; do
@@ -70,6 +70,8 @@ for repo in "${repos[@]}"; do
       no_token | bad_token) hint="sign in again with scripts/bot-login.sh" ;;
       *) hint="" ;;
     esac
+    partial="$(jq -r '(.set // []) | join(", ")' <<<"${body:-}" 2>/dev/null || true)"
+    [[ -z "$partial" ]] || echo "bot-secrets: $repo: BOT_APP_PRIVATE_KEY was already set for $partial before the error; rerun to finish" >&2
     die "the broker refused $repo: $error (HTTP ${code:-no answer})${hint:+; $hint}"
   fi
   echo "bot-secrets: $repo: BOT_APP_PRIVATE_KEY set for $(jq -r '.set | join(", ")' <<<"$body")"

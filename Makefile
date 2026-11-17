@@ -79,7 +79,7 @@ test: ## Run every executable tests/scripts/test_*.sh, and tests/broker with nod
 	if [[ -d tests/broker ]]; then \
 	  if command -v node >/dev/null 2>&1; then \
 	    echo "== tests/broker (node --test)"; \
-	    if [[ -f broker/package-lock.json && ! -d broker/node_modules ]]; then npm ci --ignore-scripts --no-audit --no-fund --prefix broker >/dev/null; fi; \
+	    if [[ -f broker/package-lock.json && ! broker/node_modules/.package-lock.json -nt broker/package-lock.json ]]; then npm ci --ignore-scripts --no-audit --no-fund --prefix broker >/dev/null; fi; \
 	    if node --test tests/broker/*.test.mjs; then pass=$$((pass + 1)); else fail=$$((fail + 1)); failed="$$failed tests/broker"; fi; \
 	  elif [[ -n "$${CI:-}" ]]; then \
 	    echo "== tests/broker: node is not installed (required in CI)"; fail=$$((fail + 1)); failed="$$failed tests/broker"; \
