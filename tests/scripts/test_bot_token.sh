@@ -204,10 +204,11 @@ fi
 # The repo variable is still used when gh can read it.
 cat >"$tmp/gh403/gh" <<'EOF'
 #!/usr/bin/env bash
+echo "A new release of gh is available" >&2
 echo 4343
 EOF
 run "$tmp/gh403:$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" BOT_APP_ID=
-if [[ $rc == 0 && "$(jwt_iss)" == "4343" ]]; then pass "app ID from the repo variable"; else fail "app ID from the repo variable (rc $rc, err: $err)"; fi
+if [[ $rc == 0 && "$(jwt_iss)" == "4343" ]]; then pass "app ID from the repo variable, gh warnings ignored"; else fail "app ID from the repo variable, gh warnings ignored (rc $rc, err: $err)"; fi
 # BOT_APP_ID wins over the repo variable, and gh isn't needed when it's set.
 cat >"$tmp/gh403/gh" <<'EOF2'
 #!/usr/bin/env bash

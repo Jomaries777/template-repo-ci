@@ -69,9 +69,13 @@ fi
 # secret is how it reaches the environment).
 app_id="${BOT_APP_ID:-}"
 if [[ -z "$app_id" ]]; then
-  if ! app_id="$(gh variable get BOT_APP_ID --repo "$repo" 2>&1)"; then
-    die "can't read the bot App ID (repo variable BOT_APP_ID of $repo; gh said: ${app_id:0:200}). Set BOT_APP_ID; in a Codespace add the Codespaces secret BOT_APP_ID (github.com/settings/codespaces) with access to $repo, then restart the Codespace"
+  gh_err="$(mktemp)"
+  if ! app_id="$(gh variable get BOT_APP_ID --repo "$repo" 2>"$gh_err")"; then
+    msg="$(head -c 200 "$gh_err")"
+    rm -f "$gh_err"
+    die "can't read the bot App ID (repo variable BOT_APP_ID of $repo; gh said: $msg). Set BOT_APP_ID; in a Codespace add the Codespaces secret BOT_APP_ID (github.com/settings/codespaces) with access to $repo, then restart the Codespace"
   fi
+  rm -f "$gh_err"
 fi
 [[ "$app_id" =~ ^[0-9]+$ ]] || die "the bot App ID must be a number, got: ${app_id:0:20}"
 
