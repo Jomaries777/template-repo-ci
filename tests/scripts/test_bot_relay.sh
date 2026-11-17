@@ -89,34 +89,33 @@ main_sha="$(git rev-parse origin/main)"
 cd "$src"
 relay --pr "test: relay" --pr-body "body"
 if [[ $rc == 0 ]]; then pass "new branch: relayed"; else fail "new branch: relayed (rc $rc, err: $err)"; fi
-[[ "$(payload .parent)" == "$main_sha" ]] && pass "new branch: parent is origin/main" || fail "new branch: parent is origin/main"
-[[ "$(payload .repo)" == "Jomaries777/sandbox" ]] && pass "repo from the origin URL" || fail "repo from the origin URL ($(payload .repo))"
-[[ "$(payload .message)" == "feat: add things" ]] && pass "message from the one commit" || fail "message from the one commit"
-[[ "$(payload '.pr.title') $(payload '.pr.body')" == "test: relay body" ]] && pass "PR title and body" || fail "PR title and body"
-[[ "$(payload '[.files[].path] | sort | join(",")')" == "a.txt,dot.png,old.txt,run.sh" ]] && pass "changed files only" || fail "changed files only ($(payload '[.files[].path]|join(",")'))"
-[[ "$(payload '.files[] | select(.path=="old.txt") | .delete')" == true ]] && pass "delete entry" || fail "delete entry"
-[[ "$(payload '.files[] | select(.path=="run.sh") | .mode')" == 100755 ]] && pass "executable mode kept" || fail "executable mode kept"
+if [[ "$(payload .parent)" == "$main_sha" ]]; then pass "new branch: parent is origin/main"; else fail "new branch: parent is origin/main"; fi
+if [[ "$(payload .repo)" == "Jomaries777/sandbox" ]]; then pass "repo from the origin URL"; else fail "repo from the origin URL ($(payload .repo))"; fi
+if [[ "$(payload .message)" == "feat: add things" ]]; then pass "message from the one commit"; else fail "message from the one commit"; fi
+if [[ "$(payload '.pr.title') $(payload '.pr.body')" == "test: relay body" ]]; then pass "PR title and body"; else fail "PR title and body"; fi
+if [[ "$(payload '[.files[].path] | sort | join(",")')" == "a.txt,dot.png,old.txt,run.sh" ]]; then pass "changed files only"; else fail "changed files only ($(payload '[.files[].path]|join(",")'))"; fi
+if [[ "$(payload '.files[] | select(.path=="old.txt") | .delete')" == true ]]; then pass "delete entry"; else fail "delete entry"; fi
+if [[ "$(payload '.files[] | select(.path=="run.sh") | .mode')" == 100755 ]]; then pass "executable mode kept"; else fail "executable mode kept"; fi
 if [[ "$(payload '.files[] | select(.path=="dot.png") | .content_b64' | base64 -d | od -An -tx1 | tr -d ' \n')" == 89504e47fffe ]]; then
   pass "binary content intact"
 else
   fail "binary content intact"
 fi
-[[ "$(payload '.files[] | select(.path=="a.txt") | .content_b64' | base64 -d)" == hello ]] && pass "text content intact" || fail "text content intact"
+if [[ "$(payload '.files[] | select(.path=="a.txt") | .content_b64' | base64 -d)" == hello ]]; then pass "text content intact"; else fail "text content intact"; fi
 if [[ "$(git -C "$tmp/work" rev-parse HEAD)" == "$(git -C "$tmp/work" rev-parse origin/test/relay-1)" ]] &&
   git -C "$tmp/work" diff --cached --quiet && [[ -z "$(git -C "$tmp/work" status --porcelain)" ]]; then
   pass "resynced onto the bot's commit, clean"
 else
   fail "resynced onto the bot's commit, clean ($err)"
 fi
-grep -q "https://github.test/pull/1" <<<"$out" && pass "prints the PR" || fail "prints the PR ($out)"
-! grep -qi authorization "$tmp/hdrs" && pass "no identity file: no Authorization header (the proxy adds it)" || fail "no identity file: no Authorization header"
+if grep -q "https://github.test/pull/1" <<<"$out"; then pass "prints the PR"; else fail "prints the PR ($out)"; fi
+if ! grep -qi authorization "$tmp/hdrs"; then pass "no identity file: no Authorization header (the proxy adds it)"; else fail "no identity file: no Authorization header"; fi
 
 # 2. The next relay on the same branch: parent is the bot's commit, only the new change.
 bot_sha="$(git -C "$tmp/work" rev-parse HEAD)"
 (cd "$tmp/work" && printf 'more\n' >b.txt && git add b.txt && git commit -qm "feat: more")
 relay
-[[ $rc == 0 && "$(payload .parent)" == "$bot_sha" && "$(payload '[.files[].path]|join(",")')" == b.txt ]] &&
-  pass "existing branch: parent is the bot head, one file" || fail "existing branch (rc $rc, err: $err)"
+if [[ $rc == 0 && "$(payload .parent)" == "$bot_sha" && "$(payload '[.files[].path]|join(",")')" == b.txt ]]; then pass "existing branch: parent is the bot head, one file"; else fail "existing branch (rc $rc, err: $err)"; fi
 
 # 3. Identity on a signed-in device goes in a header file, never in the args.
 ident="$(printf 'ident-%s' "$RANDOM$RANDOM")"
@@ -151,7 +150,7 @@ new_work
 relay
 refused "several commits without -m" "give its message with -m"
 relay -m "feat: e and f"
-[[ $rc == 0 && "$(payload .message)" == "feat: e and f" ]] && pass "several commits with -m" || fail "several commits with -m (rc $rc, err: $err)"
+if [[ $rc == 0 && "$(payload .message)" == "feat: e and f" ]]; then pass "several commits with -m"; else fail "several commits with -m (rc $rc, err: $err)"; fi
 new_work
 (cd "$tmp/work" && printf 'x\n' >g.txt && git add g.txt && git commit -qm "feat: g")
 (cd "$tmp/seed" && git pull -q && printf 'new\n' >main2.txt && git add main2.txt && git commit -qm main2 && git push -q origin main)
@@ -171,6 +170,6 @@ if [[ $rc != 0 ]] && grep -q "stale_parent (HTTP 409); the branch moved" <<<"$er
 else
   fail "broker error: code and hint (rc $rc, err: $err)"
 fi
-[[ "$(git -C "$tmp/work" log -1 --format=%s)" == "feat: h" ]] && pass "broker error: local branch untouched" || fail "broker error: local branch untouched"
+if [[ "$(git -C "$tmp/work" log -1 --format=%s)" == "feat: h" ]]; then pass "broker error: local branch untouched"; else fail "broker error: local branch untouched"; fi
 
 exit $((failures > 0))
