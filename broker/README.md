@@ -14,6 +14,7 @@ broker:   "Check a token" with the login App's client credentials:
 | Endpoint | Answer |
 |---|---|
 | `POST /token` | `200 {token, expires_at}`, or `400 bad_repo` / `wrong_owner` (only the owner's repos) / `bad_json`, `401 no_token` / `bad_token`, `403 not_owner`, `404 not_installed`, `413 too_large`, `429 rate_limited` (30 requests an hour for the owner, 1 for anyone else), `502 github_error`, `503 disabled` / `audit_unavailable` |
+| `POST /relay` | One bot commit on a `feat/ fix/ docs/ chore/ test/ ci/` branch, plus an optional draft PR: `200 {commit, branch, pr_url}`. Refusals: `400 bad_branch` / `bad_base` / `bad_parent` / `bad_message` / `bad_files` / `path_denied` (workflows, `.git`, `..`, absolute) / `bad_mode` / `bad_content` / `too_many_blobs` (10 binary files) / `bad_pr`, `409 stale_parent` (the branch or base moved) / `not_bot_branch` (its head isn't the bot's), `413 too_large` (2 MB), `429 rate_limited` (20 an hour), plus the `/token` identity errors |
 | `GET /healthz` | `{ok, enabled}` |
 
 The identity comes from the login-only GitHub App `jomaries777-agent-login`, which has **no permissions**. Its token can only say who you are. The broker accepts only tokens that this App issued: it checks each one with GitHub's [Check a token](https://docs.github.com/en/rest/apps/oauth-applications#check-a-token) endpoint, so a `gh` CLI token, a PAT or another app's token of yours gets `401 bad_token`. Because the broker turns the identity into bot tokens, treat it like a bot credential: the file is mode `0600`, and every use is audited. Requests without a valid identity, and throttled requests, are refused without writing to the database, and another GitHub user who signs in to the login App gets one audited refusal an hour, so nobody can fill it. If the audit database is missing or can't be read, the broker refuses everything with `503 audit_unavailable` rather than issue tokens without a log or a rate limit. The App's **"Expire user authorization tokens" must stay off**; otherwise identities stop working after 8 hours.
@@ -46,6 +47,16 @@ Do this once from a **Codespace on `template-repo-ci`**, which already has the `
 
 6. **Deploy:** `$W deploy`. It prints the URL, `https://agent-bot-broker.<your-subdomain>.workers.dev`. Check it with `curl -s <url>/healthz`, which should give `{"ok":true,"enabled":true}`. The subdomain comes from your Cloudflare account and can be changed under **Workers & Pages → Account details → Subdomain**; the URL is not kept in the repo, since each device saves it when it signs in.
 
+## Upgrade an existing broker
+
+When a release adds audit columns, run its migration **before** deploying, so no request is answered without its audit row:
+
+```bash
+cd broker
+$W d1 execute agent-bot-audit --remote --file migrations/0002_relay.sql   # step 7c: relay columns
+$W deploy
+```
+
 ## Use it from any device
 
 ```bash
@@ -53,6 +64,16 @@ scripts/bot-login.sh --broker https://agent-bot-broker.<your-subdomain>.workers.
 # open github.com/login/device, enter the code, approve jomaries777-agent-login
 GH_TOKEN="$(scripts/bot-token.sh Jomaries777/sandbox-node-local)" gh pr create ...
 ```
+
+## Use it from a cloud session (relay)
+
+A cloud Claude Code session can't push as the bot, so it sends its changes to `POST /relay`, and the broker makes the commit and the draft PR as the bot. The commit is Verified, and the bot is the last pusher, so the owner can approve without the admin bypass.
+
+1. **Give the environment the identity, once.** In the session, Claude asks for a credential for the broker's host. Paste the identity there: in a signed-in Codespace, `cat ~/.config/agent-bot/identity` shows it (don't screenshot it). The environment's network proxy then adds `Authorization: Bearer <identity>` to every request to the broker; the session never sees the value. Saving it also allows the host.
+2. **Set `BOT_BROKER_URL`** as an environment variable of the cloud environment.
+3. **Relay a branch:** commit on a `feat/…` (or `fix/`, `docs/`, `chore/`, `test/`, `ci/`) branch, then run `scripts/bot-relay.sh --pr "title"`. The changes since `origin/<branch>` (or `origin/main` for a new branch) become one bot commit; the local branch is then reset onto it, so the next relay is a fast-forward.
+
+Anyone who can start a session on that environment can act as the bot through it, so keep the environment personal. To cut it off, delete the credential in the environment's settings, or revoke the login App's authorization.
 
 ## Operate
 

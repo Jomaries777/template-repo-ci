@@ -12,8 +12,9 @@
 
 import { appJwt } from "./jwt.js";
 import { gh } from "./github.js";
+import { relay, RELAY_MAX_BODY } from "./relay.js";
 
-const MAX_BODY = 1024; // bytes
+const MAX_BODY = 1024; // bytes, /token
 // "owner/name"; the owner must be OWNER_LOGIN, so a token is never minted for
 // a same-named repo of another owner.
 const REPO_RE = /^([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})$/;
@@ -23,7 +24,7 @@ const REPO_RE = /^([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})$/;
 // can pass it together. Enough for one owner's devices. Any GitHub user can
 // sign in to the login App, so a non-owner gets one audited refusal an hour;
 // throttled requests write nothing, so no caller can fill the database.
-const RATE_PER_HOUR = 30;
+const RATE_PER_HOUR = { token: 30, relay: 20 };
 const NON_OWNER_PER_HOUR = 1;
 const RETENTION_MS = 90 * 24 * 3600 * 1000;
 // Old rows are deleted on about 1 write in 50, not every write (CPU, C7).
@@ -54,9 +55,21 @@ async function audit(env, row, nowMs, random) {
   if (!env.AUDIT) return;
   try {
     await env.AUDIT.prepare(
-      "INSERT INTO audit (ts, caller_id, endpoint, repo, outcome, reason, expires_at, ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO audit (ts, caller_id, endpoint, repo, outcome, reason, expires_at, ip, branch, files, paths) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-      .bind(nowMs, row.caller_id, row.endpoint, row.repo, row.outcome, row.reason, row.expires_at, row.ip)
+      .bind(
+        nowMs,
+        row.caller_id,
+        row.endpoint,
+        row.repo,
+        row.outcome,
+        row.reason,
+        row.expires_at,
+        row.ip,
+        row.branch ?? null,
+        row.files ?? null,
+        row.paths ?? null,
+      )
       .run();
     if (random() < PRUNE_CHANCE) {
       await env.AUDIT.prepare("DELETE FROM audit WHERE ts < ?").bind(nowMs - RETENTION_MS).run();
@@ -69,22 +82,22 @@ async function audit(env, row, nowMs, random) {
 
 // requestsLastHour: the caller's audited requests in the last hour. Throws if
 // D1 fails; the caller then refuses (fail closed), since the limit needs it.
-async function requestsLastHour(env, callerId, nowMs) {
+async function requestsLastHour(env, callerId, endpoint, nowMs) {
   const r = await env.AUDIT.prepare(
-    "SELECT COUNT(*) AS n FROM audit WHERE caller_id = ? AND endpoint = 'token' AND ts > ?",
+    "SELECT COUNT(*) AS n FROM audit WHERE caller_id = ? AND endpoint = ? AND ts > ?",
   )
-    .bind(callerId, nowMs - 3600 * 1000)
+    .bind(callerId, endpoint, nowMs - 3600 * 1000)
     .first();
   return Number(r?.n ?? 0);
 }
 
 // readJson: parse a JSON object body of at most MAX_BODY bytes, reading no
 // more than that from the stream.
-async function readJson(request) {
+export async function readJson(request, max = MAX_BODY) {
   // A declared length is checked first; a body without one (chunked) is
   // capped by the stream loop below.
   const len = Number(request.headers.get("Content-Length") || "0");
-  if (len > MAX_BODY) return { error: [413, "too_large"] };
+  if (len > max) return { error: [413, "too_large"] };
   const chunks = [];
   let size = 0;
   if (request.body) {
@@ -93,7 +106,7 @@ async function readJson(request) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > MAX_BODY) {
+      if (size > max) {
         await reader.cancel();
         return { error: [413, "too_large"] };
       }
@@ -129,54 +142,87 @@ async function whoIs(env, deps, userToken) {
   return String(r.data.user.id);
 }
 
-async function token(request, env, deps, row) {
-  const nowMs = deps.now();
-  if (env.BROKER_ENABLED !== "true") return [503, { error: "disabled" }];
+// identify: who is calling, before anything else is read or stored. Returns
+// { callerId } or { error: [status, body] }. Sets row.caller_id once the
+// request will be audited (not for throttled callers).
+async function identify(request, env, deps, row, endpoint, nowMs) {
+  if (env.BROKER_ENABLED !== "true") return { error: [503, { error: "disabled" }] };
   // Without the audit database there is no log and no rate limit: refuse.
-  if (!env.AUDIT) return [503, { error: "audit_unavailable" }];
-
-  // Who is calling, before anything else is read or stored.
+  if (!env.AUDIT) return { error: [503, { error: "audit_unavailable" }] };
   const callerToken = bearer(request);
-  if (!callerToken) return [401, { error: "no_token" }];
+  if (!callerToken) return { error: [401, { error: "no_token" }] };
   const callerId = await whoIs(env, deps, callerToken);
-  if (!callerId) return [401, { error: "bad_token" }];
+  if (!callerId) return { error: [401, { error: "bad_token" }] };
   const isOwner = callerId === String(env.OWNER_ID);
   let used;
   try {
-    used = await requestsLastHour(env, callerId, nowMs);
+    used = await requestsLastHour(env, callerId, endpoint, nowMs);
   } catch {
     console.error("audit read failed");
-    return [503, { error: "audit_unavailable" }];
+    return { error: [503, { error: "audit_unavailable" }] };
   }
-  if (used >= (isOwner ? RATE_PER_HOUR : NON_OWNER_PER_HOUR)) return [429, { error: "rate_limited" }];
+  if (used >= (isOwner ? RATE_PER_HOUR[endpoint] : NON_OWNER_PER_HOUR)) {
+    return { error: [429, { error: "rate_limited" }] };
+  }
   // From here on every answer is audited.
   row.caller_id = callerId;
-  if (!isOwner) return [403, { error: "not_owner" }];
+  if (!isOwner) return { error: [403, { error: "not_owner" }] };
+  return { callerId };
+}
 
-  const body = await readJson(request);
-  if (body.error) return [body.error[0], { error: body.error[1] }];
-  const full = body.value.repo;
+// checkRepo: "owner/name" of the configured owner. Returns { name } or
+// { error }. Sets row.repo once the name is well formed.
+export function checkRepo(env, full, row) {
   const m = typeof full === "string" ? REPO_RE.exec(full) : null;
-  if (!m || m[2] === "." || m[2] === "..") return [400, { error: "bad_repo" }];
+  if (!m || m[2] === "." || m[2] === "..") return { error: [400, { error: "bad_repo" }] };
   row.repo = full;
-  if (m[1].toLowerCase() !== String(env.OWNER_LOGIN).toLowerCase()) return [400, { error: "wrong_owner" }];
-  const repo = m[2];
+  if (m[1].toLowerCase() !== String(env.OWNER_LOGIN).toLowerCase()) {
+    return { error: [400, { error: "wrong_owner" }] };
+  }
+  return { name: m[2] };
+}
 
+// mintToken: a 1-hour installation token of the bot App for one repo.
+// Returns { token, expires_at } or { error }.
+export async function mintToken(env, deps, repo, nowMs) {
   const jwt = await appJwt(env.APP_ID, env.APP_KEY_PKCS8, Math.floor(nowMs / 1000));
   const inst = await gh(deps.fetch, `/repos/${env.OWNER_LOGIN}/${repo}/installation`, {
     auth: `Bearer ${jwt}`,
   });
-  if (inst.status === 404) return [404, { error: "not_installed" }];
-  if (inst.status !== 200 || !inst.data?.id) return [502, { error: "github_error" }];
-
+  if (inst.status === 404) return { error: [404, { error: "not_installed" }] };
+  if (inst.status !== 200 || !inst.data?.id) return { error: [502, { error: "github_error" }] };
   const tok = await gh(deps.fetch, `/app/installations/${inst.data.id}/access_tokens`, {
     auth: `Bearer ${jwt}`,
     method: "POST",
     body: { repositories: [repo], permissions: PERMISSIONS },
   });
-  if (tok.status !== 201 || !tok.data?.token) return [502, { error: "github_error" }];
-  row.expires_at = tok.data.expires_at ?? null;
-  return [200, { token: tok.data.token, expires_at: tok.data.expires_at }];
+  if (tok.status !== 201 || !tok.data?.token) return { error: [502, { error: "github_error" }] };
+  return { token: tok.data.token, expires_at: tok.data.expires_at ?? null };
+}
+
+async function token(request, env, deps, row) {
+  const nowMs = deps.now();
+  const who = await identify(request, env, deps, row, "token", nowMs);
+  if (who.error) return who.error;
+
+  const body = await readJson(request);
+  if (body.error) return [body.error[0], { error: body.error[1] }];
+  const repo = checkRepo(env, body.value.repo, row);
+  if (repo.error) return repo.error;
+
+  const minted = await mintToken(env, deps, repo.name, nowMs);
+  if (minted.error) return minted.error;
+  row.expires_at = minted.expires_at;
+  return [200, { token: minted.token, expires_at: minted.expires_at }];
+}
+
+async function relayRoute(request, env, deps, row) {
+  const nowMs = deps.now();
+  const who = await identify(request, env, deps, row, "relay", nowMs);
+  if (who.error) return who.error;
+  const body = await readJson(request, RELAY_MAX_BODY);
+  if (body.error) return [body.error[0], { error: body.error[1] }];
+  return relay(env, deps, body.value, row, nowMs, { checkRepo, mintToken });
 }
 
 export async function handle(request, env, deps) {
@@ -186,12 +232,14 @@ export async function handle(request, env, deps) {
     if (request.method !== "GET") return json(405, { error: "method_not_allowed" });
     return json(200, { ok: true, enabled: env.BROKER_ENABLED === "true" });
   }
-  if (url.pathname !== "/token") return json(404, { error: "not_found" });
+  const routes = { "/token": token, "/relay": relayRoute };
+  const route = routes[url.pathname];
+  if (!route) return json(404, { error: "not_found" });
   if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
 
   const row = {
     caller_id: null,
-    endpoint: "token",
+    endpoint: url.pathname.slice(1),
     repo: null,
     outcome: "refused",
     reason: null,
@@ -201,7 +249,7 @@ export async function handle(request, env, deps) {
   let status = 500;
   let out = { error: "internal" };
   try {
-    [status, out] = await token(request, env, deps, row);
+    [status, out] = await route(request, env, deps, row);
   } catch {
     status = 502;
     out = { error: "github_error" };

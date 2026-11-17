@@ -13,6 +13,8 @@ preview_urls = false
 OWNER_LOGIN = "Jomaries777"
 OWNER_ID = "322333432"
 APP_ID = "5766032"
+# The bot App's slug: /relay only moves branches whose head is "<slug>[bot]"'s.
+APP_SLUG = "jomaries777-agent-bot"
 # The login-only App (jomaries777-agent-login). Its client secret is a Worker
 # secret (LOGIN_CLIENT_SECRET): the broker uses it to check that a token was
 # issued by this App, so no other token of the owner's is accepted.
