@@ -93,7 +93,7 @@ Anyone who can start a session on that environment can act as the bot through it
 - **Rotate the App key** (and retire phase 1, spec 0002 C5). From a Codespace on this repo that is signed in (`scripts/bot-login.sh`), with the Cloudflare token loaded:
   1. In the bot App's settings → **Private keys** → **Generate a private key**. A `.pem` file downloads to your device; upload it to the Codespace (drag it into the file explorer) as `~/new.pem`.
   2. Put it in the broker, then delete the file: `openssl pkcs8 -topk8 -nocrypt -in ~/new.pem | $W secret put APP_KEY_PKCS8 && shred -u ~/new.pem` (or `rm`). Delete the download on your device too.
-  3. Update every repo's secrets through the broker: `scripts/bot-secrets.sh Jomaries777/template-repo-ci Jomaries777/sandbox-node-local` (add each project repo).
+  3. Update every repo's secrets through the broker: `scripts/bot-secrets.sh Jomaries777/template-repo-ci Jomaries777/sandbox-node-local` (add each project repo). In a Codespace, its own `GITHUB_TOKEN` can't manage secrets (`github_denied`): sign `gh` in as yourself just for this with `env -u GITHUB_TOKEN gh auth login -h github.com -p https -w`, run `env -u GITHUB_TOKEN scripts/bot-secrets.sh …`, then `env -u GITHUB_TOKEN gh auth logout -h github.com`.
   4. Check: `scripts/bot-token.sh Jomaries777/sandbox-node-local >/dev/null && echo OK`, and rerun a bot workflow (for example a Dependabot PR's automerge job).
   5. In the App settings, **delete the old private key**. Delete the Codespaces secret `BOT_APP_KEY_B64` (github.com/settings/codespaces) and the Mac Keychain item if there is one; `make doctor` warns while the Codespaces secret is still there.
 
