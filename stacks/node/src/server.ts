@@ -27,7 +27,7 @@ export function createServer(): Server {
       return;
     }
 
-    if (req.method === "GET" && pathname === "/healthz") {
+    if (req.method === "GET" && pathname === "/health") {
       sendJson(res, 200, {
         status: "ok",
         version: process.env.APP_VERSION ?? "dev",

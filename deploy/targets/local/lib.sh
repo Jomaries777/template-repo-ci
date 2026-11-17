@@ -93,7 +93,7 @@ stack_dir() {
 }
 
 # start_rev <rev> <build context> <version>: build the image and run it on a
-# free localhost port, then wait up to 60s for /healthz. Prints nothing;
+# free localhost port, then wait up to 60s for /health. Prints nothing;
 # fails if the container never becomes healthy.
 start_rev() {
   local rev="$1" ctx="$2" version="$3" port
@@ -116,7 +116,7 @@ start_rev() {
   [[ "$DRY_RUN" == "1" ]] && return 0
   local i
   for ((i = 0; i < 60; i++)); do
-    curl -fsS -o /dev/null "http://127.0.0.1:$port/healthz" 2>/dev/null && return 0
+    curl -fsS -o /dev/null "http://127.0.0.1:$port/health" 2>/dev/null && return 0
     sleep 1
   done
   echo "local: $rev did not become healthy in 60s" >&2
