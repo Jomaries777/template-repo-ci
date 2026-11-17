@@ -5,6 +5,9 @@ name = "agent-bot-broker"
 main = "src/index.js"
 compatibility_date = "2026-11-01"
 workers_dev = true
+# No per-version preview URLs: an old version must not stay reachable after
+# the kill switch.
+preview_urls = false
 
 [vars]
 OWNER_LOGIN = "Jomaries777"
@@ -20,5 +23,5 @@ BROKER_ENABLED = "true"
 [[d1_databases]]
 binding = "AUDIT"
 database_name = "agent-bot-audit"
-# Replace with the id printed by `wrangler d1 create agent-bot-audit`.
-database_id = "SET_AT_SETUP"
+# Created 2026-11-17 with `wrangler d1 create agent-bot-audit` (region APAC).
+database_id = "263757a0-cd53-412d-8381-a59cb8f0b057"

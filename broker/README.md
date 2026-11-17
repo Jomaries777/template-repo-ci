@@ -31,7 +31,7 @@ Do this once from a **Codespace on `template-repo-ci`**, which already has the `
    W="npx -y wrangler@4.163.0"
    ```
 
-3. **Create the audit database:** run `$W d1 create agent-bot-audit` and copy the printed `database_id` into `wrangler.toml`, replacing `SET_AT_SETUP` (until you do, `wrangler deploy` fails with an error about the D1 binding). Then create the table with `$W d1 execute agent-bot-audit --remote --file schema.sql`.
+3. **Create the audit database:** run `$W d1 create agent-bot-audit` and copy the printed `database_id` into `wrangler.toml` (the template's own broker already has one; a new owner replaces it). Keep `preview_urls = false`: per-version preview URLs would let an old version answer after the kill switch. If wrangler offers to add the binding itself, answer no: `wrangler.toml` already has it as `AUDIT`. Then create the table with `$W d1 execute agent-bot-audit --remote --file schema.sql`.
 4. **Store the App key as a secret.** WebCrypto needs PKCS#8, so the key is converted on the way, and it is never written to disk:
 
    ```bash
@@ -44,7 +44,7 @@ Do this once from a **Codespace on `template-repo-ci`**, which already has the `
    $W secret put LOGIN_CLIENT_SECRET
    ```
 
-6. **Deploy:** `$W deploy`. It prints the URL, `https://agent-bot-broker.<your-subdomain>.workers.dev`. Check it with `curl -s <url>/healthz`, which should give `{"ok":true,"enabled":true}`.
+6. **Deploy:** `$W deploy`. It prints the URL, `https://agent-bot-broker.<your-subdomain>.workers.dev`. Check it with `curl -s <url>/healthz`, which should give `{"ok":true,"enabled":true}`. The subdomain comes from your Cloudflare account and can be changed under **Workers & Pages → Account details → Subdomain**; the URL is not kept in the repo, since each device saves it when it signs in.
 
 ## Use it from any device
 
