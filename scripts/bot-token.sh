@@ -63,7 +63,15 @@ if [[ -n "$broker_url" && -s "$config_dir/identity" ]]; then
 fi
 
 # --- 2 and 3: sign locally with the App key
-app_id="${BOT_APP_ID:-$(gh variable get BOT_APP_ID --repo "$repo")}"
+# The App ID: BOT_APP_ID, else the repo variable. A Codespace's own token
+# can't read Actions variables (HTTP 403), so there it comes from a
+# Codespaces secret named BOT_APP_ID (not secret, but that sets the env).
+app_id="${BOT_APP_ID:-}"
+if [[ -z "$app_id" ]]; then
+  app_id="$(gh variable get BOT_APP_ID --repo "$repo" 2>/dev/null)" ||
+    die "can't read the bot App ID (repo variable BOT_APP_ID of $repo). Set BOT_APP_ID; in a Codespace add the Codespaces secret BOT_APP_ID (github.com/settings/codespaces) with access to $repo, then restart the Codespace"
+fi
+[[ "$app_id" =~ ^[0-9]+$ ]] || die "the bot App ID must be a number, got: ${app_id:-<empty>}"
 
 # key_b64: print the base64 App key from the first source that applies.
 key_b64() {
