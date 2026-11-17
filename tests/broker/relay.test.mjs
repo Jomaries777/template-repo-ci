@@ -324,6 +324,7 @@ test("text with NUL bytes goes through a blob", async () => {
 
 test("/relay/ (trailing slash) is the same endpoint, for path-limited secrets", async () => {
   const { gh } = repo();
-  const { res, body } = await call(req(payload(), OWNER_CRED, { path: "/relay/" }), env(), gh);
+  const { res, body, e } = await call(req(payload(), OWNER_CRED, { path: "/relay/" }), env(), gh);
   assert.equal(res.status, 200, JSON.stringify(body));
+  assert.equal(e.AUDIT.rows.at(-1).endpoint, "relay", "same audit row and hourly limit as /relay");
 });
