@@ -117,6 +117,15 @@ bot_sha="$(git -C "$tmp/work" rev-parse HEAD)"
 relay
 if [[ $rc == 0 && "$(payload .parent)" == "$bot_sha" && "$(payload '[.files[].path]|join(",")')" == b.txt ]]; then pass "existing branch: parent is the bot head, one file"; else fail "existing branch (rc $rc, err: $err)"; fi
 
+# 2b. Non-ASCII, spaces and glob characters in names arrive unquoted.
+(cd "$tmp/work" && printf 'c\n' >"café menu [v1].txt" && git add . && git commit -qm "feat: menu")
+relay
+if [[ $rc == 0 && "$(payload '.files[0].path')" == "café menu [v1].txt" && "$(payload '.files[0].content_b64' | base64 -d)" == c ]]; then
+  pass "non-ASCII path sent as is"
+else
+  fail "non-ASCII path sent as is (rc $rc, err: $err, path $(payload '.files[0].path'))"
+fi
+
 # 3. Identity on a signed-in device goes in a header file, never in the args.
 ident="$(printf 'ident-%s' "$RANDOM$RANDOM")"
 printf '%s\n' "$ident" >"$tmp/cfg/identity"

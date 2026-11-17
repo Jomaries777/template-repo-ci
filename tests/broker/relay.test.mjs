@@ -9,6 +9,7 @@ const R = "https://api.github.com/repos/Jomaries777/sandbox-node-local";
 const MAIN = "a".repeat(40);
 const BOT_HEAD = "b".repeat(40);
 const OWNER_HEAD = "c".repeat(40);
+const SPOOF_HEAD = "f".repeat(40);
 const BOT = "jomaries777-agent-bot[bot]";
 const b64 = (s) => Buffer.from(s).toString("base64");
 
@@ -20,6 +21,9 @@ function repo({ branches = {}, failRef, openPr = false } = {}) {
     [MAIN]: { login: "Jomaries777", tree: "t-main" },
     [BOT_HEAD]: { login: BOT, tree: "t-bot" },
     [OWNER_HEAD]: { login: "Jomaries777", tree: "t-owner" },
+    // Pushed by someone with the bot's email: the login matches, but GitHub
+    // didn't verify it.
+    [SPOOF_HEAD]: { login: BOT, tree: "t-spoof", verified: false },
   };
   let blobN = 0;
   const routes = (url, init, reply) => {
@@ -35,7 +39,11 @@ function repo({ branches = {}, failRef, openPr = false } = {}) {
     if (method === "GET" && (m = /^\/commits\/([0-9a-f]{40})$/.exec(path))) {
       const c = commits[m[1]];
       if (!c) return reply(404, {});
-      return reply(200, { author: { login: c.login }, committer: { login: c.login }, commit: { tree: { sha: c.tree } } });
+      return reply(200, {
+        author: { login: c.login },
+        committer: { login: c.login },
+        commit: { tree: { sha: c.tree }, verification: { verified: c.verified ?? c.login === BOT } },
+      });
     }
     if (method === "POST" && path === "/git/blobs") return reply(201, { sha: `blob${++blobN}` });
     if (method === "POST" && path === "/git/trees") return reply(201, { sha: "t-new" });
@@ -285,4 +293,21 @@ test("a tree GitHub rejects is a clear 400, and nothing moves", async () => {
   assert.equal(res.status, 400);
   assert.equal(body.error, "tree_rejected");
   assert.equal(refs["test/relay-check"], undefined);
+});
+
+test("a head that only claims to be the bot's (unverified) is refused", async () => {
+  const { gh, refs } = repo({ branches: { "test/relay-check": SPOOF_HEAD } });
+  const { res, body } = await call(relayReq(payload({ parent: SPOOF_HEAD })), env(), gh);
+  assert.equal(res.status, 409);
+  assert.equal(body.error, "not_bot_branch");
+  assert.equal(refs["test/relay-check"], SPOOF_HEAD);
+});
+
+test("a leading byte-order mark is kept in text files", async () => {
+  const { gh } = repo();
+  const bom = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("x\n")]).toString("base64");
+  const { res } = await call(relayReq(payload({ files: [{ path: "bom.txt", content_b64: bom }] })), env(), gh);
+  assert.equal(res.status, 200);
+  const entry = bodyOf(gh, "POST", "/git/trees").tree[0];
+  assert.equal(entry.content, "\ufeffx\n");
 });

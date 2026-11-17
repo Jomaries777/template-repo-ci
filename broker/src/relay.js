@@ -13,6 +13,8 @@ const MAX_FILES = 100;
 const MAX_BLOBS = 10;
 const MAX_PATHS_AUDIT = 2000; // characters of the comma-joined paths
 const BRANCH_RE = /^(feat|fix|docs|chore|test|ci)\/[a-z0-9._/-]{1,80}$/;
+// The base is only read (the new branch starts from it), so any plain ref
+// name will do.
 const BASE_RE = /^[A-Za-z0-9._/-]{1,100}$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const MODES = new Set(["100644", "100755"]);
@@ -97,7 +99,8 @@ function validate(p) {
     if (bytes === null) return { error: err(400, "bad_content") };
     let text = null;
     try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      // ignoreBOM keeps a leading byte-order mark, so the commit matches the file.
+      text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
     } catch {
       text = null;
     }
@@ -154,8 +157,14 @@ export async function relay(env, deps, p, row, nowMs, { checkRepo, mintToken }) 
   }
   const pc = await call(`/commits/${parent}`);
   if (pc.status !== 200 || !pc.data?.commit?.tree?.sha) return err(502, "github_error");
-  // The relay never moves someone else's branch.
-  if (exists && (pc.data.author?.login !== bot || pc.data.committer?.login !== bot)) {
+  // The relay never moves someone else's branch. The logins come from the
+  // commit's email, which anyone who can push could fake; GitHub verifies a
+  // commit the App made through the API, so require that too.
+  const botHead =
+    pc.data.author?.login === bot &&
+    pc.data.committer?.login === bot &&
+    pc.data.commit?.verification?.verified === true;
+  if (exists && !botHead) {
     return err(409, "not_bot_branch");
   }
 

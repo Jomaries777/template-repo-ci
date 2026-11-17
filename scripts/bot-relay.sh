@@ -74,7 +74,9 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 : >"$work/files.jsonl"
-while IFS=$'\t' read -r status path; do
+# -z: paths come raw (no quoting of non-ASCII, tabs or quotes), NUL-separated.
+while IFS= read -r -d '' status && IFS= read -r -d '' path; do
+  [[ "$path" != *$'\n'* && "$path" != *$'\t'* ]] || die "a path with a tab or newline can't be relayed"
   lower="$(tr '[:upper:]' '[:lower:]' <<<"$path")"
   if [[ "$lower" == .github/workflows || "$lower" == .github/workflows/* || "/$lower/" == */.git/* || "/$path/" == */../* || "$path" == /* ]]; then
     die "$path can't be relayed (workflows, .git and .. paths are refused; the bot has no workflows permission)"
@@ -83,7 +85,7 @@ while IFS=$'\t' read -r status path; do
     jq -nc --arg p "$path" '{path: $p, delete: true}' >>"$work/files.jsonl"
     continue
   fi
-  mode="$(git ls-tree HEAD -- "$path" | cut -d' ' -f1)"
+  mode="$(git --literal-pathspecs ls-tree HEAD -- "$path" | cut -d' ' -f1)"
   case "$mode" in
     100644 | 100755) ;;
     *) die "$path has mode $mode; the relay only takes regular files (100644, 100755)" ;;
@@ -91,7 +93,7 @@ while IFS=$'\t' read -r status path; do
   git cat-file blob "HEAD:$path" | base64 | tr -d '\n' >"$work/content"
   jq -nc --arg p "$path" --arg m "$mode" --rawfile c "$work/content" \
     '{path: $p, mode: $m, content_b64: $c}' >>"$work/files.jsonl"
-done < <(git diff --name-status --no-renames "$parent" HEAD)
+done < <(git diff -z --name-status --no-renames "$parent" HEAD)
 
 # owner/name: the last two parts of the origin URL (https, ssh or a proxy).
 origin_url="$(git remote get-url origin)"
