@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/github-pages/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# cleanup <env>: nothing to prune. The gh-pages history is the deploy log,
+# and Pages keeps no other versions.
+init_common
+env_check "${1:-}"

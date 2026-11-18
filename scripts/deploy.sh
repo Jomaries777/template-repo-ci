@@ -4,13 +4,14 @@
 # and delegates to deploy/targets/<target>/<verb>.
 #
 # Usage: scripts/deploy.sh <verb> [args...]
-# Verbs: bootstrap publish current deploy-dark promote revert url discard cleanup
+# Verbs: bootstrap publish current deploy-dark preview promote revert url discard cleanup
+# (`preview` only for adapters with dark_deploy: false, C9)
 set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
 usage: scripts/deploy.sh <verb> [args...]
-verbs: bootstrap publish current deploy-dark promote revert url discard cleanup
+verbs: bootstrap publish current deploy-dark preview promote revert url discard cleanup
 env:   DEPLOY_TARGET (overrides deploy.yml target:)
        DEPLOY_DRY_RUN=1 (print commands instead of executing)
        DEPLOY_CONFIG (config file, default: deploy.yml at the repo root)
@@ -30,7 +31,7 @@ case "$verb" in
     usage 2>&1
     exit 0
     ;;
-  bootstrap | publish | current | deploy-dark | promote | revert | url | discard | cleanup) ;;
+  bootstrap | publish | current | deploy-dark | preview | promote | revert | url | discard | cleanup) ;;
   *)
     echo "deploy.sh: unknown verb: $verb" >&2
     usage

@@ -280,7 +280,7 @@ The workflow knows nothing about any particular host. It calls `scripts/deploy.s
 6. **Auto-revert** on failure: `deploy.sh revert <env> $PREV`. Then re-run the live test to confirm the revert, and fail the job.
 7. `deploy.sh cleanup <env>`: removes candidate tags and prunes old versions.
 
-If an adapter declares `dark_deploy: false` (e.g. GitHub Pages), steps 2–3 become a smoke test against the built artifact served locally inside the job, and step 4 is the deploy itself. Steps 5–7 are unchanged (C9).
+If an adapter declares `dark_deploy: false` (e.g. GitHub Pages), steps 2–3 become a smoke test against the built artifact served locally inside the job (`deploy.sh preview <env> <sha>` prints its local URL; `discard` stops it), and step 4 is the deploy itself. Steps 5–7 are unchanged (C9).
 
 The owner's production approval covers the automatic revert (intent §6). Rolling forward again needs a new PR.
 
@@ -318,6 +318,7 @@ To change the target later, edit `deploy.yml` and run `make bootstrap-target`, w
 | `revert <env> <version>` | Restore that version within NFR-8 (2 minutes) |
 | `url <env>` | Print the live URL |
 | `discard <env>` / `cleanup <env>` | Remove the candidate / prune old versions and artifacts |
+| `preview <env> <sha>` | Only with `dark_deploy: false`: serve the artifact on localhost inside the job and print its URL, for the pre-traffic test (C9) |
 
 Every verb supports `DEPLOY_DRY_RUN=1`, which prints the commands instead of running them. The template self-test runs every adapter in dry-run mode.
 
@@ -327,7 +328,7 @@ Every verb supports `DEPLOY_DRY_RUN=1`, which prints the commands instead of run
 |---|---|---|---|---|---|---|
 | **`cloud-run`** (default) | Containers, full backends, APIs | Image in Artifact Registry | `gcloud run deploy --no-traffic --tag c<sha>` → `update-traffic --to-latest` → `update-traffic --to-revisions $PREV=100` | Workload Identity Federation (OIDC, no keys) | Request-based billing, `min-instances 0` | `max-instances 2`; GCP budget $10 with alerts at $1/$5/$10 |
 | **`cloudflare-workers`** | Edge APIs, web apps, light backends | Worker bundle | `wrangler versions upload` (preview URL) → `wrangler versions deploy <id>@100%` → `wrangler rollback <prev>` ⚠ verify | Least-privilege API token (Workers edit, one account) stored as a GitHub **Environment** secret (C10) | Workers Free plan; no card on file ⚠ verify how over-quota requests are handled | Free plan only. Upgrading to paid is a new intent |
-| **`github-pages`** | Static sites, docs | Static directory (Pages artifact) | `dark_deploy: false`: smoke-test the built site in the job → `actions/deploy-pages` → revert redeploys the previous successful run's artifact | `GITHUB_TOKEN` with `pages: write`, `id-token: write` (OIDC) | Free on public repos | n/a |
+| **`github-pages`** | Static sites, docs, and any stack through its `make build-static` export | Static directory (`dist/static`) | `dark_deploy: false`: `preview` serves the export on localhost for the pre-traffic smoke → `promote` commits it to the `gh-pages` branch (fast-forward) and waits for the Pages build → `revert` commits an earlier version's files (amended 2026-11-18, see plan.md Deviations) | The job's `GITHUB_TOKEN` with `contents: write`, `pages: write`; no stored secret | Free on public repos | n/a |
 | **`none`** | Libraries, CLIs, docs-only repos, **this template repo itself** | — | No deploy. The `artifact` job and everything after it are skipped | — | Nothing is provisioned | — |
 
 **`cloud-run` adapter details** (`deploy/targets/cloud-run/bootstrap`, idempotent gcloud, no Terraform):

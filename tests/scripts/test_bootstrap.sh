@@ -50,7 +50,11 @@ check "local-only: exits 0" '[[ $rc == 0 ]] || { echo "$out"; false; }'
 check "keeps only the chosen stack" '[[ "$(ls "$a/stacks")" == node ]]'
 # Every real adapter stays, so `make bootstrap-target` can switch to it later
 # (criterion 11); only test-only adapters (target.yml test_only: true) go.
-check "keeps every real adapter for later switches" '[[ "$(ls "$a/deploy/targets" | tr "\n" " ")" == "cloud-run none " ]]'
+real_adapters=""
+for d in "$src"/deploy/targets/*/; do
+  grep -qx 'test_only: true' "$d/target.yml" 2>/dev/null || real_adapters+="$(basename "$d") "
+done
+check "keeps every real adapter for later switches" '[[ "$(ls "$a/deploy/targets" | tr "\n" " ")" == "$real_adapters" && "$real_adapters" == *"cloud-run "* ]]'
 check "removes test-only adapters" '[[ ! -e "$a/deploy/targets/local" ]]'
 check "deploy.yml names target and stack" 'grep -qx "target: cloud-run" "$a/deploy.yml" && grep -qx "stack: node" "$a/deploy.yml"'
 check "deploy.yml keeps environments and smoke" 'grep -q "dev:        { enabled: true }" "$a/deploy.yml" && grep -q "live_checks: 3" "$a/deploy.yml"'

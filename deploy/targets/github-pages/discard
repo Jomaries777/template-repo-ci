@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/github-pages/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# discard <env> <sha>: stop the local preview, if one is running.
+init_common
+env_check "${1:-}"
+pidfile="$STATE/preview.pid"
+if [[ "$DRY_RUN" == "1" ]]; then
+  run kill "<preview pid>"
+  exit 0
+fi
+if [[ -f "$pidfile" ]]; then
+  kill "$(cat "$pidfile")" 2>/dev/null || true
+  rm -f "$pidfile"
+fi

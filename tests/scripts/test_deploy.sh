@@ -63,6 +63,10 @@ out_is() {
 # --- dispatcher
 dr cloud-run frobnicate
 rc_is "dispatcher: unknown verb exits 64" 64
+# `preview` (C9) is a contract verb, only for adapters without a dark deploy:
+# an adapter that lacks it is a missing verb, not an unknown one.
+dr cloud-run preview production 1234567
+lacks "dispatcher: preview is a known verb" "unknown verb"
 dr nope url dev
 rc_is "dispatcher: unknown target exits 64" 64
 dr '../none' url
@@ -294,6 +298,7 @@ if ((have_local)); then
   start_with_inspect_rc() {
     : >"$tmp/docker.log"
     (
+      # shellcheck disable=SC2030 # local to this subshell on purpose
       export PATH="$tmp/real-bin:$PATH" FAKE_DOCKER_LOG="$tmp/docker.log" FAKE_INSPECT_RC="$1"
       unset DEPLOY_DRY_RUN
       # shellcheck source=deploy/targets/local/lib.sh disable=SC1091
@@ -327,6 +332,75 @@ if [[ -s "$tmp/calls" ]]; then
   fail "dry run never calls a real CLI (called: $(tr '\n' ';' <"$tmp/calls"))"
 else
   pass "dry run never calls a real CLI"
+fi
+
+# --- github-pages (M3, C9): dry run of every verb, then a real promote and
+# revert against a local bare repository with a fake gh.
+# shellcheck disable=SC2031 # $root is the script's own; the subshell above only sources a lib
+if [[ -d "$root/deploy/targets/github-pages" ]]; then
+  for v in "url production" "current production" "publish 1234567" "preview production 1234567" \
+    "discard production 1234567" "promote production 1234567" "revert production abcdef1" "cleanup production" bootstrap; do
+    # shellcheck disable=SC2086 # split on purpose
+    DEPLOY_DRY_RUN=1 GITHUB_REPOSITORY=acme/site dr github-pages $v
+    rc_is "github-pages dry run: $v" 0
+  done
+  DEPLOY_DRY_RUN=1 GITHUB_REPOSITORY=acme/site dr github-pages url dev
+  rc_is "github-pages: dev is refused (one site)" 64
+  DEPLOY_DRY_RUN=1 GITHUB_REPOSITORY=acme/site dr github-pages deploy-dark production 1234567
+  rc_is "github-pages: deploy-dark is refused (C9)" 64
+  DEPLOY_DRY_RUN=1 GITHUB_REPOSITORY=acme/site dr github-pages bootstrap
+  has "github-pages bootstrap: creates gh-pages" "git/refs -f ref=refs/heads/gh-pages"
+  has "github-pages bootstrap: serves Pages from gh-pages" "source\[branch\]=gh-pages"
+  if grep -qx 'dark_deploy: false' "$root/deploy/targets/github-pages/target.yml"; then pass "github-pages: target.yml declares no dark deploy"; else fail "github-pages: target.yml dark_deploy"; fi
+
+  # A throwaway project: the adapter, a fake stack whose build-static writes
+  # the version, and a bare repository standing in for GitHub.
+  gp="$tmp/gp"
+  mkdir -p "$gp/deploy/targets" "$gp/stacks/fake" "$gp/bin"
+  cp -R "$root/deploy/targets/github-pages" "$gp/deploy/targets/"
+  printf 'target: github-pages\nstack: fake\n' >"$gp/deploy.yml"
+  # shellcheck disable=SC2016 # $$APP_VERSION is for make, not this shell
+  printf 'build-static:\n\tmkdir -p dist/static/health\n\techo "v=$$APP_VERSION" >dist/static/index.html\n\techo ok >dist/static/health/index.html\n' >"$gp/stacks/fake/Makefile"
+  git -C "$gp" init -q && git -C "$gp" add -A && git -C "$gp" -c user.email=t@t -c user.name=t commit -qm src
+  src_sha="$(git -C "$gp" rev-parse HEAD)"
+  git init -q --bare "$tmp/gp.git"
+  seed="$tmp/gp-seed"
+  git init -q "$seed" && touch "$seed/.nojekyll" && git -C "$seed" add -A &&
+    git -C "$seed" -c user.email=t@t -c user.name=t commit -qm seed && git -C "$seed" push -q "$tmp/gp.git" HEAD:refs/heads/gh-pages
+  first="$(git -C "$tmp/gp.git" rev-parse gh-pages)"
+  cat >"$gp/bin/gh" <<EOF
+#!/usr/bin/env bash
+echo "gh \$*" >>"$tmp/gp.calls"
+head="\$(git -C "$tmp/gp.git" rev-parse gh-pages)"
+case "\$*" in
+  *"pages/builds/latest"*) printf '{"status":"built","commit":"%s"}\n' "\$head" ;;
+  *"branches/gh-pages"*) echo "\$head" ;;
+esac
+EOF
+  chmod +x "$gp/bin/gh"
+  gpdeploy() { # gpdeploy <verb> <args...>: a verb of the copied adapter, for real
+    rc=0
+    out="$(cd "$gp" && PATH="$gp/bin:$PATH" DEPLOY_DRY_RUN=0 DEPLOY_CONFIG="$gp/deploy.yml" GITHUB_REPOSITORY=acme/site PAGES_REMOTE="file://$tmp/gp.git" \
+      RUNNER_TEMP="$tmp/gp-run" PAGES_WAIT_SECONDS=5 "$gp/deploy/targets/github-pages/$1" "${@:2}" 2>"$tmp/err")" || rc=$?
+    err="$(cat "$tmp/err")"
+  }
+  mkdir -p "$tmp/gp-run"
+  gpdeploy current production
+  out_is "github-pages: current is the gh-pages commit" "$first"
+  gpdeploy promote production "$src_sha"
+  rc_is "github-pages: promote exits 0" 0
+  deployed="$(git -C "$tmp/gp.git" rev-parse gh-pages)"
+  if [[ "$(git -C "$tmp/gp.git" show gh-pages:index.html)" == "v=$src_sha" ]]; then pass "github-pages: promote publishes the export of the deployed commit"; else fail "github-pages: promoted index.html"; fi
+  if git -C "$tmp/gp.git" cat-file -e gh-pages:.nojekyll 2>/dev/null; then pass "github-pages: keeps .nojekyll"; else fail "github-pages: .nojekyll"; fi
+  if [[ "$(git -C "$tmp/gp.git" rev-parse "$deployed~1")" == "$first" ]]; then pass "github-pages: promote is a fast-forward (no force push)"; else fail "github-pages: promote history"; fi
+  if grep -q "pages/builds" "$tmp/gp.calls"; then pass "github-pages: promote asks Pages to build and waits"; else fail "github-pages: no Pages build request"; fi
+  gpdeploy revert production "$first"
+  rc_is "github-pages: revert exits 0" 0
+  if ! git -C "$tmp/gp.git" cat-file -e gh-pages:index.html 2>/dev/null; then pass "github-pages: revert restores the earlier files"; else fail "github-pages: revert left index.html"; fi
+  if [[ "$(git -C "$tmp/gp.git" rev-parse gh-pages~1)" == "$deployed" ]]; then pass "github-pages: revert is a new commit (history kept)"; else fail "github-pages: revert history"; fi
+  git -C "$gp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m other
+  gpdeploy promote production "$src_sha"
+  rc_is "github-pages: refuses to export a commit other than the checkout" 1
 fi
 
 [[ "$failures" -eq 0 ]] || {

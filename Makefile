@@ -5,7 +5,7 @@
 #   make lint [FILE=path]   shellcheck, actionlint, markdownlint (+ stack lint)
 #   make fmt  [FILE=path]   shfmt, skipped if not installed (+ stack fmt)
 #   make test               every executable tests/scripts/test_*.sh (+ stack tests)
-#   make typecheck | build | acceptance | smoke URL=<url>   the stack's targets
+#   make typecheck | build | build-static | acceptance | smoke URL=<url>   the stack's targets
 #   make bootstrap STACK=<stack> TARGET=<target>            set up a new project
 #   make bootstrap-target                                   provision deploy.yml's target (switch)
 #   make doctor                                             read-only setup check
@@ -22,7 +22,7 @@ SHFMT_FLAGS := -i 2 -ci
 # deploy/targets/<target>/ (the adapter verbs).
 SH_FILES = $$( { git ls-files -- '*.sh'; git ls-files -- 'scripts/hooks/*' 'deploy/targets/*/*' | grep -v '/[^/]*\.[^/]*$$' || true; } | sort -u )
 
-.PHONY: help lint fmt test typecheck build acceptance smoke bootstrap bootstrap-target doctor
+.PHONY: help lint fmt test typecheck build build-static acceptance smoke bootstrap bootstrap-target doctor
 
 # stacks/<name> from deploy.yml's `stack:` key; empty in the template itself.
 STACK_DIR := $(shell sed -n 's/^stack:[[:space:]]*\([a-z0-9-]*\).*/stacks\/\1/p' deploy.yml 2>/dev/null)
@@ -95,6 +95,9 @@ typecheck: ## Type-check the stack (n/a before bootstrap)
 
 build: ## Build the deploy artifact (n/a before bootstrap)
 	@$(call stack,build)
+
+build-static: ## Render the GET routes to the stack's dist/static (static targets; n/a before bootstrap)
+	@$(call stack,build-static)
 
 acceptance: ## Acceptance suite (n/a before bootstrap)
 	@$(call stack,acceptance)

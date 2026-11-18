@@ -42,3 +42,12 @@ runs:
     - name: gcloud CLI
       if: inputs.target == 'cloud-run'
       uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+    - name: GitHub Pages (the job's own token)
+      # github-pages pushes the gh-pages branch and asks Pages to build with
+      # the job's GITHUB_TOKEN (contents: write and pages: write in the
+      # calling job). No secret is stored for it.
+      if: inputs.target == 'github-pages'
+      shell: bash
+      env:
+        TOKEN: ${{ github.token }}
+      run: echo "GH_TOKEN=$TOKEN" >>"$GITHUB_ENV"

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/github-pages/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# publish <sha>: check that the stack renders a static export (make
+# build-static). Pages needs no upload: promote builds the export from the
+# same checked-out commit and commits it to gh-pages.
+init_common
+sha_check "${1:-}"
+export_for "$1" >/dev/null

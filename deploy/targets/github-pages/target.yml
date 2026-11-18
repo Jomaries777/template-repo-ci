@@ -1,0 +1,14 @@
+name: github-pages
+artifact: static
+# No dark deploy (C9): release.sh runs the pre-traffic test against the
+# static export served locally (`preview`), then `promote` is the deploy.
+dark_deploy: false
+# One site per repository: production only.
+environments:
+  - production
+auth: github-token
+required_variables: []
+environment_secrets: []
+cli: git, gh, python3
+idle: "$0 when idle because GitHub Pages is free for public repositories"
+cost_cap: {}

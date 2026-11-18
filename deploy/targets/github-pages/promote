@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/github-pages/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# promote <env> <sha>: commit the static export of <sha> to gh-pages
+# (fast-forward) and wait until Pages has published it.
+init_common
+env_check "${1:-}"
+sha_check "${2:-}"
+dir="$(export_for "$2")"
+site="$(checkout_branch)"
+commit="$(commit_and_push "$site" "$dir" "deploy $2")"
+wait_live "$commit"
+echo "github-pages: ${commit:0:7} (source ${2:0:7}) is live" >&2
