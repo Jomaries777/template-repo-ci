@@ -135,9 +135,14 @@ jobs:
     # sets this up (spec §4.9); the first step refuses to deploy without it.
     environment: production
     permissions:
-      contents: read
+      # write: the github-pages target pushes the gh-pages branch with this
+      # job's token (spec §4.11). Other targets don't use it, and the job runs
+      # only main's code after the owner's production approval.
+      contents: write
       actions: read
       id-token: write
+      # github-pages asks Pages to build and reads the build status.
+      pages: write
     steps:
       # GitHub creates a missing environment on first use with no protection,
       # so check before touching production rather than trust the setup.
