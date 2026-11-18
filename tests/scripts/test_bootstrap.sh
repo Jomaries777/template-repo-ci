@@ -48,7 +48,10 @@ rc=0
 out="$(BOOTSTRAP_OWNER=acme "$a/scripts/bootstrap.sh" --stack node --target cloud-run --local-only 2>&1)" || rc=$?
 check "local-only: exits 0" '[[ $rc == 0 ]] || { echo "$out"; false; }'
 check "keeps only the chosen stack" '[[ "$(ls "$a/stacks")" == node ]]'
-check "keeps only the chosen adapter" '[[ "$(ls "$a/deploy/targets")" == cloud-run ]]'
+# Every real adapter stays, so `make bootstrap-target` can switch to it later
+# (criterion 11); only test-only adapters (target.yml test_only: true) go.
+check "keeps every real adapter for later switches" '[[ "$(ls "$a/deploy/targets" | tr "\n" " ")" == "cloud-run none " ]]'
+check "removes test-only adapters" '[[ ! -e "$a/deploy/targets/local" ]]'
 check "deploy.yml names target and stack" 'grep -qx "target: cloud-run" "$a/deploy.yml" && grep -qx "stack: node" "$a/deploy.yml"'
 check "deploy.yml keeps environments and smoke" 'grep -q "dev:        { enabled: true }" "$a/deploy.yml" && grep -q "live_checks: 3" "$a/deploy.yml"'
 check "removes the template self-test" '[[ ! -e "$a/.github/workflows/template-selftest.yml" ]]'
@@ -147,6 +150,8 @@ check "rerun: changes no file" '[[ "$before" == "$after" ]]'
 rc=0
 "$a/scripts/bootstrap.sh" --stack node --target none --local-only >/dev/null 2>&1 || rc=$?
 check "rerun with another target exits 64" '[[ $rc == 64 ]]'
+out="$("$a/scripts/bootstrap.sh" --stack node --target none --local-only 2>&1 || true)"
+check "rerun with another target points to make bootstrap-target" 'grep -q "make bootstrap-target" <<<"$out"'
 
 # --- argument errors (fresh copy)
 b="$tmp/b"
@@ -171,7 +176,8 @@ list_after="$(cd "$c" && find . | sort)"
 check "dry run: exits 0" '[[ $rc == 0 ]] || { echo "$out" | tail -5; false; }'
 check "dry run: changes no file" '[[ "$list_before" == "$list_after" ]]'
 has() { if grep -qF -- "$2" <<<"$out"; then pass "$1"; else fail "$1 (missing: $2)"; fi; }
-has "dry run: deletes the unused adapter" "DRY-RUN: rm -rf deploy/targets/none"
+has "dry run: deletes the test-only adapter" "DRY-RUN: rm -rf deploy/targets/local"
+if grep -qF "DRY-RUN: rm -rf deploy/targets/none" <<<"$out"; then fail "dry run: keeps the real adapters"; else pass "dry run: keeps the real adapters"; fi
 has "dry run: pushes to main before the ruleset exists" "DRY-RUN: git push origin HEAD:main"
 has "dry run: applies repo settings" "DRY-RUN: gh repo edit acme/hello"
 has "dry run: creates dev" "DRY-RUN: gh api -X PUT repos/acme/hello/environments/dev"

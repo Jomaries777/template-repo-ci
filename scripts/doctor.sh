@@ -177,7 +177,7 @@ else
   # Every repo variable the adapter's target.yml requires.
   while read -r var; do
     [[ -n "$var" ]] || continue
-    expect "variable: $var ($target)" "DEPLOY_TARGET=$target scripts/deploy.sh bootstrap" has_name "$variables" variables "$var"
+    expect "variable: $var ($target)" "make bootstrap-target" has_name "$variables" variables "$var"
   done < <(sed -n '/^required_variables:/,/^[^[:space:]-]/s/^[[:space:]]*-[[:space:]]*\([A-Z0-9_]*\).*/\1/p' \
     "$root/deploy/targets/$target/target.yml")
   if [[ "$target" == cloud-run ]]; then
@@ -190,7 +190,7 @@ else
         skip "cloud-run: services exist" "GCP_PROJECT_ID or APP_NAME is not set (see above)"
       else
         for svc in "$app-dev" "$app-prod"; do
-          expect "cloud-run: $svc exists" "DEPLOY_TARGET=cloud-run scripts/deploy.sh bootstrap" \
+          expect "cloud-run: $svc exists" "make bootstrap-target" \
             quiet gcloud run services describe "$svc" --project "$project" --region "${region:-us-central1}" --format 'value(metadata.name)'
         done
       fi
