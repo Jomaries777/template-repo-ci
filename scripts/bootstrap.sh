@@ -186,7 +186,18 @@ merge; the owner approves.
   # the entries to add to the `updates:` list.
   dependabot_fragment="stacks/$stack/dependabot-updates.yml"
   [[ -f "$dependabot_fragment" ]] || die "$dependabot_fragment is missing; every stack ships its Dependabot updates"
+  # CodeQL scans the stack's language too (pr.yml's codeql matrix starts with
+  # the workflows only): add the stack's entry after the actions one.
+  case "$stack" in
+    node) codeql_language=javascript-typescript codeql_build=none ;;
+    python) codeql_language=python codeql_build=none ;;
+    go) codeql_language=go codeql_build=autobuild ;;
+    *) codeql_language="" codeql_build="" ;;
+  esac
   if ((dry_run)); then
+    if [[ -n "$codeql_language" ]]; then
+      echo "DRY-RUN: add codeql language $codeql_language (build-mode $codeql_build) to .github/workflows/pr.yml"
+    fi
     echo "DRY-RUN: write deploy.yml (target: $target, stack: $stack)"
     echo "DRY-RUN: write .github/CODEOWNERS (* @$owner)"
     echo "DRY-RUN: write README.md (project stub)"
@@ -197,6 +208,23 @@ merge; the owner approves.
     printf '%s' "$readme" >README.md
     cat "$dependabot_fragment" >>.github/dependabot.yml
     rm -f "$dependabot_fragment"
+    if [[ -n "$codeql_language" ]] && ! grep -qE "^[[:space:]]+- language: $codeql_language\$" .github/workflows/pr.yml; then
+      # Insert after the "- language: actions" item and its build-mode line,
+      # with the same indentation; fail if pr.yml no longer has that item.
+      awk -v lang="$codeql_language" -v mode="$codeql_build" '
+        { print }
+        # Only the line right after the actions item may be its build-mode.
+        pending == 2 { pending = 0 }
+        pending == 1 && /^[[:space:]]+build-mode:/ {
+          print indent "- language: " lang; print indent "  build-mode: " mode; pending = 0; done = 1
+        }
+        pending == 1 { pending = 2 }
+        /^[[:space:]]+- language: actions$/ { indent = $0; sub(/-.*/, "", indent); pending = 1; next }
+        END { if (!done) exit 1 }
+      ' .github/workflows/pr.yml >.github/workflows/pr.yml.new ||
+        die "pr.yml has no codeql '- language: actions' entry to add $codeql_language after"
+      mv .github/workflows/pr.yml.new .github/workflows/pr.yml
+    fi
   fi
 fi
 
