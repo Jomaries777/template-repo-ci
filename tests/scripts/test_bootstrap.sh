@@ -85,6 +85,8 @@ check "go: keeps only the go stack" '[[ "$(ls "$gop/stacks")" == go ]]'
 check "go: deploy.yml names the stack" 'grep -qx "stack: go" "$gop/deploy.yml"'
 check "go: README stub names the stack" 'grep -q "Stack: \`go\`" "$gop/README.md"'
 check "go: dependabot adds gomod for the stack" 'grep -q "package-ecosystem: gomod" "$gop/.github/dependabot.yml" && grep -q "directory: /stacks/go" "$gop/.github/dependabot.yml"'
+check "go: dependabot adds the stack's Docker image" 'grep -q "package-ecosystem: docker" "$gop/.github/dependabot.yml"'
+check "go: the stack fragment is removed" '[[ ! -e "$gop/stacks/go/dependabot-updates.yml" ]]'
 check "go: the root Makefile delegates to stacks/go" '[[ "$(make -s -C "$gop" -p -n help 2>/dev/null | sed -n "s/^STACK_DIR := //p" | head -n 1)" == stacks/go ]]'
 check "go: ships the make targets the pipeline calls" '( for t in lint typecheck test build build-static acceptance smoke; do grep -q "^$t:" "$gop/stacks/go/Makefile" || { echo "missing $t"; exit 1; }; done )'
 
