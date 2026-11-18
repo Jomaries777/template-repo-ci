@@ -351,6 +351,31 @@ if [[ -d "$root/deploy/targets/github-pages" ]]; then
   DEPLOY_DRY_RUN=1 GITHUB_REPOSITORY=acme/site dr github-pages bootstrap
   has "github-pages bootstrap: creates gh-pages" "git/refs -f ref=refs/heads/gh-pages"
   has "github-pages bootstrap: serves Pages from gh-pages" "source\[branch\]=gh-pages"
+  # Creating gh-pages makes GitHub turn Pages on by itself a moment later, so
+  # the "is Pages on?" check can say no and the POST then answers 409.
+  # Bootstrap must take that as "already on" and set the source with PUT.
+  race="$tmp/race"
+  mkdir -p "$race"
+  cat >"$race/gh" <<EOF
+#!/usr/bin/env bash
+echo "gh \$*" >>"$race/calls"
+case "\$*" in
+  "auth status"*) exit 0 ;;
+  *"git/trees"* | *"git/commits"*) echo 4444444444444444444444444444444444444444 ;;
+  *"git/refs"*) exit 0 ;;
+  *"-X POST repos/acme/site/pages "*) echo "gh: GitHub Pages is already enabled. (HTTP 409)" >&2; exit 1 ;;
+  *"-X PUT repos/acme/site/pages "*) exit 0 ;;
+  *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+esac
+EOF
+  chmod +x "$race/gh"
+  printf 'target: github-pages\nstack: node\n' >"$race/deploy.yml"
+  rc=0
+  (cd "$tmp" && PATH="$race:$PATH" DEPLOY_DRY_RUN=0 DEPLOY_CONFIG="$race/deploy.yml" GITHUB_REPOSITORY=acme/site RUNNER_TEMP="$race" \
+    "$root/deploy/targets/github-pages/bootstrap") >/dev/null 2>"$tmp/err" || rc=$?
+  err="$(cat "$tmp/err")"
+  rc_is "github-pages bootstrap: Pages turned on by GitHub meanwhile (409) is not an error" 0
+  if grep -q -- '-X PUT repos/acme/site/pages ' "$race/calls"; then pass "github-pages bootstrap: after a 409 it sets the source with PUT"; else fail "github-pages bootstrap: no PUT after 409 ($(tr '\n' ';' <"$race/calls"))"; fi
   if grep -qx 'dark_deploy: false' "$root/deploy/targets/github-pages/target.yml"; then pass "github-pages: target.yml declares no dark deploy"; else fail "github-pages: target.yml dark_deploy"; fi
 
   # A throwaway project: the adapter, a fake stack whose build-static writes
