@@ -89,11 +89,15 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 
    **6b** (Cloud Run) runs after step 7.
 
-### M3: Remaining stacks and adapters (PRs #9–#12, all four in parallel)
-- `stacks/python`, `stacks/go`
-- `deploy/targets/github-pages` (`dark_deploy: false`, C9)
-- `deploy/targets/cloudflare-workers`: **Owner** creates the Cloudflare account and scoped token. First run a short spike verifying the `wrangler versions upload/deploy` and `rollback` commands and the free-plan behaviour (C10).
-- Each gets dry-run self-tests, and the two new adapters get one live sandbox E2E each (deploy, revert).
+### M3: Remaining stacks and adapters (owner decisions 2026-11-18, see Deviations)
+Built by Claude Code in a cloud session as owner PRs, as in M2. Steps 1, 2 and 7 are independent; 3 → 4 → 5 are serial (they share `test_deploy.sh`, `release.sh` and `bootstrap.sh`).
+1. `stacks/python`: standard-library `http.server` hello service (`/`, `/health`, JSON 404), venv with hash-pinned dev tools (ruff, mypy, pytest), compose acceptance with `pytest` + `httpx`, `prod_safe` smoke, Dockerfile, `dependabot-updates.yml`, `make build-static`.
+2. `stacks/go`: standard-library `net/http`, `gofmt`/`go vet`/`staticcheck` (a `go.mod` tool), `go test`, acceptance behind a build tag, distroless Dockerfile, `dependabot-updates.yml`, `make build-static`.
+3. `deploy/targets/github-pages` (`dark_deploy: false`, C9), with a spike on deploying through the Pages REST API versus a `gh-pages` branch. Every stack's `make build-static` renders its GET routes to files; `release.sh` runs the pre-traffic smoke against the export served locally. Smoke suites use relative paths so they work under the Pages sub-path. Needs one owner-approved `deploy.yml` edit (permissions; `build-static` when `artifact: static`).
+4. `deploy/targets/cloudflare-workers`, **node stack only** (a `fetch` entry point sharing the route handler); bootstrap refuses python/go with this target. First a short spike verifying `wrangler versions upload/deploy` and `rollback` and the free-plan behaviour (C10). **Owner** uses a separate Cloudflare account with a neutral `workers.dev` subdomain if Cloudflare's own "add account" option is offered, otherwise renames the subdomain (the current one is derived from the owner's email and must not appear in public logs).
+5. `make bootstrap-target` (`scripts/bootstrap-target.sh`) provisions the target named in `deploy.yml` without touching workflows; `doctor` checks the active target.
+6. **E2E** in one new public sandbox `sandbox-node-static`: github-pages (full chain, revert) → cloudflare-workers (full chain, revert) → github-pages, with no workflow change (criterion 11). Python and go each get one live run to github-pages in a throwaway repo (criterion 1). All $0.
+7. Bootstrap adds the stack's CodeQL language to `pr.yml`'s matrix (M2 gap: only `actions` was scanned).
 
 ### M4: Maintain, metrics, docs (PRs #13–#14)
 - `maintain.yml` (daily prod smoke, weekly CodeQL and branch cleanup, monthly `sdlc-metrics.sh` and token-age check) and `sdlc-metrics.sh`.
@@ -106,7 +110,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 | M0: plan, owner setup, spikes | ✅ Done | Jomaries777/template-repo-ci#2 (spike, closed), Jomaries777/template-repo-ci#3 |
 | M1: template core | ✅ Done. The ruleset and repo settings are applied with `scripts/gh-settings.sh --template`, and the repo is a template | Jomaries777/template-repo-ci#4 (CI), Jomaries777/template-repo-ci#5 (agent config), Jomaries777/template-repo-ci#6 (agy bridge), Jomaries777/template-repo-ci#7 (settings and ruleset) |
 | M2: Node + Cloud Run slice | ✅ Done for the slice, with two proofs carried. Steps 1–5 merged (#9–#18). Step 7 (bot identity, Amendment 2) done: 7a #23, 7b #25, 7c #28/#29, 7d #33. Step 6a (`local`, 2026-11-16) and **6b (Cloud Run, 2026-11-17/18)** passed criteria 1, 3, 4 and 5 ([6a results](spikes/m2-step6a-results.md), [6b results](spikes/m2-step6b-results.md)); 6b auto-revert: 11.5 s to a confirmed revert. 6b fixes: #35 (`/health`), #36 (bootstrap pushes last), #37 (deployer `repoAdmin`). Carried: criterion 6 minor case (patch auto-merge passed in 6a) and criterion 8 (`agy-run.sh`, needs the owner's Mac) | Jomaries777/template-repo-ci#9, #10, #11, #12, #13, #15, #16, #17, #18; sandbox: Jomaries777/sandbox-node-local#1, #2, #3, #5; Jomaries777/template-repo-ci#35, #36, #37; Jomaries777/sandbox-node-cloudrun#8, #9, #12, #13 |
-| M3: remaining stacks and adapters | Not started | — |
+| M3: remaining stacks and adapters | In progress: planned 2026-11-18 (decisions in Deviations) | — |
 | M4: maintain, metrics, docs | Not started | — |
 
 ## Deviations
@@ -165,6 +169,7 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 | 2026-11-18 | The cloud-run deploy SA gets `roles/artifactregistry.repoAdmin` on the `app` repository, replacing `artifactregistry.writer` (2026-11-15 row). Still never project-wide and never `artifactregistry.admin`. Existing projects add the binding once (or rerun bootstrap). | `promote` moves the `<env>` tag; replacing an existing tag needs `artifactregistry.tags.delete` (6b finding 3, #37) |
 | 2026-11-18 | Step 6b ran from a Codespace on the owner's tablet, not the Mac checklist in [m2-step6-owner-setup.md](spikes/m2-step6-owner-setup.md), and the bot key was set through the broker. Cold start was not measured: cloud sessions can't reach `*.run.app`. A failed promote leaves its dark candidate tagged at 0 % (finding 4) until `cleanup`; a `discard` on that path is a follow-up. | Owner's device; [6b results](spikes/m2-step6b-results.md) |
 | 2026-11-18 | `github-pages` deploys from the `gh-pages` branch, not `actions/deploy-pages` (spec §4.11 amended). `promote` builds the stack's `make build-static` export of the checked-out commit inside the production job and commits it to `gh-pages` as a fast-forward, then waits for the Pages build; `revert` commits an earlier version's files; nothing is force-pushed, so the branch is the deploy log. The export is rebuilt in the production job rather than carried from the `artifact` job. A new contract verb `preview` serves the export on localhost for the C9 pre-traffic test, and `release.sh` uses it when `dark_deploy: false` (this closes the 2026-11-15 row on the local pre-traffic test). The production job gets `contents: write` and `pages: write` (owner-approved workflow edit). | `actions/deploy-pages` needs an artifact uploaded by GitHub's JavaScript upload action, which a shell adapter can't call; keeping the deploy in the adapter keeps the workflow host-agnostic (criterion 11). The export depends only on the commit's files, so rebuilding it is equivalent to carrying it |
+| 2026-11-18 | M3 decisions: (1) criterion 11 is proven by switching one free sandbox github-pages → cloudflare-workers → github-pages, not cloud-run → github-pages; (2) every stack has `make build-static`, which exports its GET routes for Pages, and the `prod-safe` smoke runs against the export served locally before deploy; (3) `cloudflare-workers` supports the node stack only, and bootstrap refuses python/go with it; (4) Workers projects use a separate Cloudflare account with a neutral `workers.dev` subdomain (only if Cloudflare's own add-account option is offered; otherwise the subdomain is renamed); (5) criterion 9 is checked on the M3 sandbox in M4. | Owner, 2026-11-18. The 6b GCP project was deleted; Pages serves only static files; Workers run JavaScript; the current subdomain is derived from the owner's email and public logs would expose it |
 
 ## Risks
 
@@ -192,13 +197,13 @@ Built with headless `agy-run.sh boost …` for focused steps, and interactive `/
 | 2 Lint failure → no Claude review | M1 (template's own `pr.yml`), M2 sandbox |
 | 3 Docs-only PR → no review, no deploy | M1, M2 sandbox |
 | 4 Code PR full chain + approval + gated prod | M2 sandbox |
-| 5 Broken live smoke → auto-revert < 2 min (each adapter) | M2 (cloud-run), M3 (pages, cloudflare) |
+| 5 Broken live smoke → auto-revert < 2 min (each adapter) | M2 6b (cloud-run, 11.5 s), M3 (pages, cloudflare) |
 | 6 Dependabot patch auto-merges, minor waits | M2 sandbox (after step 7a sets the bot key) |
 | 7 Non-owner `@claude` ignored | M1: comment from a second account, or a workflow unit test on `author_association` |
 | 8 `agy-run.sh` draft PR + live check run wakes Claude Code | M1 Track C (fixtures), M2 (real run) |
-| 9 Idle project $0 after 30 days | First monthly `sdlc-metrics.sh` run on the M2 sandbox (deferred proof) |
+| 9 Idle project $0 after 30 days | First monthly `sdlc-metrics.sh` run on the M3 sandbox `sandbox-node-static` (deferred proof, M4). Moved from the M2 Cloud Run sandbox, whose GCP project was deleted after 6b ($0.00 spent) |
 | 10 Template self-test passes | M1 onward, on every PR |
-| 11 Switching TARGET changes no workflow | M3: switch the M2 sandbox from cloud-run → github-pages → back |
+| 11 Switching TARGET changes no workflow | M3: switch `sandbox-node-static` from github-pages → cloudflare-workers → github-pages (Cloud Run proven separately in 6b) |
 | 12 README word for word on a clean setup | M4 |
 | 13 Bot identity from any device (Amendment 2) | M2 step 7. 7a: S0002-1, 2, 11 (phase 1), 12. 7b: S0002-3, 4, 5, 6, 9, 10, 14. 7c: S0002-7, 8. 7d: S0002-11 (phase 2). S0002-13 ($0 after 30 days) is a deferred proof, like criterion 9 |
 
