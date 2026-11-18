@@ -1,0 +1,7 @@
+# Dev and test tools for the python stack. The app itself uses only the
+# standard library. Regenerate requirements-dev.txt with:
+#   pip-compile --generate-hashes --allow-unsafe -o requirements-dev.txt requirements-dev.in
+ruff
+mypy
+pytest
+httpx

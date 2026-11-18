@@ -1,0 +1,31 @@
+  # Python stack (spec FR-7). Bootstrap appends these entries to the `updates:`
+  # list in .github/dependabot.yml, then deletes this file.
+  # pip: the dev tools in requirements-dev.txt (pip-compile with hashes; the
+  # app itself uses only the standard library). Patch updates share one PR,
+  # which the bot approves and auto-merges once ci-ok passes; minor updates
+  # share another, which waits for the owner; majors arrive one per PR.
+  - package-ecosystem: pip
+    directory: /stacks/python
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      pip-patch:
+        update-types:
+          - patch
+      pip-minor:
+        update-types:
+          - minor
+  # The Dockerfile's base image (python:<version>-slim). Each update is its own
+  # PR and waits for the owner unless it is a patch.
+  - package-ecosystem: docker
+    directory: /stacks/python
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore
+      include: scope

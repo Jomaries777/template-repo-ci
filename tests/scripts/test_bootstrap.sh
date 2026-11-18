@@ -90,6 +90,22 @@ check "go: the stack fragment is removed" '[[ ! -e "$gop/stacks/go/dependabot-up
 check "go: the root Makefile delegates to stacks/go" '[[ "$(make -s -C "$gop" -p -n help 2>/dev/null | sed -n "s/^STACK_DIR := //p" | head -n 1)" == stacks/go ]]'
 check "go: ships the make targets the pipeline calls" '( for t in lint typecheck test build build-static acceptance smoke; do grep -q "^$t:" "$gop/stacks/go/Makefile" || { echo "missing $t"; exit 1; }; done )'
 
+# --- local-only: python (M3). Same shape as node: only its stack stays, and
+# its pip and Docker updates are appended.
+py="$tmp/py"
+copy "$py"
+rc=0
+out="$(BOOTSTRAP_OWNER=acme "$py/scripts/bootstrap.sh" --stack python --target cloud-run --local-only 2>&1)" || rc=$?
+check "python local-only: exits 0" '[[ $rc == 0 ]] || { echo "$out"; false; }'
+check "python: keeps only the python stack" '[[ "$(ls "$py/stacks")" == python ]]'
+check "python: deploy.yml names the stack" 'grep -qx "stack: python" "$py/deploy.yml"'
+check "python: README stub names the stack" 'grep -q "Stack: \`python\`" "$py/README.md"'
+check "python: dependabot adds pip for the stack" 'grep -q "package-ecosystem: pip" "$py/.github/dependabot.yml" && grep -q "directory: /stacks/python" "$py/.github/dependabot.yml"'
+check "python: dependabot adds the stack's Docker image" 'grep -q "package-ecosystem: docker" "$py/.github/dependabot.yml"'
+check "python: the stack fragment is removed" '[[ ! -e "$py/stacks/python/dependabot-updates.yml" ]]'
+check "python: the root Makefile delegates to stacks/python" '[[ "$(make -s -C "$py" -p -n help 2>/dev/null | sed -n "s/^STACK_DIR := //p" | head -n 1)" == stacks/python ]]'
+check "python: ships the make targets the pipeline calls" '( for t in lint typecheck test build build-static acceptance smoke; do grep -q "^$t:" "$py/stacks/python/Makefile" || { echo "missing $t"; exit 1; }; done )'
+
 # The bootstrapped project's own script tests must pass (they ship with it).
 # Stack tests need npm and are run by its CI; these need only bash and git.
 (cd "$a" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm boot)
