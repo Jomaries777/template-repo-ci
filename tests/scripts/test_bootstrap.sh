@@ -74,6 +74,15 @@ else
   check "dependabot: three update entries" '[[ "$(grep -c "package-ecosystem:" "$dbot")" == 3 ]]'
 fi
 
+# CodeQL scans the stack's language too, not only the workflows (M3 step 7):
+# bootstrap adds the stack's entry to pr.yml's codeql matrix.
+prw="$a/.github/workflows/pr.yml"
+check "codeql: adds the node stack's language" 'grep -A1 -E "^[[:space:]]+- language: javascript-typescript$" "$prw" | grep -qE "^[[:space:]]+build-mode: none$"'
+check "codeql: keeps the actions entry" 'grep -qE "^[[:space:]]+- language: actions$" "$prw"'
+if command -v actionlint >/dev/null 2>&1; then
+  check "codeql: pr.yml is still a valid workflow" 'actionlint "$prw"'
+fi
+
 # The bootstrapped project's own script tests must pass (they ship with it).
 # Stack tests need npm and are run by its CI; these need only bash and git.
 (cd "$a" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm boot)
@@ -128,6 +137,7 @@ has "dry run: production limited to main" "deployment-branch-policies --silent -
 has "dry run: Claude token secret" "gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme/hello --app actions"
 has "dry run: bot key mirrored to Dependabot" "gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app dependabot"
 has "dry run: BOT_APP_ID variable" "DRY-RUN: gh variable set BOT_APP_ID --repo acme/hello --body 123"
+has "dry run: adds the stack's CodeQL language" "DRY-RUN: add codeql language javascript-typescript (build-mode none) to .github/workflows/pr.yml"
 has "dry run: appends the stack's Dependabot updates" "DRY-RUN: append stacks/node/dependabot-updates.yml to .github/dependabot.yml"
 has "dry run: runs the adapter bootstrap" "DRY-RUN: gh variable set APP_NAME --repo acme/hello --body hello"
 has "dry run: adapter uses the repo for WIF" "assertion.repository==\\'acme/hello\\'"
