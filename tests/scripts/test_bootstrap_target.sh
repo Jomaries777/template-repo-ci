@@ -3,6 +3,8 @@
 # provisions the target named in deploy.yml through the adapter's bootstrap
 # and changes no file, workflows included. Runs in throwaway copies, dry run
 # only (no gh, gcloud or network). Run from the repo root.
+# check() evals its condition later, so single quotes are intended (SC2016).
+# shellcheck disable=SC2016,SC2034
 set -euo pipefail
 
 src="$PWD"

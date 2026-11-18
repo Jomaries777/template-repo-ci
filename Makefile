@@ -7,6 +7,7 @@
 #   make test               every executable tests/scripts/test_*.sh (+ stack tests)
 #   make typecheck | build | acceptance | smoke URL=<url>   the stack's targets
 #   make bootstrap STACK=<stack> TARGET=<target>            set up a new project
+#   make bootstrap-target                                   provision deploy.yml's target (switch)
 #   make doctor                                             read-only setup check
 
 SHELL := bash
@@ -21,7 +22,7 @@ SHFMT_FLAGS := -i 2 -ci
 # deploy/targets/<target>/ (the adapter verbs).
 SH_FILES = $$( { git ls-files -- '*.sh'; git ls-files -- 'scripts/hooks/*' 'deploy/targets/*/*' | grep -v '/[^/]*\.[^/]*$$' || true; } | sort -u )
 
-.PHONY: help lint fmt test typecheck build acceptance smoke bootstrap doctor
+.PHONY: help lint fmt test typecheck build acceptance smoke bootstrap bootstrap-target doctor
 
 # stacks/<name> from deploy.yml's `stack:` key; empty in the template itself.
 STACK_DIR := $(shell sed -n 's/^stack:[[:space:]]*\([a-z0-9-]*\).*/stacks\/\1/p' deploy.yml 2>/dev/null)
@@ -103,6 +104,9 @@ smoke: ## prod-safe smoke tests against URL=<url> (n/a before bootstrap)
 
 bootstrap: ## Set up a new project: STACK=<stack> TARGET=<target>
 	@scripts/bootstrap.sh --stack "$(STACK)" --target "$(TARGET)"
+
+bootstrap-target: ## Provision the target named in deploy.yml (switch targets; no workflow changes)
+	@scripts/bootstrap-target.sh
 
 doctor: ## Read-only check that repo settings and the target match the spec
 	@scripts/doctor.sh

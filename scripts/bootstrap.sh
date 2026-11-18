@@ -93,7 +93,7 @@ if [[ -n "$current_stack" && "$current_stack" != "$stack" ]]; then
   usage_error "already bootstrapped with stack $current_stack; changing the stack is not supported"
 fi
 if [[ -n "$current_stack" && "$current_target" != "$target" ]]; then
-  usage_error "already bootstrapped with target $current_target; to switch, edit deploy.yml and run scripts/deploy.sh bootstrap"
+  usage_error "already bootstrapped with target $current_target; to switch, edit target: in deploy.yml and run make bootstrap-target"
 fi
 
 if ((local_only)); then
@@ -127,9 +127,13 @@ else
     d="${d%/}"
     [[ "$d" == "stacks/$stack" ]] || fs rm -rf "$d"
   done
+  # Every real adapter stays, so `make bootstrap-target` can switch to it
+  # later (criterion 11); test-only adapters (test_only: true) go unless chosen.
   for d in deploy/targets/*/; do
     d="${d%/}"
-    [[ "$d" == "deploy/targets/$target" ]] || fs rm -rf "$d"
+    if [[ "$d" != "deploy/targets/$target" ]] && grep -qx 'test_only: true' "$d/target.yml" 2>/dev/null; then
+      fs rm -rf "$d"
+    fi
   done
   # The template's own intent folders and self-test belong to the template.
   for d in intent/*/; do
@@ -364,27 +368,11 @@ else
 fi
 run gh variable set BOT_APP_ID --repo "$repo" --body "${app_id:-<id>}"
 
-# --- 4. target
+# --- 4. target: the same script that switches targets later (criterion 11).
 step "Target: $target"
-if [[ "$target" == none ]]; then
-  echo "    nothing to provision"
-else
-  if [[ -z "${APP_NAME:-}" ]]; then
-    APP_NAME="$(tr 'A-Z_.' 'a-z--' <<<"$name")"
-    # Cloud Run service names must start with a letter.
-    [[ "$APP_NAME" =~ ^[a-z] ]] || APP_NAME="app-$APP_NAME"
-    # Cloud Run: at most 49 characters for "<app>-prod"/"-dev", no trailing hyphen.
-    APP_NAME="${APP_NAME:0:40}"
-    while [[ "$APP_NAME" == *- ]]; do APP_NAME="${APP_NAME%-}"; done
-  fi
-  export APP_NAME
-  export GITHUB_REPOSITORY="$repo"
-  if ((dry_run)); then
-    DEPLOY_DRY_RUN=1 DEPLOY_TARGET="$target" "$root/scripts/deploy.sh" bootstrap 2>&1 | sed 's/^/    /'
-  else
-    DEPLOY_TARGET="$target" "$root/scripts/deploy.sh" bootstrap
-  fi
-fi
+target_args=(--target "$target" --stack "$stack" --repo "$repo")
+((dry_run)) && target_args+=(--dry-run)
+"$root/scripts/bootstrap-target.sh" "${target_args[@]}"
 
 # --- 5. push. Pushing main starts the first deploy, so this comes after the
 # Environments (production's reviewer), secrets and the target's resources and
