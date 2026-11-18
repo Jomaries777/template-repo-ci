@@ -24,10 +24,20 @@ else
 fi
 
 echo "== Pages" >&2
+pages_args=(-f build_type=legacy -f "source[branch]=$BRANCH" -f 'source[path]=/' --silent)
+set_source() { run gh api -X PUT "repos/$REPO/pages" "${pages_args[@]}"; }
 if [[ "$DRY_RUN" != "1" ]] && gh api "repos/$REPO/pages" --silent 2>/dev/null; then
   echo "    Pages already enabled" >&2
-  run gh api -X PUT "repos/$REPO/pages" -f build_type=legacy -f "source[branch]=$BRANCH" -f 'source[path]=/' --silent
+  set_source
+elif [[ "$DRY_RUN" == "1" ]]; then
+  run gh api -X POST "repos/$REPO/pages" "${pages_args[@]}"
 else
-  run gh api -X POST "repos/$REPO/pages" -f build_type=legacy -f "source[branch]=$BRANCH" -f 'source[path]=/' --silent
+  # Creating gh-pages makes GitHub turn Pages on by itself a moment later, so
+  # the check above can miss it and the POST answer 409: set the source then.
+  if ! post_err="$(gh api -X POST "repos/$REPO/pages" "${pages_args[@]}" 2>&1 >/dev/null)"; then
+    grep -q 'HTTP 409' <<<"$post_err" || die "could not enable Pages: $post_err"
+    echo "    Pages already enabled (by GitHub, for the new $BRANCH branch)" >&2
+    set_source
+  fi
 fi
 echo "github-pages: bootstrap done for $REPO (the site is served from $BRANCH)" >&2
