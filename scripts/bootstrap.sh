@@ -142,6 +142,10 @@ else
   fs mkdir -p intent
   fs touch intent/.gitkeep
   fs rm -f .github/workflows/template-selftest.yml
+  # The template's playbook deviations record its own history (sandbox PRs,
+  # intent 0001); a project starts its own if it needs one.
+  fs rm -f docs/playbook-deviations.md
+  if [[ -d docs ]] && [[ -z "$(ls -A docs)" ]]; then fs rmdir docs; fi
   # Tests the template-to-project step itself, which only the template has.
   fs rm -f tests/scripts/test_bootstrap.sh
   # One bot token broker serves every project (spec 0002). It stays in the
