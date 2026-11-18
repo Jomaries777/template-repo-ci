@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-test("GET /healthz returns ok @prod-safe", async ({ request }) => {
-  const res = await request.get("/healthz");
+test("GET /health returns ok @prod-safe", async ({ request }) => {
+  const res = await request.get("/health");
   expect(res.status()).toBe(200);
   const body = (await res.json()) as { status: string; version: string };
   expect(body.status).toBe("ok");

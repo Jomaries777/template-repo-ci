@@ -8,7 +8,7 @@
 #   2. dark deploy: CANDIDATE_URL=$(deploy.sh deploy-dark <env> <sha>)
 #   3. pre-traffic test: make smoke URL=$CANDIDATE_URL; on failure discard, fail
 #   4. promote
-#   5. live test: smoke + /healthz, RELEASE_LIVE_CHECKS times, RELEASE_INTERVAL s apart
+#   5. live test: smoke + /health, RELEASE_LIVE_CHECKS times, RELEASE_INTERVAL s apart
 #   6. on live failure: revert to PREV, re-check once, fail
 #   7. cleanup
 #
@@ -67,9 +67,9 @@ smoke() {
   fi
 }
 
-# One live check: the prod-safe smoke suite plus /healthz.
+# One live check: the prod-safe smoke suite plus /health.
 live_check() {
-  smoke "$1" && curl -fsS --max-time 10 -o /dev/null "$1/healthz"
+  smoke "$1" && curl -fsS --max-time 10 -o /dev/null "$1/health"
 }
 
 # Fail closed: without the stack's prod-safe suite (bootstrap writes `stack:`

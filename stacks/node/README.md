@@ -5,7 +5,7 @@ Minimal Node 22 HTTP service with zero runtime framework dependencies.
 ## Endpoints
 
 - `GET /` — returns `200 {"message":"hello"}`
-- `GET /healthz` — returns `200 {"status":"ok","version":"<APP_VERSION|dev>"}`
+- `GET /health` — returns `200 {"status":"ok","version":"<APP_VERSION|dev>"}`. Not `/healthz`: Cloud Run reserves some paths ending in `z`, so keep new routes off them too
 - Any other path or method — returns `404 {"error":"not found"}`
 
 ## Make Targets

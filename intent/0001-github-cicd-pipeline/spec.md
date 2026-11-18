@@ -276,7 +276,7 @@ The workflow knows nothing about any particular host. It calls `scripts/deploy.s
 2. **Dark deploy**: `CANDIDATE_URL=$(deploy.sh deploy-dark <env> <sha>)`. The new version is deployed but receives no traffic.
 3. **Pre-traffic test**: `make smoke URL=$CANDIDATE_URL`. On failure: `deploy.sh discard <env>`, fail, and send no traffic.
 4. **Promote**: `deploy.sh promote <env> <sha>`
-5. **Live test**: `make smoke URL=$(deploy.sh url <env>)` three times, 60 s apart, plus `/healthz`. All must pass. Count and interval are set in `deploy.yml`.
+5. **Live test**: `make smoke URL=$(deploy.sh url <env>)` three times, 60 s apart, plus `/health`. All must pass. Count and interval are set in `deploy.yml`.
 6. **Auto-revert** on failure: `deploy.sh revert <env> $PREV`. Then re-run the live test to confirm the revert, and fail the job.
 7. `deploy.sh cleanup <env>`: removes candidate tags and prunes old versions.
 

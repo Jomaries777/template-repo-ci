@@ -46,25 +46,35 @@ describe("server", () => {
     expect(await res.json()).toEqual({ message: "hello" });
   });
 
-  it("GET /healthz returns default dev version when APP_VERSION is unset", async () => {
+  it("GET /health returns default dev version when APP_VERSION is unset", async () => {
     delete process.env.APP_VERSION;
     activeServer = createServer();
     const baseUrl = await listen(activeServer);
 
-    const res = await fetch(`${baseUrl}/healthz`);
+    const res = await fetch(`${baseUrl}/health`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
     expect(await res.json()).toEqual({ status: "ok", version: "dev" });
   });
 
-  it("GET /healthz returns APP_VERSION when set", async () => {
+  it("GET /health returns APP_VERSION when set", async () => {
     process.env.APP_VERSION = "1.2.3-sha";
     activeServer = createServer();
     const baseUrl = await listen(activeServer);
 
-    const res = await fetch(`${baseUrl}/healthz`);
+    const res = await fetch(`${baseUrl}/health`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: "ok", version: "1.2.3-sha" });
+  });
+
+  // Cloud Run reserves some paths ending in "z" (its front end answers 404
+  // before the app sees them), so the health route must not be /healthz.
+  it("does not serve /healthz (reserved on Cloud Run)", async () => {
+    activeServer = createServer();
+    const baseUrl = await listen(activeServer);
+
+    const res = await fetch(`${baseUrl}/healthz`);
+    expect(res.status).toBe(404);
   });
 
   it("returns 404 JSON for unknown routes and methods", async () => {
