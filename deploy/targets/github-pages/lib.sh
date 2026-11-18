@@ -166,7 +166,11 @@ commit_and_push() {
 # latest build is <commit> and built.
 wait_live() {
   local commit="$1" deadline=$((SECONDS + ${PAGES_WAIT_SECONDS:-300})) build status
-  run gh api -X POST "repos/$REPO/pages/builds" --silent || true
+  # A refused request (e.g. a job without pages: write) would otherwise only
+  # show up as the timeout below: say so now, then still wait, since Pages
+  # also builds on its own after a push.
+  run gh api -X POST "repos/$REPO/pages/builds" --silent ||
+    echo "github-pages: warning: could not request a Pages build (does the job have pages: write?); waiting for the push to trigger one" >&2
   [[ "$DRY_RUN" == "1" ]] && return 0
   while ((SECONDS < deadline)); do
     build="$(gh api "repos/$REPO/pages/builds/latest" 2>/dev/null || true)"
