@@ -92,6 +92,23 @@ rc=0
 out="$(BOOTSTRAP_OWNER=acme "$cqb/scripts/bootstrap.sh" --stack node --target none --local-only 2>&1)" || rc=$?
 check "codeql: an actions item without build-mode stops bootstrap" '[[ $rc != 0 ]] && grep -q "codeql" <<<"$out"'
 
+# --- local-only: go (M3). Same shape as node: only its stack stays, and its
+# gomod and Docker updates are appended.
+gop="$tmp/gop"
+copy "$gop"
+rc=0
+out="$(BOOTSTRAP_OWNER=acme "$gop/scripts/bootstrap.sh" --stack go --target cloud-run --local-only 2>&1)" || rc=$?
+check "go local-only: exits 0" '[[ $rc == 0 ]] || { echo "$out"; false; }'
+check "go: keeps only the go stack" '[[ "$(ls "$gop/stacks")" == go ]]'
+check "go: deploy.yml names the stack" 'grep -qx "stack: go" "$gop/deploy.yml"'
+check "go: README stub names the stack" 'grep -q "Stack: \`go\`" "$gop/README.md"'
+check "go: dependabot adds gomod for the stack" 'grep -q "package-ecosystem: gomod" "$gop/.github/dependabot.yml" && grep -q "directory: /stacks/go" "$gop/.github/dependabot.yml"'
+check "go: dependabot adds the stack's Docker image" 'grep -q "package-ecosystem: docker" "$gop/.github/dependabot.yml"'
+check "go: the stack fragment is removed" '[[ ! -e "$gop/stacks/go/dependabot-updates.yml" ]]'
+check "go: the root Makefile delegates to stacks/go" '[[ "$(make -s -C "$gop" -p -n help 2>/dev/null | sed -n "s/^STACK_DIR := //p" | head -n 1)" == stacks/go ]]'
+check "go: ships the make targets the pipeline calls" '( for t in lint typecheck test build build-static acceptance smoke; do grep -q "^$t:" "$gop/stacks/go/Makefile" || { echo "missing $t"; exit 1; }; done )'
+check "go: codeql scans go" 'grep -A1 -E "^[[:space:]]+- language: go$" "$gop/.github/workflows/pr.yml" | grep -qE "^[[:space:]]+build-mode: autobuild$"'
+
 # --- local-only: python (M3). Same shape as node: only its stack stays, and
 # its pip and Docker updates are appended.
 py="$tmp/py"

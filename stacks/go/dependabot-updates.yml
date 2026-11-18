@@ -1,0 +1,31 @@
+  # Go stack (spec FR-7). Bootstrap appends these entries to the `updates:`
+  # list in .github/dependabot.yml, then deletes this file.
+  # gomod: the app uses only the standard library; go.mod lists dev tools
+  # (staticcheck). Patch updates share one PR, which the bot approves and
+  # auto-merges once ci-ok passes; minor updates share another, which waits
+  # for the owner; majors arrive one per PR.
+  - package-ecosystem: gomod
+    directory: /stacks/go
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      gomod-patch:
+        update-types:
+          - patch
+      gomod-minor:
+        update-types:
+          - minor
+  # The Dockerfile's base images (golang build stage, distroless runtime). Each
+  # update is its own PR and waits for the owner unless it is a patch.
+  - package-ecosystem: docker
+    directory: /stacks/go
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore
+      include: scope
