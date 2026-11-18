@@ -176,7 +176,7 @@ has "cloud-run: service check skips without gcloud" "SKIP  cloud-run: services e
 jq '.variables |= map(select(.name != "GCP_DEPLOY_SA"))' "$FIX/${R}_actions_variables?per_page=30.json" >"$tmp/v" && mv "$tmp/v" "$FIX/${R}_actions_variables?per_page=30.json"
 doc "$proj"
 has "cloud-run: missing GCP_DEPLOY_SA fails" "FAIL  variable: GCP_DEPLOY_SA (cloud-run)"
-has "cloud-run: hint names the adapter bootstrap" "fix: DEPLOY_TARGET=cloud-run scripts/deploy.sh bootstrap"
+has "cloud-run: hint names make bootstrap-target" "fix: make bootstrap-target"
 fi
 
 [[ "$failures" -eq 0 ]] || {

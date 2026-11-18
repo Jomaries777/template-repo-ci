@@ -93,7 +93,7 @@ if [[ -n "$current_stack" && "$current_stack" != "$stack" ]]; then
   usage_error "already bootstrapped with stack $current_stack; changing the stack is not supported"
 fi
 if [[ -n "$current_stack" && "$current_target" != "$target" ]]; then
-  usage_error "already bootstrapped with target $current_target; to switch, edit deploy.yml and run scripts/deploy.sh bootstrap"
+  usage_error "already bootstrapped with target $current_target; to switch, edit target: in deploy.yml and run make bootstrap-target"
 fi
 
 if ((local_only)); then
@@ -127,9 +127,13 @@ else
     d="${d%/}"
     [[ "$d" == "stacks/$stack" ]] || fs rm -rf "$d"
   done
+  # Every real adapter stays, so `make bootstrap-target` can switch to it
+  # later (criterion 11); test-only adapters (test_only: true) go unless chosen.
   for d in deploy/targets/*/; do
     d="${d%/}"
-    [[ "$d" == "deploy/targets/$target" ]] || fs rm -rf "$d"
+    if [[ "$d" != "deploy/targets/$target" ]] && grep -qx 'test_only: true' "$d/target.yml" 2>/dev/null; then
+      fs rm -rf "$d"
+    fi
   done
   # The template's own intent folders and self-test belong to the template.
   for d in intent/*/; do
@@ -186,7 +190,18 @@ merge; the owner approves.
   # the entries to add to the `updates:` list.
   dependabot_fragment="stacks/$stack/dependabot-updates.yml"
   [[ -f "$dependabot_fragment" ]] || die "$dependabot_fragment is missing; every stack ships its Dependabot updates"
+  # CodeQL scans the stack's language too (pr.yml's codeql matrix starts with
+  # the workflows only): add the stack's entry after the actions one.
+  case "$stack" in
+    node) codeql_language=javascript-typescript codeql_build=none ;;
+    python) codeql_language=python codeql_build=none ;;
+    go) codeql_language=go codeql_build=autobuild ;;
+    *) codeql_language="" codeql_build="" ;;
+  esac
   if ((dry_run)); then
+    if [[ -n "$codeql_language" ]]; then
+      echo "DRY-RUN: add codeql language $codeql_language (build-mode $codeql_build) to .github/workflows/pr.yml"
+    fi
     echo "DRY-RUN: write deploy.yml (target: $target, stack: $stack)"
     echo "DRY-RUN: write .github/CODEOWNERS (* @$owner)"
     echo "DRY-RUN: write README.md (project stub)"
@@ -197,6 +212,23 @@ merge; the owner approves.
     printf '%s' "$readme" >README.md
     cat "$dependabot_fragment" >>.github/dependabot.yml
     rm -f "$dependabot_fragment"
+    if [[ -n "$codeql_language" ]] && ! grep -qE "^[[:space:]]+- language: $codeql_language\$" .github/workflows/pr.yml; then
+      # Insert after the "- language: actions" item and its build-mode line,
+      # with the same indentation; fail if pr.yml no longer has that item.
+      awk -v lang="$codeql_language" -v mode="$codeql_build" '
+        { print }
+        # Only the line right after the actions item may be its build-mode.
+        pending == 2 { pending = 0 }
+        pending == 1 && /^[[:space:]]+build-mode:/ {
+          print indent "- language: " lang; print indent "  build-mode: " mode; pending = 0; done = 1
+        }
+        pending == 1 { pending = 2 }
+        /^[[:space:]]+- language: actions$/ { indent = $0; sub(/-.*/, "", indent); pending = 1; next }
+        END { if (!done) exit 1 }
+      ' .github/workflows/pr.yml >.github/workflows/pr.yml.new ||
+        die "pr.yml has no codeql '- language: actions' entry to add $codeql_language after"
+      mv .github/workflows/pr.yml.new .github/workflows/pr.yml
+    fi
   fi
 fi
 
@@ -364,27 +396,11 @@ else
 fi
 run gh variable set BOT_APP_ID --repo "$repo" --body "${app_id:-<id>}"
 
-# --- 4. target
+# --- 4. target: the same script that switches targets later (criterion 11).
 step "Target: $target"
-if [[ "$target" == none ]]; then
-  echo "    nothing to provision"
-else
-  if [[ -z "${APP_NAME:-}" ]]; then
-    APP_NAME="$(tr 'A-Z_.' 'a-z--' <<<"$name")"
-    # Cloud Run service names must start with a letter.
-    [[ "$APP_NAME" =~ ^[a-z] ]] || APP_NAME="app-$APP_NAME"
-    # Cloud Run: at most 49 characters for "<app>-prod"/"-dev", no trailing hyphen.
-    APP_NAME="${APP_NAME:0:40}"
-    while [[ "$APP_NAME" == *- ]]; do APP_NAME="${APP_NAME%-}"; done
-  fi
-  export APP_NAME
-  export GITHUB_REPOSITORY="$repo"
-  if ((dry_run)); then
-    DEPLOY_DRY_RUN=1 DEPLOY_TARGET="$target" "$root/scripts/deploy.sh" bootstrap 2>&1 | sed 's/^/    /'
-  else
-    DEPLOY_TARGET="$target" "$root/scripts/deploy.sh" bootstrap
-  fi
-fi
+target_args=(--target "$target" --stack "$stack" --repo "$repo")
+((dry_run)) && target_args+=(--dry-run)
+"$root/scripts/bootstrap-target.sh" "${target_args[@]}"
 
 # --- 5. push. Pushing main starts the first deploy, so this comes after the
 # Environments (production's reviewer), secrets and the target's resources and

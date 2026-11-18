@@ -126,7 +126,7 @@ Requirements trace back to the intent: **FR** = functional requirement, **NFR** 
 (template-only CI is .github/workflows/template-selftest.yml; bootstrap removes it)
 ```
 
-`make bootstrap STACK=node|python|go TARGET=cloud-run|cloudflare-workers|github-pages|none` keeps the chosen stack in `stacks/<stack>/` (the root `Makefile` delegates to it), writes `deploy.yml` with `target:` and `stack:`, and deletes the unused stacks and adapters, the template's own `intent/` folders, its self-test workflow and its bootstrap test. It then runs `gh-settings.sh`, creates the Environments, sets the secrets and runs the chosen adapter's `bootstrap` (amended 2026-11-15, see plan.md Deviations).
+`make bootstrap STACK=node|python|go TARGET=cloud-run|cloudflare-workers|github-pages|none` keeps the chosen stack in `stacks/<stack>/` (the root `Makefile` delegates to it), writes `deploy.yml` with `target:` and `stack:`, and deletes the unused stacks and the test-only adapters (every real adapter stays, so `make bootstrap-target` can switch to it later; amended 2026-11-18), the template's own `intent/` folders, its self-test workflow and its bootstrap test. It then runs `gh-settings.sh`, creates the Environments, sets the secrets and runs the chosen adapter's `bootstrap` (amended 2026-11-15, see plan.md Deviations).
 
 ### 4.2 Change classifier (`scripts/classify.sh`, no AI)
 

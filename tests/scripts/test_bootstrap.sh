@@ -48,7 +48,10 @@ rc=0
 out="$(BOOTSTRAP_OWNER=acme "$a/scripts/bootstrap.sh" --stack node --target cloud-run --local-only 2>&1)" || rc=$?
 check "local-only: exits 0" '[[ $rc == 0 ]] || { echo "$out"; false; }'
 check "keeps only the chosen stack" '[[ "$(ls "$a/stacks")" == node ]]'
-check "keeps only the chosen adapter" '[[ "$(ls "$a/deploy/targets")" == cloud-run ]]'
+# Every real adapter stays, so `make bootstrap-target` can switch to it later
+# (criterion 11); only test-only adapters (target.yml test_only: true) go.
+check "keeps every real adapter for later switches" '[[ "$(ls "$a/deploy/targets" | tr "\n" " ")" == "cloud-run none " ]]'
+check "removes test-only adapters" '[[ ! -e "$a/deploy/targets/local" ]]'
 check "deploy.yml names target and stack" 'grep -qx "target: cloud-run" "$a/deploy.yml" && grep -qx "stack: node" "$a/deploy.yml"'
 check "deploy.yml keeps environments and smoke" 'grep -q "dev:        { enabled: true }" "$a/deploy.yml" && grep -q "live_checks: 3" "$a/deploy.yml"'
 check "removes the template self-test" '[[ ! -e "$a/.github/workflows/template-selftest.yml" ]]'
@@ -74,6 +77,24 @@ else
   check "dependabot: three update entries" '[[ "$(grep -c "package-ecosystem:" "$dbot")" == 3 ]]'
 fi
 
+# CodeQL scans the stack's language too, not only the workflows (M3 step 7):
+# bootstrap adds the stack's entry to pr.yml's codeql matrix.
+prw="$a/.github/workflows/pr.yml"
+check "codeql: adds the node stack's language" 'grep -A1 -E "^[[:space:]]+- language: javascript-typescript$" "$prw" | grep -qE "^[[:space:]]+build-mode: none$"'
+check "codeql: keeps the actions entry" 'grep -qE "^[[:space:]]+- language: actions$" "$prw"'
+if command -v actionlint >/dev/null 2>&1; then
+  check "codeql: pr.yml is still a valid workflow" 'actionlint "$prw"'
+fi
+
+# If the actions item has no build-mode line right after it, bootstrap must
+# stop rather than insert the stack's entry somewhere else.
+cqb="$tmp/cqb"
+copy "$cqb"
+sed -i '/^[[:space:]]*- language: actions$/{n;d}' "$cqb/.github/workflows/pr.yml"
+rc=0
+out="$(BOOTSTRAP_OWNER=acme "$cqb/scripts/bootstrap.sh" --stack node --target none --local-only 2>&1)" || rc=$?
+check "codeql: an actions item without build-mode stops bootstrap" '[[ $rc != 0 ]] && grep -q "codeql" <<<"$out"'
+
 # --- local-only: go (M3). Same shape as node: only its stack stays, and its
 # gomod and Docker updates are appended.
 gop="$tmp/gop"
@@ -89,6 +110,7 @@ check "go: dependabot adds the stack's Docker image" 'grep -q "package-ecosystem
 check "go: the stack fragment is removed" '[[ ! -e "$gop/stacks/go/dependabot-updates.yml" ]]'
 check "go: the root Makefile delegates to stacks/go" '[[ "$(make -s -C "$gop" -p -n help 2>/dev/null | sed -n "s/^STACK_DIR := //p" | head -n 1)" == stacks/go ]]'
 check "go: ships the make targets the pipeline calls" '( for t in lint typecheck test build build-static acceptance smoke; do grep -q "^$t:" "$gop/stacks/go/Makefile" || { echo "missing $t"; exit 1; }; done )'
+check "go: codeql scans go" 'grep -A1 -E "^[[:space:]]+- language: go$" "$gop/.github/workflows/pr.yml" | grep -qE "^[[:space:]]+build-mode: autobuild$"'
 
 # --- local-only: python (M3). Same shape as node: only its stack stays, and
 # its pip and Docker updates are appended.
@@ -105,6 +127,7 @@ check "python: dependabot adds the stack's Docker image" 'grep -q "package-ecosy
 check "python: the stack fragment is removed" '[[ ! -e "$py/stacks/python/dependabot-updates.yml" ]]'
 check "python: the root Makefile delegates to stacks/python" '[[ "$(make -s -C "$py" -p -n help 2>/dev/null | sed -n "s/^STACK_DIR := //p" | head -n 1)" == stacks/python ]]'
 check "python: ships the make targets the pipeline calls" '( for t in lint typecheck test build build-static acceptance smoke; do grep -q "^$t:" "$py/stacks/python/Makefile" || { echo "missing $t"; exit 1; }; done )'
+check "python: codeql scans python" 'grep -A1 -E "^[[:space:]]+- language: python$" "$py/.github/workflows/pr.yml" | grep -qE "^[[:space:]]+build-mode: none$"'
 
 # The bootstrapped project's own script tests must pass (they ship with it).
 # Stack tests need npm and are run by its CI; these need only bash and git.
@@ -127,6 +150,8 @@ check "rerun: changes no file" '[[ "$before" == "$after" ]]'
 rc=0
 "$a/scripts/bootstrap.sh" --stack node --target none --local-only >/dev/null 2>&1 || rc=$?
 check "rerun with another target exits 64" '[[ $rc == 64 ]]'
+out="$("$a/scripts/bootstrap.sh" --stack node --target none --local-only 2>&1 || true)"
+check "rerun with another target points to make bootstrap-target" 'grep -q "make bootstrap-target" <<<"$out"'
 
 # --- argument errors (fresh copy)
 b="$tmp/b"
@@ -151,7 +176,8 @@ list_after="$(cd "$c" && find . | sort)"
 check "dry run: exits 0" '[[ $rc == 0 ]] || { echo "$out" | tail -5; false; }'
 check "dry run: changes no file" '[[ "$list_before" == "$list_after" ]]'
 has() { if grep -qF -- "$2" <<<"$out"; then pass "$1"; else fail "$1 (missing: $2)"; fi; }
-has "dry run: deletes the unused adapter" "DRY-RUN: rm -rf deploy/targets/none"
+has "dry run: deletes the test-only adapter" "DRY-RUN: rm -rf deploy/targets/local"
+if grep -qF "DRY-RUN: rm -rf deploy/targets/none" <<<"$out"; then fail "dry run: keeps the real adapters"; else pass "dry run: keeps the real adapters"; fi
 has "dry run: pushes to main before the ruleset exists" "DRY-RUN: git push origin HEAD:main"
 has "dry run: applies repo settings" "DRY-RUN: gh repo edit acme/hello"
 has "dry run: creates dev" "DRY-RUN: gh api -X PUT repos/acme/hello/environments/dev"
@@ -160,6 +186,7 @@ has "dry run: production limited to main" "deployment-branch-policies --silent -
 has "dry run: Claude token secret" "gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme/hello --app actions"
 has "dry run: bot key mirrored to Dependabot" "gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app dependabot"
 has "dry run: BOT_APP_ID variable" "DRY-RUN: gh variable set BOT_APP_ID --repo acme/hello --body 123"
+has "dry run: adds the stack's CodeQL language" "DRY-RUN: add codeql language javascript-typescript (build-mode none) to .github/workflows/pr.yml"
 has "dry run: appends the stack's Dependabot updates" "DRY-RUN: append stacks/node/dependabot-updates.yml to .github/dependabot.yml"
 has "dry run: runs the adapter bootstrap" "DRY-RUN: gh variable set APP_NAME --repo acme/hello --body hello"
 has "dry run: adapter uses the repo for WIF" "assertion.repository==\\'acme/hello\\'"
