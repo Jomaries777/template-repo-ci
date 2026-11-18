@@ -60,6 +60,7 @@ check "deploy.yml names target and stack" 'grep -qx "target: cloud-run" "$a/depl
 check "deploy.yml keeps environments and smoke" 'grep -q "dev:        { enabled: true }" "$a/deploy.yml" && grep -q "live_checks: 3" "$a/deploy.yml"'
 check "removes the template self-test" '[[ ! -e "$a/.github/workflows/template-selftest.yml" ]]'
 check "keeps the other workflows" '[[ -f "$a/.github/workflows/pr.yml" ]]'
+check "removes the template's playbook deviations (its own history)" '[[ -f "$src/docs/playbook-deviations.md" && ! -e "$a/docs/playbook-deviations.md" ]]'
 check "removes the broker (one serves every project)" '[[ ! -e "$a/broker" && ! -e "$a/tests/broker" ]]'
 check "removes the template-only bootstrap test" '[[ ! -e "$a/tests/scripts/test_bootstrap.sh" && -f "$a/tests/scripts/test_deploy.sh" ]]'
 check "removes the template intent folders" '[[ -z "$(find "$a/intent" -mindepth 1 -type d)" && -f "$a/intent/.gitkeep" ]]'
