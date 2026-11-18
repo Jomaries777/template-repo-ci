@@ -11,6 +11,49 @@ This file records the template's own history. Bootstrap removes it from new proj
 
 **Status values:** `accepted` (deliberate, no action), `open`, `planned` (with where), `fixed` (with the PR).
 
+## Personal vibe coding: what we keep and what we adapt
+
+The playbook is written for teams: separate product owners, tech leads, code owners and release managers, staging environments, enterprise controls and a budget. This template serves one owner who writes mostly through AI, on a tablet or in cloud sessions, on public repos, with a Claude Pro plan and $0 hosting when idle.
+
+So we keep the playbook's **intent** everywhere and adapt its **mechanisms** where they assume a team or a budget.
+
+### Why adapting is sound here
+
+1. **Collapsing roles leaves the gates in place.** A gate does its work at the moment of decision, whoever makes it. One person holding every role still has to accept the intent, approve the PR and approve the production deploy, and each step is recorded. Intent 0001 sets the rule: gates "can be collapsed onto one person, but they cannot be skipped."
+2. **Server-side controls replace team process.** GitHub enforces branch rulesets, required checks and Environment reviewers whoever is at the keyboard, including an agent. That covers what a second reviewer or a managed-settings policy would.
+3. **The blast radius is small.** Public, low-traffic projects with free hosting can't run up a bill or expose customer data. Cost controls ($0 when idle, budget alerts) matter more here than change-management sign-off.
+4. **Cost and quota are hard limits.** One Pro plan shares its quota between interactive work and CI review. Practices that need Enterprise features, paid usage or nightly AI runs are replaced by free deterministic tools, or scaled down.
+5. **Rehearsed rollback stands in for staging.** A deploy that reverts itself in under 2 minutes, proven for real in sandbox repos, gives most of staging's safety without a second environment.
+
+### What we always follow (non-negotiable for one owner too)
+
+These cost little and are where solo AI-written code most often goes wrong, so they hold on every change:
+
+| Principle | How it's held here |
+|---|---|
+| The loop runs on artifacts, not chat | `intent.md`, then `spec.md`, then `plan.md`, then a PR. Results go into a file before a change is called done. |
+| Plan before code | Plan mode first, from the accepted `spec.md` and `plan.md`. |
+| Verification comes from tools, not claims | `make lint test` and the `verifier` subagent before "done". Evidence is command output and `git diff`. |
+| Bugs start with a failing test | On `fix/*`, the failing test is committed first and not edited after (hook). |
+| Agent output arrives as a PR; nothing pushes to `main` | Branch ruleset and `ci-ok` required check. |
+| The agent can't approve its own work | AI review is advisory. Only the owner approves PRs and production deploys. |
+| The agent never deploys to production | Deploys run in CI behind the Environment reviewer. |
+| Agents act under their own identity | PRs come from the bot, never the owner's account (see PD-10). |
+| Configuration is code | `CLAUDE.md`, `REVIEW.md`, skills, hooks, agents and workflows change only through PRs. |
+| Must-hold rules are enforced, not advised | Hooks and required CI checks back every rule; skills are advisory. |
+| Deterministic first, AI last | Lint, tests, scanners and classification decide; AI review runs once after they pass. |
+| Mistakes made twice go into `CLAUDE.md` | Kept under one page. |
+| Cheap or free by default | $0 when idle; nothing billable without the owner's say-so. |
+
+### What we adapt, and the condition to revisit
+
+Each adaptation is listed below with its ID. Revisit it when its condition changes:
+
+- **A second person joins the project:** split the roles again (PD-1, PD-8) and consider code-owner review (PD-2).
+- **Real users or revenue:** add staging (PD-4) and the Stage 6 control bands (PD-11).
+- **An Enterprise plan:** consider Claude Security scans (PD-6).
+- **Many intents a week:** automate spec writing (PD-7).
+
 ## Where we follow the playbook
 
 For reference, so a gap isn't mistaken for the norm:
@@ -41,7 +84,7 @@ For reference, so a gap isn't mistaken for the norm:
 
 | ID | Playbook | This template | Why | Status |
 |---|---|---|---|---|
-| PD-9 | Continuous evals: 20–50 real tasks run in CI on a schedule and on any change to `CLAUDE.md`, skills or hooks, and they gate those changes. Every incident adds one. | None. Changes to `CLAUDE.md`, skills and hooks are reviewed like code, but nothing regression-tests them. | Not in intent 0001's scope, and each run uses Pro quota. This is the largest gap. | open: needs its own intent, kept to a few cases within quota |
+| PD-9 | Continuous evals: 20–50 real tasks run in CI on a schedule and on any change to `CLAUDE.md`, skills or hooks, and they gate those changes. Every incident adds one. | None. Changes to `CLAUDE.md`, skills and hooks are reviewed like code, but nothing regression-tests them. | Not in intent 0001's scope, and each run uses Pro quota. This is the largest gap. | open: a small intent of its own, 3–5 cases run only when `CLAUDE.md`, skills or hooks change, to stay within Pro quota |
 | PD-10 | Agent runs use their own identity, so logs separate agent actions from the engineer's. | A cloud Claude Code session not on the bot-relay environment pushes, opens PRs and merges as the owner. Bot identity works through `scripts/bot-relay.sh` (intent 0002). | The session was on the Default environment. Switching was refused because the bot-relay environment's name contains parentheses. | open: owner renames the environment, then the session switches |
 | PD-11 | Stage 6, Maintain: σ control bands on a metric, read-only diagnosis at 2σ, a PR or pre-approved runbook at 3σ, findings written as `intent.md`. | Not built. | Milestone order. | planned: 0001 M4 (`maintain.yml`) |
 | PD-12 | Leading and lagging metrics per stage, DORA measures, OpenTelemetry session export. | Defined in 0001 spec §7; nothing collects them yet, and no OpenTelemetry export is set up. | Milestone order. | planned: 0001 M4 (`sdlc-metrics.sh`) |
