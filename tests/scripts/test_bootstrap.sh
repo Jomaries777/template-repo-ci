@@ -85,6 +85,8 @@ check "python: keeps only the python stack" '[[ "$(ls "$py/stacks")" == python ]
 check "python: deploy.yml names the stack" 'grep -qx "stack: python" "$py/deploy.yml"'
 check "python: README stub names the stack" 'grep -q "Stack: \`python\`" "$py/README.md"'
 check "python: dependabot adds pip for the stack" 'grep -q "package-ecosystem: pip" "$py/.github/dependabot.yml" && grep -q "directory: /stacks/python" "$py/.github/dependabot.yml"'
+check "python: dependabot adds the stack's Docker image" 'grep -q "package-ecosystem: docker" "$py/.github/dependabot.yml"'
+check "python: the stack fragment is removed" '[[ ! -e "$py/stacks/python/dependabot-updates.yml" ]]'
 check "python: the root Makefile delegates to stacks/python" '[[ "$(make -s -C "$py" -p -n help 2>/dev/null | sed -n "s/^STACK_DIR := //p" | head -n 1)" == stacks/python ]]'
 check "python: ships the make targets the pipeline calls" '( for t in lint typecheck test build build-static acceptance smoke; do grep -q "^$t:" "$py/stacks/python/Makefile" || { echo "missing $t"; exit 1; }; done )'
 
