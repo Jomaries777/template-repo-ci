@@ -398,7 +398,7 @@ EOF
   rc_is "github-pages: revert exits 0" 0
   if ! git -C "$tmp/gp.git" cat-file -e gh-pages:index.html 2>/dev/null; then pass "github-pages: revert restores the earlier files"; else fail "github-pages: revert left index.html"; fi
   if [[ "$(git -C "$tmp/gp.git" rev-parse gh-pages~1)" == "$deployed" ]]; then pass "github-pages: revert is a new commit (history kept)"; else fail "github-pages: revert history"; fi
-  git -C "$gp" commit -q --allow-empty -m other
+  git -C "$gp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m other
   gpdeploy promote production "$src_sha"
   rc_is "github-pages: refuses to export a commit other than the checkout" 1
 fi
