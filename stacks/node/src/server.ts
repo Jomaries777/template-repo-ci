@@ -4,6 +4,7 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
+import { route } from "./routes.js";
 
 function sendJson(
   res: ServerResponse,
@@ -22,20 +23,8 @@ export function createServer(): Server {
   return createHttpServer((req: IncomingMessage, res: ServerResponse) => {
     const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
 
-    if (req.method === "GET" && pathname === "/") {
-      sendJson(res, 200, { message: "hello" });
-      return;
-    }
-
-    if (req.method === "GET" && pathname === "/health") {
-      sendJson(res, 200, {
-        status: "ok",
-        version: process.env.APP_VERSION ?? "dev",
-      });
-      return;
-    }
-
-    sendJson(res, 404, { error: "not found" });
+    const { status, body } = route(req.method, pathname);
+    sendJson(res, status, body);
   });
 }
 

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/github-pages/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# url <env>: print the site URL (https://<owner>.github.io/<repo>/ or a custom domain).
+init_common
+env_check "${1:-}"
+url="$(query "https://owner.github.io/repo/" gh api "repos/$REPO/pages" --jq .html_url)"
+[[ -n "$url" ]] || die "Pages is not enabled for $REPO (run make bootstrap)"
+printf "%s\n" "$url"

@@ -12,9 +12,10 @@
 #   6. on live failure: revert to PREV, re-check once, fail
 #   7. cleanup
 #
-# With RELEASE_DARK_DEPLOY=false (adapters without dark deploys, C9) steps 2-3
-# are skipped here and step 4 is the deploy; a local pre-traffic test belongs
-# to such an adapter.
+# With RELEASE_DARK_DEPLOY=false (adapters without dark deploys, C9), step 2
+# is `deploy.sh preview <env> <sha>`, which serves the artifact on localhost
+# inside the job and prints its URL; step 3 smokes that URL, then `discard`
+# stops it; step 4 (promote) is the deploy.
 #
 # Env: RELEASE_LIVE_CHECKS (default 3), RELEASE_INTERVAL (seconds, default 60),
 #      RELEASE_DARK_DEPLOY (default true),
@@ -100,7 +101,23 @@ if [[ "$dark" == true ]]; then
     exit 1
   fi
 else
-  log "2-3/7 skipped: this target has no dark deploy"
+  # C9: no dark deploy on this target, so the pre-traffic test runs against
+  # the artifact served locally inside the job (`deploy.sh preview`), which
+  # is stopped (discard) before the deploy.
+  log "2/7 no dark deploy: serving $sha locally"
+  if ! candidate="$("$deploy_sh" preview "$env_name" "$sha")" || [[ -z "$candidate" ]]; then
+    log "local preview failed or printed no URL: not deploying"
+    "$deploy_sh" discard "$env_name" "$sha" || log "discard failed"
+    exit 1
+  fi
+  log "3/7 pre-traffic test against the local preview $candidate"
+  preview_ok=1
+  smoke "$candidate" || preview_ok=0
+  "$deploy_sh" discard "$env_name" "$sha" || log "stopping the local preview failed"
+  if ((!preview_ok)); then
+    log "pre-traffic test failed: not deploying; nothing changed on the target"
+    exit 1
+  fi
 fi
 
 log "4/7 promote $sha"

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/github-pages/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# deploy-dark: not supported (target.yml: dark_deploy: false). release.sh
+# calls `preview` instead.
+usage_error "github-pages has no dark deploy; release.sh uses preview (C9)"

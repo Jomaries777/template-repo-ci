@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/github-pages/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# revert <env> <version>: restore the files of an earlier gh-pages commit as
+# a new commit (no force push) and wait until Pages has published it.
+init_common
+env_check "${1:-}"
+version="${2:-}"
+[[ "$version" =~ ^[0-9a-f]{7,40}$ ]] || usage_error "invalid version (a gh-pages commit): ${version:-<empty>}"
+site="$(checkout_branch)"
+if [[ "$DRY_RUN" != "1" ]]; then
+  git -C "$site" cat-file -e "$version^{commit}" 2>/dev/null ||
+    git_pages -C "$site" fetch -q --depth 1 origin "$version" >&2 ||
+    die "gh-pages has no commit $version"
+  git -C "$site" rm -rq --ignore-unmatch . >&2
+  git -C "$site" checkout "$version" -- . >&2
+fi
+commit="$(commit_and_push "$site" "" "revert to ${version:0:7}")"
+wait_live "$commit"
+echo "github-pages: reverted to the files of ${version:0:7}" >&2

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/github-pages/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# current <env>: print the gh-pages commit being served, or nothing before
+# the first deploy.
+init_common
+env_check "${1:-}"
+commit="$(query "1111111111111111111111111111111111111111" gh api "repos/$REPO/branches/$BRANCH" --jq .commit.sha 2>/dev/null || true)"
+printf "%s\n" "$commit"
