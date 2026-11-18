@@ -16,6 +16,7 @@ case "$1" in
   current) [[ -n "${CURRENT_EMPTY:-}" ]] || echo "svc-00001-old" ;;
   revert) [[ -z "${REVERT_FAIL:-}" ]] || exit 1; touch "$CALLS.reverted" ;;
   deploy-dark) [[ -z "${DARK_FAIL:-}" ]] || exit 1; echo "https://cand.example" ;;
+  preview) [[ -z "${PREVIEW_FAIL:-}" ]] || exit 1; echo "http://127.0.0.1:9999/" ;;
   url) if [[ -n "${URL_FOLLOWS_REVERT:-}" && -e "$CALLS.reverted" ]]; then echo "https://prev.example/"; else echo "https://live.example/"; fi ;;
 esac
 EOF
@@ -117,6 +118,22 @@ rc_is "no dark deploy: exits 0" 0
 lacks "no dark deploy: skips deploy-dark" "deploy-dark"
 has "no dark deploy: promotes" "promote dev $sha"
 has "no dark deploy: cleans up" "cleanup dev"
+# C9: without a dark deploy, the pre-traffic test runs against the artifact
+# served locally (`deploy.sh preview`), which is stopped before the deploy.
+want="current dev
+preview dev $sha
+smoke http://127.0.0.1:9999/
+discard dev $sha
+promote dev $sha"
+got="$(head -n 5 <<<"$calls")"
+if [[ "$got" == "$want" ]]; then pass "no dark deploy: local pre-traffic test, then promote"; else fail "no dark deploy: order was: $(tr '\n' ';' <<<"$got")"; fi
+run nodarkfail RELEASE_DARK_DEPLOY=false SMOKE_FAIL_URL=http://127.0.0.1:9999/
+rc_is "no dark deploy: failed local pre-traffic test exits 1" 1
+lacks "no dark deploy: failed local pre-traffic test never promotes" "promote"
+has "no dark deploy: failed local pre-traffic test stops the preview" "discard dev $sha"
+run nopreview RELEASE_DARK_DEPLOY=false PREVIEW_FAIL=1
+rc_is "no dark deploy: a preview that fails exits 1" 1
+lacks "no dark deploy: a preview that fails never promotes" "promote"
 
 # --- first deploy: nothing to revert to
 run first CURRENT_EMPTY=1 SMOKE_FAIL_AFTER=1

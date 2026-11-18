@@ -63,6 +63,10 @@ out_is() {
 # --- dispatcher
 dr cloud-run frobnicate
 rc_is "dispatcher: unknown verb exits 64" 64
+# `preview` (C9) is a contract verb, only for adapters without a dark deploy:
+# an adapter that lacks it is a missing verb, not an unknown one.
+dr cloud-run preview production 1234567
+lacks "dispatcher: preview is a known verb" "unknown verb"
 dr nope url dev
 rc_is "dispatcher: unknown target exits 64" 64
 dr '../none' url
