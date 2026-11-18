@@ -1,0 +1,27 @@
+[project]
+name = "app"
+version = "0.1.0"
+requires-python = ">=3.12"
+# Runtime: standard library only. Dev tools: requirements-dev.txt (hashed).
+dependencies = []
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "A", "N", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"acceptance/*" = ["S101"]
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
+files = ["src", "tests", "acceptance"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+markers = ["prod_safe: read-only checks that are safe to run against production (make smoke)"]
