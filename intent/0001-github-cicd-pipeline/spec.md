@@ -333,7 +333,7 @@ Every verb supports `DEPLOY_DRY_RUN=1`, which prints the commands instead of run
 **`cloud-run` adapter details** (`deploy/targets/cloud-run/bootstrap`, idempotent gcloud, no Terraform):
 - **One GCP project per app.** Region `us-central1`, a Tier 1 region where the free tier applies (⚠ verify current free-tier figures on the official pricing page).
 - **Workload Identity Federation**: pool `github`, provider restricted to `repository == <owner>/<repo>`.
-- **Deploy service account** with `roles/run.developer`, `roles/artifactregistry.writer`, and `roles/iam.serviceAccountUser` on the runtime SA only.
+- **Deploy service account** with `roles/run.developer`, `roles/artifactregistry.repoAdmin` on the `app` repository only (promote moves image tags, which needs `tags.delete`), and `roles/iam.serviceAccountUser` on the runtime SA only.
 - **Artifact Registry** repo `app` with a cleanup policy: keep the last 5 images, delete untagged images after 7 days and tagged images after 30 days, but never the images tagged `dev`/`production` (and `-prev`) by promote and revert (protects the 0.5 GB free storage; amended 2026-11-15, see plan.md Deviations).
 - **Cloud Run services** `<app>-dev` and `<app>-prod`, with `--cpu 1 --memory 512Mi`. The runtime SA has no roles unless the app needs them.
 - Why gcloud scripts rather than Terraform: no state bucket to pay for or secure, and fewer moving parts for a solo project. Revisit if resources grow beyond about 10.
