@@ -213,10 +213,13 @@ merge; the owner approves.
       # with the same indentation; fail if pr.yml no longer has that item.
       awk -v lang="$codeql_language" -v mode="$codeql_build" '
         { print }
-        pending && /build-mode:/ {
+        # Only the line right after the actions item may be its build-mode.
+        pending == 2 { pending = 0 }
+        pending == 1 && /^[[:space:]]+build-mode:/ {
           print indent "- language: " lang; print indent "  build-mode: " mode; pending = 0; done = 1
         }
-        /^[[:space:]]+- language: actions$/ { indent = $0; sub(/-.*/, "", indent); pending = 1 }
+        pending == 1 { pending = 2 }
+        /^[[:space:]]+- language: actions$/ { indent = $0; sub(/-.*/, "", indent); pending = 1; next }
         END { if (!done) exit 1 }
       ' .github/workflows/pr.yml >.github/workflows/pr.yml.new ||
         die "pr.yml has no codeql '- language: actions' entry to add $codeql_language after"
