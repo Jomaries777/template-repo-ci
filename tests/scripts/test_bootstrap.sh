@@ -83,6 +83,15 @@ if command -v actionlint >/dev/null 2>&1; then
   check "codeql: pr.yml is still a valid workflow" 'actionlint "$prw"'
 fi
 
+# If the actions item has no build-mode line right after it, bootstrap must
+# stop rather than insert the stack's entry somewhere else.
+cqb="$tmp/cqb"
+copy "$cqb"
+sed -i '/^[[:space:]]*- language: actions$/{n;d}' "$cqb/.github/workflows/pr.yml"
+rc=0
+out="$(BOOTSTRAP_OWNER=acme "$cqb/scripts/bootstrap.sh" --stack node --target none --local-only 2>&1)" || rc=$?
+check "codeql: an actions item without build-mode stops bootstrap" '[[ $rc != 0 ]] && grep -q "codeql" <<<"$out"'
+
 # The bootstrapped project's own script tests must pass (they ship with it).
 # Stack tests need npm and are run by its CI; these need only bash and git.
 (cd "$a" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm boot)
