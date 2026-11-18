@@ -115,6 +115,8 @@ Built by Claude Code in a cloud session as owner PRs, as in M2. Steps 1, 2 and 7
 
 ## Deviations
 
+Departures from this plan. Departures from the playbook itself are tracked in [`docs/playbook-deviations.md`](../../docs/playbook-deviations.md).
+
 | Date | Change | Why |
 |---|---|---|
 | 2026-11-15 | `/teamwork` and `/swarm` run interactively and report through `agy-report.sh`. Headless is only for `/boost` and plain prompts. `--mode auto` is not used. | [Spike A](spikes/m0-spike-a-antigravity.md): headless `/teamwork` returned `SUCCESS` without changing the workspace, and `--mode auto` isn't available on this account |
