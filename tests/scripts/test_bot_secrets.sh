@@ -42,12 +42,17 @@ printf '{"set":%s}\n200' "$apps"
 CURL
 chmod +x "$tmp/bin/gh" "$tmp/bin/curl"
 
-# run [args...]: run bot-secrets.sh; sets out, err and rc.
+# run [args...]: run bot-secrets.sh; sets out, err and rc. The broker URL
+# comes from the config file unless TEST_BROKER_URL is set: an inherited
+# BOT_BROKER_URL (cloud sessions export one) is cleared, so the result is the
+# same in CI and in any session.
 run() {
   rm -f "$tmp/args" "$tmp/hdrs" "$tmp/body"
   rc=0
-  out="$(PATH="$tmp/bin:$PATH" CURL_ARGS="$tmp/args" CURL_HDRS="$tmp/hdrs" CURL_BODY="$tmp/body" BOT_CONFIG_DIR="$tmp/cfg" \
-    bash "$src/scripts/bot-secrets.sh" "$@" 2>"$tmp/err")" || rc=$?
+  # No array: "${a[@]}" of an empty array is an unbound-variable error under
+  # set -u on bash before 4.4 (macOS /bin/bash is 3.2).
+  out="$(env -u BOT_BROKER_URL ${TEST_BROKER_URL:+"BOT_BROKER_URL=$TEST_BROKER_URL"} PATH="$tmp/bin:$PATH" CURL_ARGS="$tmp/args" CURL_HDRS="$tmp/hdrs" \
+    CURL_BODY="$tmp/body" BOT_CONFIG_DIR="$tmp/cfg" bash "$src/scripts/bot-secrets.sh" "$@" 2>"$tmp/err")" || rc=$?
   err="$(cat "$tmp/err")"
 }
 check() { # check <name> <condition...>
@@ -70,6 +75,10 @@ check "body is {repo, apps}" test "$(head -n 1 "$tmp/body")" == '{"repo":"acme-x
 
 run --apps dependabot Jomaries777/two
 check "--apps limits the apps" grep -q '"apps":\["dependabot"\]' "$tmp/body"
+
+# BOT_BROKER_URL wins over the saved broker_url, as in bot-relay.sh.
+TEST_BROKER_URL=https://env-broker.test run Jomaries777/two
+check "BOT_BROKER_URL overrides the saved broker URL" grep -q "https://env-broker.test/secrets$" "$tmp/args"
 
 FAKE_CODE=403 FAKE_BODY='{"error":"github_token_not_owner"}' run Jomaries777/two
 check "refusal fails" test "$rc" != 0
