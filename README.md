@@ -35,10 +35,11 @@ Do this once per GitHub account, not per project. The template's own owner has a
    - On a Mac, copy both lines, then store it in the Keychain, where bootstrap looks first:
 
      ```bash
-     security add-generic-password -a "$USER" -s claude-code-oauth-token -w "$(pbpaste | tr -d '[:space:]')"
+     security add-generic-password -U -a "$USER" -s claude-code-oauth-token -w "$(pbpaste | tr -d '[:space:]')"
      pbcopy < /dev/null
      ```
 
+     `-U` updates the item when you rotate the token. The token is passed with `-w`, not typed at `security`'s prompt, because that prompt also reads only one line; it is on the command line only while `security` runs.
    - Elsewhere, join the two lines in a text editor before pasting the token at bootstrap's prompt.
 4. **Deploy target accounts**, only for the targets you'll use:
    - `cloud-run`: a Google Cloud billing account.
@@ -131,7 +132,7 @@ Approve each artifact by merging it before asking for the next one.
 | `cloudflare-workers` | Edge APIs, light backends; **node only** | Version with a preview URL, then a deploy at 100%; revert with `rollback` | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` (Workers Scripts Edit on that one account). The token is stored on the `dev` and `production` Environments only | Workers Free plan, no card on file |
 | `none` | Libraries, CLIs, docs | No deploy | Nothing | Nothing is provisioned |
 
-`cloudflare-workers` is new and not yet proven end to end on a live account: see [`spikes/m3-step4-cloudflare-workers.md`](intent/0001-github-cicd-pipeline/spikes/m3-step4-cloudflare-workers.md). Until the owner's `deploy.yml` change that passes it the Cloudflare settings is merged, it can't deploy.
+`cloudflare-workers` is new and not yet proven end to end on a live account: see [`spikes/m3-step4-cloudflare-workers.md`](intent/0001-github-cicd-pipeline/spikes/m3-step4-cloudflare-workers.md). It can't deploy until `deploy.yml` passes it `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKERS_SUBDOMAIN` and `CLOUDFLARE_API_TOKEN`, an owner workflow edit described in the [plan's Deviations](intent/0001-github-cicd-pipeline/plan.md#deviations) (2026-11-20).
 
 ## Continue on another computer
 
