@@ -516,6 +516,41 @@ JSON
   if grep -q "versions deploy" "$cfw/calls"; then fail "cloudflare-workers: promote deployed without a tagged version"; else pass "cloudflare-workers: no deploy without a tagged version"; fi
   cfreal revert production "$prev_id"
   if grep -q "^rollback $prev_id --name hello .*--yes" "$cfw/calls"; then pass "cloudflare-workers: revert rolls back to the given version without prompting"; else fail "cloudflare-workers: revert args ($(cat "$cfw/calls"))"; fi
+
+  # bootstrap, for real: only a 404 from the API deploys the placeholder; a
+  # Worker that exists is left alone, and any other answer deploys nothing.
+  mkdir -p "$cfw/bin"
+  cat >"$cfw/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+case " $* " in
+  *" -w "*) echo -n "$CF_SCRIPT_CODE" ;;
+  *) echo '{"success": true, "result": {"subdomain": "acme"}}' ;;
+esac
+FAKE
+  # shellcheck disable=SC2016 # $* and $1 belong to the generated script
+  printf '#!/usr/bin/env bash\necho "gh $*" >>"%s/calls"\n[[ "$1 $2" != "secret set" ]] || cat >/dev/null\nexit 0\n' "$cfw" >"$cfw/bin/gh"
+  chmod +x "$cfw/bin/curl" "$cfw/bin/gh"
+  cfboot() {
+    rc=0
+    : >"$cfw/calls"
+    out="$(env -u DEPLOY_DRY_RUN "${cf_env[@]}" PATH="$cfw/bin:$PATH" WRANGLER_BIN="$cfw/wrangler" \
+      CLOUDFLARE_API_TOKEN=s3cr3t-token CF_SCRIPT_CODE="$1" GITHUB_REPOSITORY=acme/hello \
+      "$root/deploy/targets/cloudflare-workers/bootstrap" 2>"$tmp/err")" || rc=$?
+    err="$(cat "$tmp/err")"
+  }
+  cfboot 404
+  rc_is "cloudflare-workers bootstrap: new account" 0
+  if [[ "$(grep -c '^deploy --name hello' "$cfw/calls")" == 2 ]]; then pass "cloudflare-workers bootstrap: a 404 deploys the placeholder to both Workers"; else fail "cloudflare-workers bootstrap: placeholder deploys ($(cat "$cfw/calls"))"; fi
+  if grep -q "secret set CLOUDFLARE_API_TOKEN --env production --repo acme/hello" "$cfw/calls"; then pass "cloudflare-workers bootstrap: sets the Environment secret"; else fail "cloudflare-workers bootstrap: no Environment secret ($(cat "$cfw/calls"))"; fi
+  cfboot 200
+  rc_is "cloudflare-workers bootstrap: rerun" 0
+  if grep -q '^deploy ' "$cfw/calls"; then fail "cloudflare-workers bootstrap: rerun replaced an existing Worker"; else pass "cloudflare-workers bootstrap: rerun leaves existing Workers alone"; fi
+  for code in 401 500 000; do
+    cfboot "$code"
+    rc_is "cloudflare-workers bootstrap: HTTP $code stops" 1
+    if grep -q '^deploy ' "$cfw/calls"; then fail "cloudflare-workers bootstrap: HTTP $code deployed the placeholder"; else pass "cloudflare-workers bootstrap: HTTP $code deploys nothing"; fi
+  done
+  lacks "cloudflare-workers bootstrap: token never reaches stdout or stderr" "s3cr3t-token"
 fi
 
 [[ "$failures" -eq 0 ]] || {

@@ -148,7 +148,8 @@ entry_point() {
 # is committed and switching targets changes no file. Sets CONFIG_DIR (one
 # per process, removed on exit) and CONFIG. A relative <main> is resolved
 # against CONFIG_DIR by wrangler. preview_urls gives every uploaded version
-# its own URL: the dark deploy.
+# its own URL: the dark deploy. Its EXIT trap replaces any other: lib.sh is
+# sourced only by this adapter's verbs, each its own process.
 write_config() {
   if [[ -z "${CONFIG_DIR:-}" ]]; then
     CONFIG_DIR="$(mktemp -d)"

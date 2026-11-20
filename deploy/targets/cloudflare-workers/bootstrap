@@ -32,6 +32,12 @@ cf_get() {
     curl -fsS --max-time 30 -H @- "$api$1"
 }
 
+# cf_code <path>: the HTTP status of a GET (000 on a network error).
+cf_code() {
+  printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN" |
+    curl -sS --max-time 30 -o /dev/null -w '%{http_code}' -H @- "$api$1" || true
+}
+
 echo "== workers.dev subdomain" >&2
 sub_json="$(query '{"success": true, "result": {"subdomain": "dry-run"}}' cf_get "/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain")" ||
   die "could not read the account's workers.dev subdomain: check CLOUDFLARE_ACCOUNT_ID and the token's Workers Scripts permission"
@@ -42,14 +48,21 @@ echo "cloudflare-workers: Workers will be public at https://<worker>.${subdomain
 
 echo "== Workers" >&2
 # Each Worker starts with a placeholder version (503), so `current` always
-# has a version to revert to, including on the first release.
+# has a version to revert to, including on the first release. Only a 404
+# creates it: any other answer (an expired token, a network error) stops
+# here, so a rerun can never replace a live Worker with the placeholder.
 for env in dev production; do
   worker_for "$env"
   write_config "$WORKER" placeholder.js
-  if [[ "$DRY_RUN" != "1" ]] && wrangler deployments status --json --name "$WORKER" --config "$CONFIG" >/dev/null 2>&1; then
-    echo "cloudflare-workers: $WORKER exists" >&2
-    continue
-  fi
+  code="$(query 404 cf_code "/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$WORKER/settings")"
+  case "$code" in
+    200)
+      echo "cloudflare-workers: $WORKER exists" >&2
+      continue
+      ;;
+    404) ;;
+    *) die "could not tell whether $WORKER exists (HTTP $code); nothing was deployed. Check the token and retry" ;;
+  esac
   cat >"$CONFIG_DIR/placeholder.js" <<'JS'
 export default {
   fetch: () => new Response(JSON.stringify({ error: "not deployed yet" }), {
