@@ -74,7 +74,7 @@ Or use **Use this template** on GitHub, then clone the new repo. Done when `git 
 Pick a stack and a target (next section), export the target's settings, then run bootstrap:
 
 ```bash
-export BOT_APP_ID="$(gh variable get BOT_APP_ID --repo Jomaries777/template-repo-ci)"
+export BOT_APP_ID="$(gh variable get BOT_APP_ID --repo <you>/template-repo-ci)"   # set in step 2
 make bootstrap STACK=node TARGET=github-pages
 ```
 
