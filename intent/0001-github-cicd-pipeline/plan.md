@@ -102,6 +102,7 @@ Built by Claude Code in a cloud session as owner PRs, as in M2. Steps 1, 2 and 7
 ### M4: Maintain, metrics, docs (PRs #13–#14)
 - `maintain.yml` (daily prod smoke, weekly CodeQL and branch cleanup, monthly `sdlc-metrics.sh` and token-age check) and `sdlc-metrics.sh`.
 - `README.md` "Start a new project" quick-start (FR-14). Then follow it word for word in a fresh clone and a new sandbox repo (criterion 12).
+- Follow-ups from M3: a Dependabot npm entry for `deploy/targets/cloudflare-workers` (the pinned wrangler); one shared parser for `target.yml` `stacks:`, now duplicated in `scripts/bootstrap.sh` and `scripts/bootstrap-target.sh` (Claude review on #47).
 
 ## Progress
 

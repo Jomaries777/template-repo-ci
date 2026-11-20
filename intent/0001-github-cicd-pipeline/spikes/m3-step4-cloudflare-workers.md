@@ -22,7 +22,7 @@ The adapter is built against the phase 1 results. Phase 2 confirms them, or reop
 
 ## Phase 2: the owner's live checklist
 
-Every item needs the separate Cloudflare account (plan decision 4), on the Workers Free plan with **no card on file**. Record the results in this file.
+Every item needs the separate Cloudflare account (plan decision 4), on the Workers Free plan with **no card on file**. Record each result in this file.
 
 1. **Account.** The account has a neutral `workers.dev` subdomain: not derived from the owner's email, because it appears in public CI logs.
 2. **Token.** In the dashboard, under My Profile → API Tokens, create a custom token with only **Account → Workers Scripts → Edit**, scoped to that one account. Note its expiry for the yearly rotation (C10).
@@ -33,7 +33,13 @@ Every item needs the separate Cloudflare account (plan decision 4), on the Worke
 4. **Token scope.** Check whether a Workers-Scripts-Edit-only token can read `/accounts/<id>/workers/subdomain`, which bootstrap uses. If it can't, record the extra read permission needed.
 5. **Full chain.** One code PR goes through dev and production, with the preview URL smoke-tested before promote (criterion 4).
 6. **Auto-revert.** A broken `/` is reverted automatically, and the revert is confirmed in under 2 minutes (criterion 5). Record the time.
-7. **Free-plan facts.** Cloudflare's docs couldn't be reached from the cloud session, so these are open:
+7. **wrangler's real output matches what the adapter parses.** Pass or fail each one. A mismatch breaks `current`, `promote` or `deploy-dark`, and a wrong `current` removes the revert target.
+   - `wrangler deployments status --json --name <worker>` has `versions[].version_id` and `versions[].percentage` (`current`).
+   - `wrangler versions list --json --name <worker>` has `id`, `metadata.created_on` and `annotations["workers/tag"]` = `c<sha7>` for an upload made with `--tag` (`promote`).
+   - With `WRANGLER_OUTPUT_FILE_PATH` set, `wrangler versions upload` writes a `{"type": "version-upload", "preview_url": "https://..."}` line (`deploy-dark`).
+   - `wrangler rollback <id> --yes` returns without a prompt in CI (`revert`).
+8. **Environments.** The adapter's `bootstrap` sets `CLOUDFLARE_API_TOKEN` on the `dev` and `production` Environments, which `scripts/bootstrap.sh` creates in an earlier step. Confirm that `make bootstrap-target` on the existing sandbox finds both.
+9. **Free-plan facts.** Cloudflare's docs couldn't be reached from the cloud session, so these are open:
    - What happens over the daily request limit: an error, not a charge?
    - Are preview URLs public by default?
    - How many versions are kept, and can an undeployed version be deleted?
