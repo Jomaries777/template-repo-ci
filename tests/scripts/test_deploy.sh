@@ -458,6 +458,7 @@ if [[ -d "$root/deploy/targets/cloudflare-workers" ]]; then
   has "cloudflare-workers bootstrap: token is an Environment secret (dev)" "secret set CLOUDFLARE_API_TOKEN --env dev"
   has "cloudflare-workers bootstrap: token is an Environment secret (production)" "secret set CLOUDFLARE_API_TOKEN --env production"
   lacks "cloudflare-workers bootstrap: token is never a repo-wide secret" "secret set CLOUDFLARE_API_TOKEN --repo"
+  has "cloudflare-workers bootstrap: records when the token was set" "gh variable set CLOUDFLARE_API_TOKEN_SET_AT --repo acme/hello --body"
   if grep -qx 'dark_deploy: true' "$root/deploy/targets/cloudflare-workers/target.yml"; then pass "cloudflare-workers: target.yml declares a dark deploy"; else fail "cloudflare-workers: target.yml dark_deploy"; fi
 
   # Fake wrangler: answers from files in $cfw, records every call.

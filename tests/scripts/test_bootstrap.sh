@@ -190,6 +190,7 @@ has "dry run: creates dev" "DRY-RUN: gh api -X PUT repos/acme/hello/environments
 has "dry run: production with a required reviewer" "DRY-RUN: gh api -X PUT repos/acme/hello/environments/production"
 has "dry run: production limited to main" "deployment-branch-policies --silent -f name=main -f type=branch"
 has "dry run: Claude token secret" "gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme/hello --app actions"
+has "dry run: records when the Claude token was set" "gh variable set CLAUDE_CODE_OAUTH_TOKEN_SET_AT --repo acme/hello --body $(date -u +%Y-%m-%d)"
 has "dry run: bot key mirrored to Dependabot" "gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app dependabot"
 has "dry run: BOT_APP_ID variable" "DRY-RUN: gh variable set BOT_APP_ID --repo acme/hello --body 123"
 has "dry run: adds the stack's CodeQL language" "DRY-RUN: add codeql language javascript-typescript (build-mode none) to .github/workflows/pr.yml"

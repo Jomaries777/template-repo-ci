@@ -311,9 +311,12 @@ keychain() {
   security find-generic-password -s "$1" -w 2>/dev/null || true
 }
 # set_secret <name> <app> <producer...>: pipe the producer's output to gh.
+# Sets secret_written=1 when it writes (or, in dry run, would write) it.
+secret_written=0
 set_secret() {
   local secret="$1" app="$2" list
   shift 2
+  secret_written=0
   list="$names_actions"
   [[ "$app" == dependabot ]] && list="$names_dependabot"
   if grep -qx "$secret" <<<"$list"; then
@@ -322,6 +325,7 @@ set_secret() {
   fi
   if ((dry_run)); then
     echo "DRY-RUN: <$secret from Keychain or prompt> | gh secret set $secret --repo $repo --app $app"
+    secret_written=1
     return 0
   fi
   # Capture first: a producer that dies inside a pipeline would only end its
@@ -331,6 +335,7 @@ set_secret() {
   value="$("$@")" || die "could not read $secret"
   [[ -n "$value" ]] || die "$secret is empty; not setting it"
   printf '%s' "$value" | gh secret set "$secret" --repo "$repo" --app "$app"
+  secret_written=1
 }
 claude_token() {
   local v
@@ -357,6 +362,11 @@ bot_key() {
   printf '%s' "$pem"
 }
 set_secret CLAUDE_CODE_OAUTH_TOKEN actions claude_token
+# Record when the token was set, for the renewal check in sdlc-metrics.sh
+# (spec §4.12). Only when it was written: a rerun keeps the original date.
+if ((secret_written)); then
+  run gh variable set CLAUDE_CODE_OAUTH_TOKEN_SET_AT --repo "$repo" --body "$(date -u +%Y-%m-%d)"
+fi
 # broker_signed_in: this device signed in with scripts/bot-login.sh (spec 0002
 # phase 2). Then the broker sets the bot key secrets and the key never comes
 # here; a broker refusal stops bootstrap rather than fall back to a phase-1 key.
