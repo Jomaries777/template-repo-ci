@@ -39,7 +39,7 @@ Do this once per GitHub account, not per project. The template's own owner has a
      pbcopy < /dev/null
      ```
 
-     `-U` updates the item when you rotate the token. The token is passed with `-w`, not typed at `security`'s prompt, because that prompt also reads only one line; it is on the command line only while `security` runs.
+     `-U` updates the item when you rotate the token. The token is passed with `-w`, not typed at `security`'s prompt, because that prompt also reads only one line. While `security` runs, the token is on its command line, where other users of the Mac could see it with `ps`; on a single-user Mac that is fine.
    - Elsewhere, join the two lines in a text editor before pasting the token at bootstrap's prompt.
 4. **Deploy target accounts**, only for the targets you'll use:
    - `cloud-run`: a Google Cloud billing account.

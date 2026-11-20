@@ -49,9 +49,9 @@ chmod +x "$tmp/bin/gh" "$tmp/bin/curl"
 run() {
   rm -f "$tmp/args" "$tmp/hdrs" "$tmp/body"
   rc=0
-  local broker_env=()
-  [[ -z "${TEST_BROKER_URL:-}" ]] || broker_env=("BOT_BROKER_URL=$TEST_BROKER_URL")
-  out="$(env -u BOT_BROKER_URL "${broker_env[@]}" PATH="$tmp/bin:$PATH" CURL_ARGS="$tmp/args" CURL_HDRS="$tmp/hdrs" \
+  # No array: "${a[@]}" of an empty array is an unbound-variable error under
+  # set -u on bash before 4.4 (macOS /bin/bash is 3.2).
+  out="$(env -u BOT_BROKER_URL ${TEST_BROKER_URL:+"BOT_BROKER_URL=$TEST_BROKER_URL"} PATH="$tmp/bin:$PATH" CURL_ARGS="$tmp/args" CURL_HDRS="$tmp/hdrs" \
     CURL_BODY="$tmp/body" BOT_CONFIG_DIR="$tmp/cfg" bash "$src/scripts/bot-secrets.sh" "$@" 2>"$tmp/err")" || rc=$?
   err="$(cat "$tmp/err")"
 }
