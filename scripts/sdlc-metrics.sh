@@ -113,8 +113,9 @@ while IFS= read -r n; do
   [[ "$n" =~ ^[0-9]+$ ]] || continue
   sha="$(api "repos/$repo/pulls/$n/commits?per_page=1" | jq -r '.[0].sha // empty')"
   if [[ -n "$sha" ]]; then
-    conclusion="$(api "repos/$repo/commits/$sha/check-runs?check_name=ci-ok&per_page=1" |
-      jq -r '.check_runs[0].conclusion // empty')"
+    # The first attempt: reruns add runs, and the API lists the newest first.
+    conclusion="$(api "repos/$repo/commits/$sha/check-runs?check_name=ci-ok&per_page=100" |
+      jq -r '.check_runs | sort_by(.started_at) | .[0].conclusion // empty')"
     if [[ -n "$conclusion" ]]; then
       evaluated=$((evaluated + 1))
       [[ "$conclusion" == success ]] && first_pass=$((first_pass + 1))
@@ -131,8 +132,10 @@ merged="$(jq '.items | length' <<<"$prs")"
 # --- production deploys: successful statuses in the month, and lead time from
 # the deployed commit (on main, the merge) to that status.
 deps="$(api "repos/$repo/deployments?environment=production&per_page=100")"
-dep_cut=""
-[[ "$(jq 'length' <<<"$deps")" -lt 100 ]] || dep_cut=" (newest 100 deployments only)"
+# Cut off only when the page is full and doesn't reach back to the month's
+# start: then older deployments in the month may be missing.
+dep_cut="$(jq -r --arg f "$from" 'if length >= 100 and (map(.created_at) | min) > $f
+  then " (newest 100 deployments only: may undercount)" else "" end' <<<"$deps")"
 leads="[]" deploys=0
 while IFS=$'\t' read -r id sha; do
   [[ "$id" =~ ^[0-9]+$ && "$sha" =~ ^[0-9a-f]{40}$ ]] || continue
@@ -147,6 +150,10 @@ done < <(jq -r '.[] | "\(.id)\t\(.sha)"' <<<"$deps")
 
 # --- issues opened in the month by the pipeline's own jobs.
 failures="$(search "is:issue label:deploy-failure created:$start..$end")"
+# The label exists once maintain.yml's daily smoke test has opened an issue;
+# until then "0 / 0" would look healthy, so the row says n/a instead.
+smoke_label=true
+gh api "repos/$repo/labels/prod-smoke-failure" >/dev/null 2>&1 || smoke_label=false
 smoke="$(search "is:issue label:prod-smoke-failure created:$start..$end")"
 
 # --- report. jq does the arithmetic so the script runs the same on macOS.
@@ -155,7 +162,7 @@ fmt="$(jq -nr \
   --argjson merged "$merged" --argjson evaluated "$evaluated" --argjson first "$first_pass" \
   --argjson reviews "$reviews" --argjson skipped "$skipped" \
   --argjson deploys "$deploys" --argjson leads "$leads" \
-  --argjson failures "$failures" --argjson smoke "$smoke" '
+  --argjson failures "$failures" --argjson smoke "$smoke" --argjson smoke_label "$smoke_label" '
   def median: sort | if length == 0 then null else .[(length - 1) / 2 | floor] end;
   def pct($a; $b): if $b == 0 then "n/a (none)" else "\($a * 100 / $b | round)% (\($a)/\($b))" end;
   def mins: if . == null then "n/a (none)" elif . < 120 then "\(round) min" else "\(. / 60 * 10 | round / 10) h" end;
@@ -176,7 +183,7 @@ fmt="$(jq -nr \
     "| Deploy | Median lead time, merge to production | \($leads | median | mins) |",
     "| Deploy | Change failure rate (`deploy-failure` issues / production deploys) | \(pct($fail; $deploys)) |",
     "| Deploy | Median time to restore (`deploy-failure` issue open to close) | \($restore | mins) |",
-    "| Maintain | `prod-smoke-failure` issues opened / closed | \($smoke.items | length) / \($smoke.items | map(select(.closed_at)) | length) |",
+    "| Maintain | `prod-smoke-failure` issues opened / closed | \(if $smoke_label then "\($smoke.items | length) / \($smoke.items | map(select(.closed_at)) | length)" else "n/a: no `prod-smoke-failure` label yet (the daily smoke test in maintain.yml opens these)" end) |",
     "| Cost | Claude reviews this month (on merged PRs) | \($reviews) |",
     "| Cost | GitHub Actions minutes | free (public repository) |",
     "| Cost | Deploy-target spend | n/a: not readable from CI; $0 by design, and cloud-run has a $10 budget alert |",

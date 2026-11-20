@@ -52,7 +52,9 @@ f search_prs <<<'{"total_count":2,"items":[{"number":1},{"number":2}]}'
 f repos_acme_app_pulls_1_commits <<<"[{\"sha\":\"$sha_a\"}]"
 f repos_acme_app_pulls_2_commits <<<"[{\"sha\":\"$sha_b\"}]"
 f "repos_acme_app_commits_${sha_a}_check-runs" <<<'{"check_runs":[{"conclusion":"success"}]}'
-f "repos_acme_app_commits_${sha_b}_check-runs" <<<'{"check_runs":[{"conclusion":"failure"}]}'
+# PR 2's first commit failed, then a rerun passed: the API lists the rerun
+# first, but first-pass counts the earliest attempt.
+f "repos_acme_app_commits_${sha_b}_check-runs" <<<'{"check_runs":[{"conclusion":"success","started_at":"2026-10-03T00:00:00Z"},{"conclusion":"failure","started_at":"2026-10-02T00:00:00Z"}]}'
 f repos_acme_app_issues_1_comments <<<'[{"body":"<!-- claude-review -->\nok"},{"body":"thanks"}]'
 f repos_acme_app_issues_2_comments <<<'[{"body":"<!-- claude-review -->\nfix x"},{"body":"<!-- claude-review-skipped -->\nquota"}]'
 # Deployments: #10 succeeded in October, 30 min after its merge; #11 only in
@@ -65,6 +67,7 @@ f "repos_acme_app_commits_${sha_d}" <<<'{"commit":{"committer":{"date":"2026-10-
 # One deploy failure, restored after 90 minutes; one smoke failure, open.
 f search_deploy_failure <<<'{"total_count":1,"items":[{"created_at":"2026-10-15T10:31:00Z","closed_at":"2026-10-15T12:01:00Z"}]}'
 f search_smoke <<<'{"total_count":1,"items":[{"created_at":"2026-10-20T06:00:00Z","closed_at":null}]}'
+f repos_acme_app_labels_prod-smoke-failure <<<'{"name":"prod-smoke-failure"}'
 
 # run [VAR=value...]: run the script with extra environment, no arguments.
 run() {
@@ -88,7 +91,7 @@ if [[ "$rc" == 0 ]]; then pass "report: exits 0"; else fail "report: rc $rc ($er
 has "default month is the previous one" "# SDLC metrics: 2026-10"
 if grep -q 'merged%3A2026-10-01..2026-10-31' "$FIX/calls"; then pass "searches the whole month"; else fail "search range ($(cat "$FIX/calls"))"; fi
 has "merged PRs" "| Build | PRs merged | 2 |"
-has "first-pass ci-ok" "| 50% (1/2) |"
+has "first-pass ci-ok counts the earliest run, not a later rerun" "| 50% (1/2) |"
 has "reviews per merged PR" "| 1 (2 reviews) |"
 has "skipped reviews" "| Review | Claude reviews skipped (quota or token) | 1 |"
 has "production deploys count only October successes" "| Deploy | Production deploys | 1 |"
@@ -96,6 +99,7 @@ has "lead time from merge to the success status" "| 30 min |"
 has "change failure rate" "| 100% (1/1) |"
 has "time to restore (under 2 h, in minutes)" "| Deploy | Median time to restore (\`deploy-failure\` issue open to close) | 90 min |"
 has "smoke issues opened / closed" "| 1 / 0 |"
+lacks "a full deployment list is not cut off when it reaches the month" "newest 100 deployments only"
 has "unmeasured metrics are listed as n/a" "| Build | Antigravity runs per PR; Claude interventions per run | n/a: not measured in v1 |"
 has "token age" '| `CLAUDE_CODE_OAUTH_TOKEN` | 2026-01-10 | 314 days | ok |'
 lacks "no Cloudflare row for another target" "CLOUDFLARE_API_TOKEN"
@@ -134,6 +138,16 @@ done
 rc=0
 CLAUDE_CODE_OAUTH_TOKEN_SET_AT=2028-02-29 "$src/scripts/sdlc-metrics.sh" --due-tokens >/dev/null 2>&1 || rc=$?
 if [[ "$rc" == 0 ]]; then pass "a leap day is a valid _SET_AT"; else fail "leap day refused (rc $rc)"; fi
+
+# 100 deployments, all newer than October: older October ones may be missing.
+jq -n '[range(100) | {id: 10, sha: "dddddddddddddddddddddddddddddddddddddddd", created_at: "2026-11-05T00:00:00Z"}]' >"$FIX/repos_acme_app_deployments.json"
+run
+has "a full list that doesn't reach the month start is flagged" "newest 100 deployments only: may undercount"
+
+# Before maintain.yml opens one, the label doesn't exist: n/a, not "0 / 0".
+rm "$FIX/repos_acme_app_labels_prod-smoke-failure.json"
+run
+has "no smoke label yet: n/a" "n/a: no \`prod-smoke-failure\` label yet"
 
 # A quiet month: every rate says none instead of dividing by zero.
 for k in search_prs search_deploy_failure search_smoke; do echo '{"total_count":0,"items":[]}' >"$FIX/$k.json"; done
