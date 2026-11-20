@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloudflare-workers/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# cleanup <env>: nothing to prune. Cloudflare keeps a Worker's versions
+# itself, at no cost on the Free plan; there are no tags or images to remove.
+init_common
+worker_for "${1:-}"
+echo "cloudflare-workers: nothing to clean up on $WORKER" >&2

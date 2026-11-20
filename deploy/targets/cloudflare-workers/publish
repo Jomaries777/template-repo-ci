@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloudflare-workers/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# publish <sha>: bundle the Worker once without uploading it, so a build error
+# fails the artifact job before any environment is touched. Needs no token.
+# The upload itself is per environment (deploy-dark): dev and production are
+# separate Workers, each with its own versions.
+init_common
+sha_vars "${1:-}"
+write_config "${APP_NAME}" "$(entry_point)"
+out="$CONFIG_DIR/bundle"
+run wrangler deploy --dry-run --config "$CONFIG" --outdir "$out" --var "APP_VERSION:$SHA"

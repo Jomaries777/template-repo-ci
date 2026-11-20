@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloudflare-workers/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# revert <env> <version-id>: send 100% of traffic back to that version
+# (release.sh passes the one `current` printed before promote). It must be a
+# version that has served in a deployment: `wrangler rollback` refuses one
+# that was only uploaded. bootstrap's placeholder gives the first release one.
+init_common
+need_token
+worker_for "${1:-}"
+valid_version_id "${2:-}" || usage_error "invalid version ID: ${2:-<empty>}"
+write_config "$WORKER" "$(entry_point)"
+
+run wrangler rollback "$2" --name "$WORKER" --config "$CONFIG" --yes --message "automatic revert (release.sh)"

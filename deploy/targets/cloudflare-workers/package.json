@@ -1,0 +1,8 @@
+{
+  "name": "cloudflare-workers-adapter",
+  "private": true,
+  "description": "Pins wrangler for the cloudflare-workers deploy adapter (lib.sh installs it with npm ci).",
+  "devDependencies": {
+    "wrangler": "4.165.0"
+  }
+}

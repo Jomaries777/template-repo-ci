@@ -162,7 +162,8 @@ check "rerun with another target points to make bootstrap-target" 'grep -q "make
 b="$tmp/b"
 copy "$b"
 for args in "--target none --local-only" "--stack node --local-only" "--stack cobol --target none --local-only" \
-  "--stack node --target heroku --local-only" "--stack ../x --target none --local-only" "--bogus"; do
+  "--stack node --target heroku --local-only" "--stack ../x --target none --local-only" "--bogus" \
+  "--stack python --target cloudflare-workers --local-only" "--stack go --target cloudflare-workers --local-only"; do
   rc=0
   # shellcheck disable=SC2086 # split on purpose
   "$b/scripts/bootstrap.sh" $args >/dev/null 2>&1 || rc=$?

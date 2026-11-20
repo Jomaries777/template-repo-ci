@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloudflare-workers/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# current <env>: print the version ID serving 100% of traffic.
+init_common
+need_token
+worker_for "${1:-}"
+write_config "$WORKER" "$(entry_point)"
+serving_version

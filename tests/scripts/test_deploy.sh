@@ -428,6 +428,131 @@ EOF
   rc_is "github-pages: refuses to export a commit other than the checkout" 1
 fi
 
+# --- cloudflare-workers (M3 step 4, C10): dry run of every verb, then the
+# real code paths against a fake wrangler that records its calls.
+# shellcheck disable=SC2031 # $root is the script's own; the subshell above only sources a lib
+if [[ -d "$root/deploy/targets/cloudflare-workers" ]]; then
+  cf_env=(CLOUDFLARE_ACCOUNT_ID=0123456789abcdef0123456789abcdef CLOUDFLARE_WORKERS_SUBDOMAIN=acme APP_NAME=hello)
+  prev_id=11111111-1111-4111-8111-111111111111
+  for v in bootstrap "publish $sha" "current dev" "deploy-dark dev $sha" "promote production $sha" \
+    "revert production $prev_id" "url production" "discard dev $sha" "cleanup production"; do
+    rc=0
+    # shellcheck disable=SC2086 # split on purpose
+    out="$(env "${cf_env[@]}" DEPLOY_TARGET=cloudflare-workers "$deploy" $v 2>"$tmp/err")" || rc=$?
+    err="$(cat "$tmp/err")"
+    rc_is "cloudflare-workers dry run: $v" 0
+  done
+  cfdr() { env "${cf_env[@]}" DEPLOY_TARGET=cloudflare-workers "$@"; }
+  rc=0; out="$(cfdr "$deploy" url production 2>"$tmp/err")" || rc=$?; err="$(cat "$tmp/err")"
+  out_is "cloudflare-workers: production URL is <app>.<subdomain>.workers.dev" "https://hello.acme.workers.dev"
+  rc=0; out="$(cfdr "$deploy" url dev 2>"$tmp/err")" || rc=$?; err="$(cat "$tmp/err")"
+  out_is "cloudflare-workers: dev is a separate Worker, <app>-dev" "https://hello-dev.acme.workers.dev"
+  rc=0; out="$(cfdr "$deploy" url staging 2>"$tmp/err")" || rc=$?; err="$(cat "$tmp/err")"
+  rc_is "cloudflare-workers: unknown environment exits 64" 64
+  rc=0; out="$(cfdr "$deploy" revert production 'abc; rm -rf /' 2>"$tmp/err")" || rc=$?; err="$(cat "$tmp/err")"
+  rc_is "cloudflare-workers: revert refuses a malformed version ID" 64
+  rc=0; out="$(cfdr APP_NAME=Bad_Name "$deploy" url production 2>"$tmp/err")" || rc=$?; err="$(cat "$tmp/err")"
+  rc_is "cloudflare-workers: invalid APP_NAME is refused" 1
+  rc=0; out="$(cfdr "$deploy" bootstrap 2>"$tmp/err")" || rc=$?; err="$(cat "$tmp/err")"
+  has "cloudflare-workers bootstrap: placeholder per Worker" "deploy --name hello-dev"
+  has "cloudflare-workers bootstrap: token is an Environment secret (dev)" "secret set CLOUDFLARE_API_TOKEN --env dev"
+  has "cloudflare-workers bootstrap: token is an Environment secret (production)" "secret set CLOUDFLARE_API_TOKEN --env production"
+  lacks "cloudflare-workers bootstrap: token is never a repo-wide secret" "secret set CLOUDFLARE_API_TOKEN --repo"
+  if grep -qx 'dark_deploy: true' "$root/deploy/targets/cloudflare-workers/target.yml"; then pass "cloudflare-workers: target.yml declares a dark deploy"; else fail "cloudflare-workers: target.yml dark_deploy"; fi
+
+  # Fake wrangler: answers from files in $cfw, records every call.
+  cfw="$tmp/cfw"
+  mkdir -p "$cfw"
+  cat >"$cfw/wrangler" <<'FAKE'
+#!/usr/bin/env bash
+d="$(dirname "$0")"
+echo "$* TOKEN=${CLOUDFLARE_API_TOKEN:-}" >>"$d/calls"
+case "$1 $2" in
+  "deployments status") cat "$d/status.json" ;;
+  "versions list") cat "$d/versions.json" ;;
+  "versions upload")
+    echo "uploading" >&2
+    [[ -f "$d/upload.json" ]] && cat "$d/upload.json" >>"$WRANGLER_OUTPUT_FILE_PATH" ;;
+esac
+exit 0
+FAKE
+  chmod +x "$cfw/wrangler"
+  cfreal() {
+    rc=0
+    : >"$cfw/calls"
+    out="$(env -u DEPLOY_DRY_RUN "${cf_env[@]}" WRANGLER_BIN="$cfw/wrangler" CLOUDFLARE_API_TOKEN=s3cr3t-token \
+      DEPLOY_BUILD_CONTEXT="$root/stacks/node" "$root/deploy/targets/cloudflare-workers/$1" "${@:2}" 2>"$tmp/err")" || rc=$?
+    err="$(cat "$tmp/err")"
+  }
+  printf '{"versions": [{"version_id": "%s", "percentage": 100}]}' "$prev_id" >"$cfw/status.json"
+  cfreal current production
+  out_is "cloudflare-workers: current is the version serving 100%" "$prev_id"
+  printf '{"versions": [{"version_id": "%s", "percentage": 90}, {"version_id": "x", "percentage": 10}]}' "$prev_id" >"$cfw/status.json"
+  cfreal current production
+  rc_is "cloudflare-workers: current refuses a traffic split" 1
+
+  printf '%s\n' '{"type": "wrangler-session", "version": 1}' \
+    '{"type": "version-upload", "version": 1, "version_id": "33333333-3333-4333-8333-333333333333", "preview_url": "https://33333333-hello-dev.acme.workers.dev"}' >"$cfw/upload.json"
+  cfreal deploy-dark dev "$sha"
+  out_is "cloudflare-workers: deploy-dark prints the preview URL from wrangler's output file" "https://33333333-hello-dev.acme.workers.dev"
+  if grep -q "versions upload --name hello-dev .*--tag c1234567 .*--var APP_VERSION:$sha" "$cfw/calls"; then pass "cloudflare-workers: upload is tagged c<sha7> and carries APP_VERSION"; else fail "cloudflare-workers: upload args ($(cat "$cfw/calls"))"; fi
+  lacks "cloudflare-workers: token never reaches stdout or stderr" "s3cr3t-token"
+  if grep -q "TOKEN=s3cr3t-token" "$cfw/calls"; then pass "cloudflare-workers: wrangler gets the token from the environment"; else fail "cloudflare-workers: token not passed to wrangler"; fi
+  if grep -q -- "s3cr3t-token " "$cfw/calls"; then fail "cloudflare-workers: token passed as an argument"; else pass "cloudflare-workers: token is never a command-line argument"; fi
+  printf '%s\n' '{"type": "version-upload", "version": 1, "version_id": "33333333-3333-4333-8333-333333333333", "preview_url": null}' >"$cfw/upload.json"
+  cfreal deploy-dark dev "$sha"
+  rc_is "cloudflare-workers: deploy-dark fails without a preview URL (so release.sh discards)" 1
+
+  cat >"$cfw/versions.json" <<JSON
+[{"id": "44444444-4444-4444-8444-444444444444", "metadata": {"created_on": "2026-11-01T00:00:00Z"}, "annotations": {"workers/tag": "c1234567"}},
+ {"id": "55555555-5555-4555-8555-555555555555", "metadata": {"created_on": "2026-11-02T00:00:00Z"}, "annotations": {"workers/tag": "c1234567"}},
+ {"id": "$prev_id", "metadata": {"created_on": "2026-11-03T00:00:00Z"}, "annotations": {"workers/tag": "cfffffff"}}]
+JSON
+  cfreal promote production "$sha"
+  rc_is "cloudflare-workers: promote" 0
+  if grep -q "versions deploy 55555555-5555-4555-8555-555555555555@100% --name hello " "$cfw/calls"; then pass "cloudflare-workers: promote deploys the newest version with the tag at 100%"; else fail "cloudflare-workers: promote args ($(cat "$cfw/calls"))"; fi
+  cfreal promote production abcdef1
+  rc_is "cloudflare-workers: promote fails when no version has the tag" 1
+  if grep -q "versions deploy" "$cfw/calls"; then fail "cloudflare-workers: promote deployed without a tagged version"; else pass "cloudflare-workers: no deploy without a tagged version"; fi
+  cfreal revert production "$prev_id"
+  if grep -q "^rollback $prev_id --name hello .*--yes" "$cfw/calls"; then pass "cloudflare-workers: revert rolls back to the given version without prompting"; else fail "cloudflare-workers: revert args ($(cat "$cfw/calls"))"; fi
+
+  # bootstrap, for real: only a 404 from the API deploys the placeholder; a
+  # Worker that exists is left alone, and any other answer deploys nothing.
+  mkdir -p "$cfw/bin"
+  cat >"$cfw/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+case " $* " in
+  *" -w "*) echo -n "$CF_SCRIPT_CODE" ;;
+  *) echo '{"success": true, "result": {"subdomain": "acme"}}' ;;
+esac
+FAKE
+  # shellcheck disable=SC2016 # $* and $1 belong to the generated script
+  printf '#!/usr/bin/env bash\necho "gh $*" >>"%s/calls"\n[[ "$1 $2" != "secret set" ]] || cat >/dev/null\nexit 0\n' "$cfw" >"$cfw/bin/gh"
+  chmod +x "$cfw/bin/curl" "$cfw/bin/gh"
+  cfboot() {
+    rc=0
+    : >"$cfw/calls"
+    out="$(env -u DEPLOY_DRY_RUN "${cf_env[@]}" PATH="$cfw/bin:$PATH" WRANGLER_BIN="$cfw/wrangler" \
+      CLOUDFLARE_API_TOKEN=s3cr3t-token CF_SCRIPT_CODE="$1" GITHUB_REPOSITORY=acme/hello \
+      "$root/deploy/targets/cloudflare-workers/bootstrap" 2>"$tmp/err")" || rc=$?
+    err="$(cat "$tmp/err")"
+  }
+  cfboot 404
+  rc_is "cloudflare-workers bootstrap: new account" 0
+  if [[ "$(grep -c '^deploy --name hello' "$cfw/calls")" == 2 ]]; then pass "cloudflare-workers bootstrap: a 404 deploys the placeholder to both Workers"; else fail "cloudflare-workers bootstrap: placeholder deploys ($(cat "$cfw/calls"))"; fi
+  if grep -q "secret set CLOUDFLARE_API_TOKEN --env production --repo acme/hello" "$cfw/calls"; then pass "cloudflare-workers bootstrap: sets the Environment secret"; else fail "cloudflare-workers bootstrap: no Environment secret ($(cat "$cfw/calls"))"; fi
+  cfboot 200
+  rc_is "cloudflare-workers bootstrap: rerun" 0
+  if grep -q '^deploy ' "$cfw/calls"; then fail "cloudflare-workers bootstrap: rerun replaced an existing Worker"; else pass "cloudflare-workers bootstrap: rerun leaves existing Workers alone"; fi
+  for code in 401 500 000; do
+    cfboot "$code"
+    rc_is "cloudflare-workers bootstrap: HTTP $code stops" 1
+    if grep -q '^deploy ' "$cfw/calls"; then fail "cloudflare-workers bootstrap: HTTP $code deployed the placeholder"; else pass "cloudflare-workers bootstrap: HTTP $code deploys nothing"; fi
+  done
+  lacks "cloudflare-workers bootstrap: token never reaches stdout or stderr" "s3cr3t-token"
+fi
+
 [[ "$failures" -eq 0 ]] || {
   echo "$failures failure(s)"
   exit 1
