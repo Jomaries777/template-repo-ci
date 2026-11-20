@@ -86,6 +86,13 @@ names() {
 [[ "$target" =~ ^[a-z0-9-]+$ ]] || usage_error "--target is required (one of: $(names deploy/targets))"
 [[ -d "stacks/$stack" ]] || usage_error "unknown stack: $stack"
 [[ -d "deploy/targets/$target" ]] || usage_error "unknown target: $target"
+# Refuse a stack the target doesn't support (target.yml `stacks:`) before any
+# file changes; bootstrap-target.sh checks it again for later switches.
+supported="$(sed -n '/^stacks:/,/^[^[:space:]-]/p' "deploy/targets/$target/target.yml" 2>/dev/null |
+  sed -n 's/^[[:space:]]*-[[:space:]]*\([a-z0-9-]*\).*/\1/p' | tr '\n' ' ')"
+if [[ -n "$supported" && " $supported" != *" $stack "* ]]; then
+  usage_error "$target doesn't support the $stack stack (supported: ${supported% })"
+fi
 
 current_stack="$(sed -n 's/^stack:[[:space:]]*\([a-z0-9-]*\).*/\1/p' deploy.yml 2>/dev/null | head -n 1)"
 current_target="$(sed -n 's/^target:[[:space:]]*\([a-z0-9-]*\).*/\1/p' deploy.yml 2>/dev/null | head -n 1)"

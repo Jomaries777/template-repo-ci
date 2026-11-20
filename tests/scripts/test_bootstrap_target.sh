@@ -69,6 +69,16 @@ printf 'name: onlygo\nstacks:\n  - go\ndark_deploy: true\n' >"$p/deploy/targets/
 run onlygo
 check "a stack the target doesn't support is refused with 64" '[[ $rc == 64 ]] && grep -q "doesn.t support the node stack" <<<"$out"'
 
+# cloudflare-workers runs the node stack only (owner decision 2026-11-18).
+if [[ -d "$p/deploy/targets/cloudflare-workers" ]]; then
+  for s in python go; do
+    printf 'target: cloudflare-workers\nstack: %s\n' "$s" >"$p/deploy.yml"
+    rc=0
+    out="$(cd "$p" && scripts/bootstrap-target.sh --repo acme/hello --dry-run 2>&1)" || rc=$?
+    check "cloudflare-workers refuses the $s stack with 64" '[[ $rc == 64 ]] && grep -q "doesn.t support the $s stack" <<<"$out"'
+  done
+fi
+
 [[ "$failures" -eq 0 ]] || {
   echo "$failures failure(s)"
   exit 1

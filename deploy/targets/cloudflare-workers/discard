@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloudflare-workers/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# discard <env> <sha>: nothing to remove. An uploaded version that was never
+# deployed gets no traffic on the Worker's URL, and Cloudflare has no command
+# to delete one. Its preview URL stays reachable (plan.md Deviations).
+init_common
+worker_for "${1:-}"
+sha_vars "${2:-}"
+echo "cloudflare-workers: $TAG on $WORKER was never deployed; it serves no traffic (versions can't be deleted)" >&2

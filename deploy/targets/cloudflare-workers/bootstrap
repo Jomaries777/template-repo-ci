@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloudflare-workers/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# bootstrap: one-time, idempotent setup, run by the owner on their own device
+# (never from CI), through make bootstrap / make bootstrap-target.
+#
+# Needs, in the environment:
+#   CLOUDFLARE_ACCOUNT_ID   the account's ID (dashboard: Workers & Pages)
+#   CLOUDFLARE_API_TOKEN    an API token the owner created in the dashboard
+#                           with only "Account > Workers Scripts > Edit" on
+#                           this one account (C10). Never printed or logged.
+#   APP_NAME, GITHUB_REPOSITORY (bootstrap-target sets both)
+# Cost (cost-guard): use an account on the Workers Free plan with no card on
+# file. Nothing here can bill; upgrading to paid is a new intent.
+init_common
+need_token
+api="https://api.cloudflare.com/client/v4"
+
+if [[ "$DRY_RUN" != "1" ]]; then
+  gh auth status >/dev/null 2>&1 || die "gh is not logged in (run: gh auth login)"
+  command -v jq >/dev/null || die "jq is required"
+fi
+repo="${GITHUB_REPOSITORY:-}"
+[[ -n "$repo" || "$DRY_RUN" != "1" ]] || repo="$(placeholder GITHUB_REPOSITORY)"
+[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "invalid repository: ${repo:-<empty>}"
+
+# cf_get <path>: GET the Cloudflare API with the token in a header read from a
+# pipe, so it never appears in a process list.
+cf_get() {
+  printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN" |
+    curl -fsS --max-time 30 -H @- "$api$1"
+}
+
+echo "== workers.dev subdomain" >&2
+sub_json="$(query '{"success": true, "result": {"subdomain": "dry-run"}}' cf_get "/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain")" ||
+  die "could not read the account's workers.dev subdomain: check CLOUDFLARE_ACCOUNT_ID and the token's Workers Scripts permission"
+subdomain="$(jq -r '.result.subdomain // empty' <<<"$sub_json")"
+[[ -n "$subdomain" ]] || die "the account has no workers.dev subdomain yet: open Workers & Pages in the dashboard once to choose one"
+[[ "$subdomain" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || die "unexpected subdomain: $subdomain"
+echo "cloudflare-workers: Workers will be public at https://<worker>.${subdomain}.workers.dev (that name appears in public CI logs)" >&2
+
+echo "== Workers" >&2
+# Each Worker starts with a placeholder version (503), so `current` always
+# has a version to revert to, including on the first release.
+for env in dev production; do
+  worker_for "$env"
+  write_config "$WORKER" placeholder.js
+  if [[ "$DRY_RUN" != "1" ]] && wrangler deployments status --json --name "$WORKER" --config "$CONFIG" >/dev/null 2>&1; then
+    echo "cloudflare-workers: $WORKER exists" >&2
+    continue
+  fi
+  cat >"$CONFIG_DIR/placeholder.js" <<'JS'
+export default {
+  fetch: () => new Response(JSON.stringify({ error: "not deployed yet" }), {
+    status: 503, headers: { "content-type": "application/json; charset=utf-8" },
+  }),
+};
+JS
+  run wrangler deploy --name "$WORKER" --config "$CONFIG" --message "bootstrap placeholder"
+done
+
+echo "== Repository variables and Environment secrets" >&2
+run gh variable set CLOUDFLARE_ACCOUNT_ID --repo "$repo" --body "$CLOUDFLARE_ACCOUNT_ID"
+run gh variable set CLOUDFLARE_WORKERS_SUBDOMAIN --repo "$repo" --body "$subdomain"
+run gh variable set APP_NAME --repo "$repo" --body "$APP_NAME"
+# Only the dev and production jobs can read the token (C10); set from stdin.
+for env in dev production; do
+  if [[ "$DRY_RUN" == "1" ]]; then
+    dry_print gh secret set CLOUDFLARE_API_TOKEN --env "$env" --repo "$repo" '<stdin>'
+  else
+    printf '%s' "$CLOUDFLARE_API_TOKEN" | gh secret set CLOUDFLARE_API_TOKEN --env "$env" --repo "$repo" >&2
+  fi
+done
+echo "cloudflare-workers: bootstrap done for ${APP_NAME} (${repo})" >&2

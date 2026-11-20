@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=deploy/targets/cloudflare-workers/lib.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+# deploy-dark <env> <sha>: upload a new version tagged c<sha7> that receives
+# no traffic, then print its preview URL. wrangler reports the version in its
+# machine-readable output file (WRANGLER_OUTPUT_FILE_PATH), not by scraping.
+init_common
+need_token
+worker_for "${1:-}"
+sha_vars "${2:-}"
+write_config "$WORKER" "$(entry_point)"
+
+if [[ "$DRY_RUN" == "1" ]]; then
+  dry_print wrangler versions upload --name "$WORKER" --config "$CONFIG" --tag "$TAG" --message "$SHA" --var "APP_VERSION:$SHA"
+  printf 'https://%s-%s.%s.workers.dev\n' "${CANDIDATE_FIXTURE_ID:0:8}" "$WORKER" "${CLOUDFLARE_WORKERS_SUBDOMAIN:-dry-run}"
+  exit 0
+fi
+export WRANGLER_OUTPUT_FILE_PATH="$CONFIG_DIR/output.ndjson"
+wrangler versions upload --name "$WORKER" --config "$CONFIG" --tag "$TAG" --message "$SHA" --var "APP_VERSION:$SHA" >&2
+url="$(jq -r 'select(.type == "version-upload") | .preview_url // empty' "$WRANGLER_OUTPUT_FILE_PATH" | tail -n 1)"
+[[ "$url" == https://* ]] || die "wrangler printed no preview URL for $WORKER (is preview_urls on and a workers.dev subdomain claimed?)"
+printf '%s\n' "$url"

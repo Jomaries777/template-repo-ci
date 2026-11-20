@@ -1,0 +1,25 @@
+name: cloudflare-workers
+artifact: worker
+# Every uploaded version gets a preview URL (preview_urls) that receives no
+# traffic: the dark deploy. promote deploys it at 100%; revert is a rollback.
+dark_deploy: true
+environments:
+  - dev
+  - production
+# The Worker is stacks/node/src/worker.ts; python and go have no Workers
+# entry point (owner decision 2026-11-18). bootstrap-target refuses them.
+stacks:
+  - node
+auth: token
+required_variables:
+  - CLOUDFLARE_ACCOUNT_ID
+  - CLOUDFLARE_WORKERS_SUBDOMAIN
+  - APP_NAME
+# Least-privilege API token (Workers Scripts edit, one account), stored on the
+# dev and production Environments only (C10). deploy.yml passes it to those
+# jobs; the artifact job never sees it.
+environment_secrets:
+  - CLOUDFLARE_API_TOKEN
+cli: wrangler (pinned in package-lock.json here), jq, curl
+idle: "$0 when idle because the account stays on the Workers Free plan with no card on file"
+cost_cap: {}
