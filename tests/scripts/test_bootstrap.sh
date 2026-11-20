@@ -268,7 +268,8 @@ copy "$e"
 rc=0
 out="$(cd "$e" && "$e/scripts/bootstrap.sh" --stack node --target none --repo acme/hello 2>&1)" || rc=$?
 check "dirty tree: refused with 64" '[[ $rc == 64 ]] && grep -q "uncommitted changes" <<<"$out"'
-check "dirty tree: nothing changed" '[[ -d "$e/deploy/targets/cloud-run" && ! -f "$e/README.md" ]]'
+# The template ships its own README, so check git: only the stray file differs.
+check "dirty tree: nothing changed" '[[ "$(cd "$e" && git status --porcelain)" == "?? stray.txt" && -d "$e/deploy/targets/cloud-run" ]]'
 
 # A repo name that starts with a digit gets a letter prefix for Cloud Run.
 f="$tmp/f"
