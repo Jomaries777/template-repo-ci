@@ -30,6 +30,8 @@ env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   APP_NAME: ${{ vars.APP_NAME }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_WORKERS_SUBDOMAIN: ${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}
 
 jobs:
   classify:
@@ -103,6 +105,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: dev
+    env:
+      # cloudflare-workers (C10): an Environment secret, so only this job
+      # reads it. Empty, and unused, for every other target.
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     permissions:
       contents: read
       id-token: write
@@ -134,6 +140,10 @@ jobs:
     # The owner is the required reviewer, deployment branch main only. Bootstrap
     # sets this up (spec §4.9); the first step refuses to deploy without it.
     environment: production
+    env:
+      # cloudflare-workers (C10): an Environment secret, so only this job
+      # reads it. Empty, and unused, for every other target.
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     permissions:
       # write: the github-pages target pushes the gh-pages branch with this
       # job's token (spec §4.11). Other targets don't use it, and the job runs
