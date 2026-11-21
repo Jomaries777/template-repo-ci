@@ -2,7 +2,7 @@
 
 Where this template departs from [The AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook) (read 2026-11-18), and why.
 
-This file records the template's own history. Bootstrap removes it from new projects. It is the one place for departures from the **playbook**. Departures from an intent's **plan** stay in that `plan.md`'s Deviations table. When an entry here leads to work, link the PR or intent in its Status, and don't delete closed entries: set their Status.
+This file records the template's own history. Bootstrap removes it from new projects. It is the one place for departures from the **playbook**, and its [checklist](#playbook-checklist) says, item by item, whether the template meets the playbook today. Departures from an intent's **plan** stay in that `plan.md`'s Deviations table. When an entry here leads to work, link the PR or intent in its Status, and don't delete closed entries: set their Status.
 
 **Kinds of entry**
 - **Deliberate:** a design choice the owner accepted. It holds until someone reopens it.
@@ -54,18 +54,113 @@ Each adaptation is listed below with its ID. Revisit it when its condition chang
 - **An Enterprise plan:** consider Claude Security scans (PD-6).
 - **Many intents a week:** automate spec writing (PD-7).
 
-## Where we follow the playbook
+## Playbook checklist
 
-For reference, so a gap isn't mistaken for the norm:
+Every practice the playbook recommends, one row each, so it's clear what is met and what isn't. Reviewed 2026-11-21. The Plan, Design and Build items come from the playbook's full text. Test, Deploy and Maintain come from a summary of the page's second half. Its closing section and its diagram of the plays weren't read.
 
-- **Artifacts:** each stage ends in a committed file: `intent.md`, `spec.md`, then `plan.md` (updated when the build departs from it), then a PR.
-- **`CLAUDE.md`:** stays under a page, lists commands with their healthy output, and records mistakes made twice.
-- **Hooks:** protected paths, no secrets in edits or commands, test-first on `fix/*` (`scripts/hooks/test-first.sh`), and format plus lint after edits.
-- **Subagents:** `verifier` (fresh context, read-only), `simplifier`, `researcher`, `test-writer`. The `/sweep` command clears review comments and failing checks on Claude's PRs.
-- **Review:** `REVIEW.md` has five passes (correctness, security, conformance, test adequacy, cost), Important and Nit severities and a cap of 5 nits. AI review is advisory: it never approves and never blocks, and only `ci-ok` is required.
-- **Gates:** agent output arrives only as PRs and never goes straight to `main`. The agent never deploys to production.
-- **Rollback:** a single automatic `revert` path, rehearsed for real: Cloud Run 11.5 s (M2 step 6b), GitHub Pages 27 s (M3, [`sandbox-node-static` run 44334822339](https://github.com/Jomaries777/sandbox-node-static/actions/runs/44334822339), to be recorded in `spikes/m3-results.md`, see PD-17).
-- **Read-only judgment in CI:** the `report` job has Claude triage failed deploys.
+**Met?**
+- **Met:** done as the playbook says.
+- **Met (adapted):** same intent, different mechanism; the PD entry says why.
+- **Partly:** done in part.
+- **Not met:** not done.
+- **N/A:** doesn't apply to one owner.
+
+**Recommendation** is for personal projects with one owner, a Pro plan and $0 hosting:
+- **Keep:** keep doing it as now.
+- **Keep adapted:** keep the adapted form.
+- **Skip:** don't pursue it unless its trigger in [What we adapt](#what-we-adapt-and-the-condition-to-revisit) happens.
+- **Do:** a cheap step that closes or narrows a gap.
+
+To update: change a row's **Met?** when that changes, and link the PR.
+
+### Stage 1: Plan
+
+| ID | Playbook practice | Met? | How it's held here, or why not | Recommendation |
+|---|---|---|---|---|
+| PB-1 | Brainstorm with Claude into `intent.md` | Met | `/intent`, `write-intent` skill | Keep |
+| PB-2 | Product owner corrects and accepts the intent | Met (adapted) | The owner holds the role (PD-1); accepting means merging | Keep adapted |
+| PB-3 | Agreed intent template (problem, outcome, users and systems, constraints, open questions) | Met | `write-intent` skill | Keep |
+| PB-4 | Intent lives in `intent/` in the product repo | Met | `intent/<id>-<slug>/` | Keep |
+| PB-5 | Non-engineers reach Claude through claude.ai, Cowork or a GitHub connector | N/A | One owner, who is the engineer | Skip |
+| PB-6 | Metrics: time to committed intent; share accepted; intent edits after the spec | Not met | Printed as n/a by `sdlc-metrics.sh` v1 | Skip: too few intents to mean anything |
+
+### Stage 2: Design
+
+| ID | Playbook practice | Met? | How it's held here, or why not | Recommendation |
+|---|---|---|---|---|
+| PB-7 | `spec.md` written from the intent in one session, constrained by policy skills, concerns flagged | Met | `/spec`, `write-spec` skill; `secure-change` and `cost-guard` skills | Keep |
+| PB-8 | Front-end mocks in Claude Design, exported to Claude Code | Not met | No UI work yet | Do it on UI-heavy projects only |
+| PB-9 | Accepting an intent triggers a job that commits `spec.md` as a PR | Met (adapted) | `/spec` by hand (PD-7) | Keep adapted |
+| PB-10 | Product owner gates the spec; tech lead for higher-risk work; concerns settled with the policy owner | Met (adapted) | The owner holds every role (PD-1) | Keep adapted |
+| PB-11 | Spec, its prompt and the skill versions are logged in version control | Partly | The spec and skills are in git; the prompt is not kept | Keep as is |
+| PB-12 | Metrics: intent-to-spec time; spec rework after the plan | Not met | n/a in `sdlc-metrics.sh` v1 | Skip |
+
+### Stage 3: Build
+
+| ID | Playbook practice | Met? | How it's held here, or why not | Recommendation |
+|---|---|---|---|---|
+| PB-13 | Plan mode first; `plan.md` with Files, Order, Risks, Proof; updated in the same commit when the build departs | Partly | `write-plan` skill and Deviations tables, but plan mode was skipped more than once (PD-14) | Keep. Do: add the repeated slip to `CLAUDE.md` |
+| PB-14 | A hook keeps `plan.md` in sync with the code | Not met | The Deviations table and the review's conformance pass catch drift | Skip |
+| PB-15 | Higher-risk plans go to a tech lead or architect | Met (adapted) | The owner (PD-1) | Keep adapted |
+| PB-16 | Auto mode for tightly specced, small, tested changes | Met | Used once the plan is accepted | Keep |
+| PB-17 | One source of truth per artifact (legacy-system sidebar) | Met | The repo is the source of truth (option A) | Keep |
+| PB-18 | `CLAUDE.md`: under a page, commands with healthy output, conventions, mistakes made twice | Met | `CLAUDE.md` | Keep |
+| PB-19 | `CLAUDE.md` changes approved by code owners | Met (adapted) | The owner approves every PR; code-owner review is off (PD-2) | Keep adapted |
+| PB-20 | Skills for standards applied consistently, paired with a hook or review re-check | Met | Skills are advisory; hooks and CI back them | Keep |
+| PB-21 | Build hooks: protected paths, format and lint after edits, no credentials | Met | `scripts/hooks/` | Keep |
+| PB-22 | 2–3 parallel worktree sessions, split by file | Partly | Plans mark independent steps; rarely used | Optional |
+| PB-23 | Safe commands pre-allowed to avoid prompt fatigue | Met | `.claude/settings.json` | Keep |
+| PB-24 | Subagents: simplifier, researcher, and a verifier that runs the app | Partly | All three exist; the verifier checks the diff and runs `make lint test`, but doesn't run the app | Do: have the verifier run `make acceptance` on stack changes |
+| PB-25 | Metrics: parallel sessions, steering time, OpenTelemetry export | Not met | PD-12 | Skip |
+
+### Stage 4: Test
+
+| ID | Playbook practice | Met? | How it's held here, or why not | Recommendation |
+|---|---|---|---|---|
+| PB-26 | A feedback loop: one command, its healthy output in `CLAUDE.md`, verification in "done" | Met | `make lint test`, the `verifier` subagent | Keep: non-negotiable |
+| PB-27 | Bugs start with a failing test; a hook blocks test edits during the fix | Met | `test-first.sh` on `fix/*` | Keep |
+| PB-28 | UI work: browser or screenshot loop against the mock | Not met | No UI work yet; Playwright is in the node stack | Do it on UI projects |
+| PB-29 | Continuous evals: 20–50 real tasks, scheduled and on `CLAUDE.md`/skill/hook changes, gating them | Not met | PD-9, the largest gap; each run uses Pro quota | Skip until `CLAUDE.md` or skill changes cause regressions, then 3–5 cases |
+| PB-30 | AI PR review with `REVIEW.md`, Important vs nit, nits capped at 5, advisory | Met | `claude-review` job, five passes | Keep |
+| PB-31 | Review findings fixed by `@claude` or a sweep command | Met | `claude.yml`, `/sweep` | Keep |
+| PB-32 | Review tuned monthly; a finding flagged twice goes into `CLAUDE.md` | Partly | Done when noticed, not monthly | Keep informal |
+| PB-33 | Metrics: time to first review; comments resolved without a human | Partly | Reviews and skips per merged PR in `sdlc-metrics.sh` v1 | Keep |
+
+### Deploy
+
+| ID | Playbook practice | Met? | How it's held here, or why not | Recommendation |
+|---|---|---|---|---|
+| PB-34 | Approval gates as Claude Code hooks; a release manager authorizes production | Met (adapted) | GitHub Environment reviewer (PD-3, PD-8) | Keep adapted: stronger, it can't be bypassed |
+| PB-35 | Managed settings: denied paths, sandbox, managed hooks and MCP servers | Met (adapted) | `permissions.deny`, hooks, and the cloud session's sandbox; no Enterprise managed settings | Keep adapted |
+| PB-36 | Read-only `claude -p` judgment in CI (triage failures) | Met | The deploy `report` job | Keep |
+| PB-37 | Agent write steps land only as PRs, never on `main` | Met | Ruleset, `ci-ok` | Keep: non-negotiable |
+| PB-38 | Agent jobs sandboxed, short-lived scoped tokens, no production credentials | Met | 1-hour bot tokens; target secrets only in the deploy jobs | Keep |
+| PB-39 | Deploy, status and rollback as MCP tools scoped per environment | Met (adapted) | CI scripts only; the agent has no deploy path (PD-5) | Keep adapted |
+| PB-40 | Dev, then staging, then production | Met (adapted) | Dev and production; sandboxes rehearse (PD-4) | Keep adapted until real users or revenue |
+| PB-41 | Rollback is one command, rehearsed | Met | Automatic revert: Cloud Run 11.5 s, Pages 27 s | Keep; rehearse once per new adapter |
+| PB-42 | Each agent run has its own identity in logs | Partly | Commits and PRs come from the bot; cloud-session PR comments appear as the owner (PD-10) | Keep adapted for now |
+| PB-43 | DORA metrics | Partly | `sdlc-metrics.sh` v1: deploys, lead time, change failure rate, time to restore (PD-12) | Keep |
+
+### Maintain
+
+| ID | Playbook practice | Met? | How it's held here, or why not | Recommendation |
+|---|---|---|---|---|
+| PB-44 | Headless monitoring: a metric baseline, σ bands, tiered response (log, diagnose, PR or runbook) | Not met | PD-11; low traffic gives no stable baseline | Skip the bands; the daily smoke test opening an issue is enough |
+| PB-45 | Scheduled deterministic checks open issues | Partly | `maintain.yml` drafted for the owner: daily smoke test, monthly metrics and token renewal (PD-11) | Do: merge `maintain.yml` |
+| PB-46 | Findings written as `intent.md` | Met (adapted) | An issue first, then `/intent --from-issue` | Keep adapted |
+| PB-47 | An eval for each incident | Not met | Tied to PB-29 | Skip |
+| PB-48 | Claude Tag on call in incident channels | N/A | No incident channel | Skip |
+| PB-49 | Post-mortem lessons file | Not met | `deploy-failure` issues and `CLAUDE.md` cover it | Skip |
+| PB-50 | Recurring codebase security scans, findings dismissed with a reason | Met (adapted) | CodeQL, secret scanning, Dependabot, dependency review (PD-6); CodeQL runs on PRs only | Do: add the weekly CodeQL schedule to `pr.yml` (owner PR) |
+
+**Score (2026-11-21), 50 practices:** 18 met, 11 met (adapted), 9 partly, 10 not met, 2 N/A. Every "not met" row is either a deliberate skip for personal projects or has a **Do**.
+
+### Open actions from the checklist
+
+- PB-13: add the repeated plan-mode slip to `CLAUDE.md`.
+- PB-24: have the `verifier` run `make acceptance` on stack changes.
+- PB-45: owner merges `maintain.yml`.
+- PB-50: owner adds `schedule:` (weekly) to `pr.yml` for CodeQL.
 
 ## Deliberate
 
@@ -85,16 +180,16 @@ For reference, so a gap isn't mistaken for the norm:
 | ID | Playbook | This template | Why | Status |
 |---|---|---|---|---|
 | PD-9 | Continuous evals: 20–50 real tasks run in CI on a schedule and on any change to `CLAUDE.md`, skills or hooks, and they gate those changes. Every incident adds one. | None. Changes to `CLAUDE.md`, skills and hooks are reviewed like code, but nothing regression-tests them. | Not in intent 0001's scope, and each run uses Pro quota. This is the largest gap. | open: a small intent of its own, 3–5 cases run only when `CLAUDE.md`, skills or hooks change, to stay within Pro quota |
-| PD-10 | Agent runs use their own identity, so logs separate agent actions from the engineer's. | A cloud Claude Code session not on the bot-relay environment pushes, opens PRs and merges as the owner. Bot identity works through `scripts/bot-relay.sh` (intent 0002). | The session was on the Default environment. Switching was refused because the bot-relay environment's name contains parentheses. | open: owner renames the environment, then the session switches |
-| PD-11 | Stage 6, Maintain: σ control bands on a metric, read-only diagnosis at 2σ, a PR or pre-approved runbook at 3σ, findings written as `intent.md`. | Not built. | Milestone order. | planned: 0001 M4 (`maintain.yml`) |
-| PD-12 | Leading and lagging metrics per stage, DORA measures, OpenTelemetry session export. | Defined in 0001 spec §7; nothing collects them yet, and no OpenTelemetry export is set up. | Milestone order. | planned: 0001 M4 (`sdlc-metrics.sh`) |
-| PD-13 | "Gemini does the bulk work" is not a playbook rule; it's intent 0001's. Listed here because it changes who the build agent is. | Most of M2 and M3 was built by Claude Code in a cloud session; Antigravity re-runs are deferred. | No Antigravity and no bot key in cloud sessions. Recorded for M2 steps 1–2 in the plan; M3 went the same way. | open |
+| PD-10 | Agent runs use their own identity, so logs separate agent actions from the engineer's. | Commits and PRs from cloud sessions now come from the bot through `scripts/bot-relay.sh` (intent 0002; #47 to #51). PR **comments** from a cloud session still appear as the owner, because they go through the GitHub connector and the broker has no comment route. | Until 2026-11-18 the session was on the Default environment. The relay has `/relay`, `/token` and `/secrets`, but no route for comments. | partly fixed (commits and PRs); comments accepted for now by the owner, 2026-11-21. A broker `/comment` route would close it (spec 0002 amendment) |
+| PD-11 | Stage 6, Maintain: σ control bands on a metric, read-only diagnosis at 2σ, a PR or pre-approved runbook at 3σ, findings written as `intent.md`. | Not built. | Milestone order. | partly: `maintain.yml` drafted for an owner PR (daily smoke test, monthly metrics and token renewal). σ bands won't be built for personal projects (PB-44) |
+| PD-12 | Leading and lagging metrics per stage, DORA measures, OpenTelemetry session export. | Defined in 0001 spec §7; nothing collects them yet, and no OpenTelemetry export is set up. | Milestone order. | partly fixed: `sdlc-metrics.sh` v1 (#50) covers DORA-style deploy metrics, review and first-pass `ci-ok`; the rest prints n/a. OpenTelemetry won't be set up (PB-25) |
+| PD-13 | "Gemini does the bulk work" is not a playbook rule; it's intent 0001's. Listed here because it changes who the build agent is. | Most of M2 and M3 was built by Claude Code in a cloud session; Antigravity re-runs are deferred. | No Antigravity and no bot key in cloud sessions. Recorded for M2 steps 1–2 in the plan; M3 and M4 went the same way. | open: recommend dropping the rule from intent 0001 unless Antigravity is used again |
 
 ## Slips
 
 | ID | Date | Change | What was skipped | Status |
 |---|---|---|---|---|
-| PD-14 | 2026-11-18 | template #45; sandbox `sandbox-node-static` #5, #6 | Plan mode was not used. | open: plan mode for the next changes (restore-check fix, Workers target) |
+| PD-14 | 2026-11-18 | template #45; sandbox `sandbox-node-static` #5, #6 | Plan mode was not used. | open, repeated: the `sdlc-metrics.sh` design was agreed in chat (2026-11-20), not in plan mode. A slip made twice goes into `CLAUDE.md` (PB-13) |
 | PD-15 | 2026-11-18 | sandbox `sandbox-node-static` #6 | Merged before Claude's review ran. The review is skipped on drafts and the PR was merged right after it was marked ready. | open: wait for `claude-review` before merging |
 | PD-16 | 2026-11-18 | sandbox `sandbox-node-static` #1–#3 (Dependabot majors) | Merged on the owner's word in chat, with green CI but no review recorded on the PR. | open: closes with PD-10, when the owner reviews and merges in GitHub |
 | PD-17 | 2026-11-18 | M3 E2E on GitHub Pages | Results lived only in chat: the Pages 409 bootstrap bug, the 27 s revert, the post-revert check gap, and the Dependabot majors that waited. | open: `intent/0001-github-cicd-pipeline/spikes/m3-results.md` |
