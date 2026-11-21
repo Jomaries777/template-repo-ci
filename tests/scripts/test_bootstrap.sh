@@ -81,6 +81,17 @@ if python3 -c 'import yaml' 2>/dev/null; then
 else
   check "dependabot: three update entries" '[[ "$(grep -c "package-ecosystem:" "$dbot")" == 3 ]]'
 fi
+check "dependabot: no wrangler entry for another target" '! grep -q "directory: /deploy/targets/cloudflare-workers" "$dbot"'
+
+# --- local-only: node on cloudflare-workers adds the adapter's wrangler entry
+cw="$tmp/cw"
+copy "$cw"
+rc=0
+out="$(BOOTSTRAP_OWNER=acme "$cw/scripts/bootstrap.sh" --stack node --target cloudflare-workers --local-only 2>&1)" || rc=$?
+check "cloudflare-workers: local-only exits 0" '[[ $rc == 0 ]] || { echo "$out"; false; }'
+check "cloudflare-workers: dependabot watches the adapter's wrangler" 'grep -q "directory: /deploy/targets/cloudflare-workers" "$cw/.github/dependabot.yml"'
+check "cloudflare-workers: four update entries" '[[ "$(grep -c "package-ecosystem:" "$cw/.github/dependabot.yml")" == 4 ]]'
+check "cloudflare-workers: the adapter fragment stays for later switches" '[[ -f "$cw/deploy/targets/cloudflare-workers/dependabot-updates.yml" ]]'
 
 # CodeQL scans the stack's language too, not only the workflows (M3 step 7):
 # bootstrap adds the stack's entry to pr.yml's codeql matrix.

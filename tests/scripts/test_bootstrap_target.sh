@@ -69,6 +69,15 @@ printf 'name: onlygo\nstacks:\n  - go\ndark_deploy: true\n' >"$p/deploy/targets/
 run onlygo
 check "a stack the target doesn't support is refused with 64" '[[ $rc == 64 ]] && grep -q "doesn.t support the node stack" <<<"$out"'
 
+# scripts/target-stacks.sh, the parser both bootstrap scripts share.
+printf 'name: x\nstacks:\n  - node\n  - go # comment\ndark_deploy: true\n' >"$tmp/t1.yml"
+printf 'name: x\ndark_deploy: true\n' >"$tmp/t2.yml"
+check "target-stacks: lists the stacks" '[[ "$("$src/scripts/target-stacks.sh" "$tmp/t1.yml")" == "node go" ]]'
+check "target-stacks: no list prints nothing (every stack)" '[[ -z "$("$src/scripts/target-stacks.sh" "$tmp/t2.yml")" ]]'
+rc=0
+"$src/scripts/target-stacks.sh" "$tmp/missing.yml" 2>/dev/null || rc=$?
+check "target-stacks: a missing file exits 64" '[[ $rc == 64 ]]'
+
 # cloudflare-workers runs the node stack only (owner decision 2026-11-18).
 if [[ -d "$p/deploy/targets/cloudflare-workers" ]]; then
   for s in python go; do
