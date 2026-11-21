@@ -146,21 +146,21 @@ To update: change a row's **Met?** when that changes, and link the PR.
 | ID | Playbook practice | Met? | How it's held here, or why not | Recommendation |
 |---|---|---|---|---|
 | PB-44 | Headless monitoring: a metric baseline, σ bands, tiered response (log, diagnose, PR or runbook) | Not met | PD-11; low traffic gives no stable baseline | Skip the bands; the daily smoke test opening an issue is enough |
-| PB-45 | Scheduled deterministic checks open issues | Partly | `maintain.yml` drafted for the owner: daily smoke test, monthly metrics and token renewal (PD-11) | Do: merge `maintain.yml` |
+| PB-45 | Scheduled deterministic checks open issues | Met | `maintain.yml` (#54): daily smoke test, monthly metrics and token renewal; proven by two manual runs, the metrics one opening #56 (PD-11) | Keep |
 | PB-46 | Findings written as `intent.md` | Met (adapted) | An issue first, then `/intent --from-issue` | Keep adapted |
 | PB-47 | An eval for each incident | Not met | Tied to PB-29 | Skip |
 | PB-48 | Claude Tag on call in incident channels | N/A | No incident channel | Skip |
 | PB-49 | Post-mortem lessons file | Not met | `deploy-failure` issues and `CLAUDE.md` cover it | Skip |
-| PB-50 | Recurring codebase security scans, findings dismissed with a reason | Met (adapted) | CodeQL, secret scanning, Dependabot, dependency review (PD-6); CodeQL runs on PRs only | Do: add the weekly CodeQL schedule to `pr.yml` (owner PR) |
+| PB-50 | Recurring codebase security scans, findings dismissed with a reason | Met (adapted) | CodeQL, secret scanning, Dependabot, dependency review (PD-6); CodeQL on PRs and weekly on Mondays (#54; first scheduled run pending) | Keep adapted |
 
-**Score (2026-11-21), 50 practices:** 19 met, 11 met (adapted), 8 partly, 10 not met, 2 N/A. Every "not met" row is either a deliberate skip for personal projects or has a **Do**.
+**Score (2026-11-21), 50 practices:** 20 met, 11 met (adapted), 7 partly, 10 not met, 2 N/A. Every "not met" row is either a deliberate skip for personal projects or has a **Do**.
 
 ### Open actions from the checklist
 
 - PB-13: ~~add the repeated plan-mode slip to `CLAUDE.md`~~ done.
 - PB-24: ~~have the `verifier` run `make acceptance` on stack changes~~ done.
-- PB-45: owner merges `maintain.yml`.
-- PB-50: owner adds `schedule:` (weekly) to `pr.yml` for CodeQL.
+- PB-45: ~~owner merges `maintain.yml`~~ done (#54).
+- PB-50: ~~owner adds `schedule:` (weekly) to `pr.yml` for CodeQL~~ done (#54).
 
 ## Deliberate
 
@@ -181,7 +181,7 @@ To update: change a row's **Met?** when that changes, and link the PR.
 |---|---|---|---|---|
 | PD-9 | Continuous evals: 20–50 real tasks run in CI on a schedule and on any change to `CLAUDE.md`, skills or hooks, and they gate those changes. Every incident adds one. | None. Changes to `CLAUDE.md`, skills and hooks are reviewed like code, but nothing regression-tests them. | Not in intent 0001's scope, and each run uses Pro quota. This is the largest gap. | open: a small intent of its own, 3–5 cases run only when `CLAUDE.md`, skills or hooks change, to stay within Pro quota |
 | PD-10 | Agent runs use their own identity, so logs separate agent actions from the engineer's. | Commits and PRs from cloud sessions now come from the bot through `scripts/bot-relay.sh` (intent 0002; #47 to #51). PR **comments** from a cloud session still appear as the owner, because they go through the GitHub connector and the broker has no comment route. | Until 2026-11-18 the session was on the Default environment. The relay has `/relay`, `/token` and `/secrets`, but no route for comments. | partly fixed (commits and PRs); comments accepted for now by the owner, 2026-11-21. A broker `/comment` route would close it (spec 0002 amendment) |
-| PD-11 | Stage 6, Maintain: σ control bands on a metric, read-only diagnosis at 2σ, a PR or pre-approved runbook at 3σ, findings written as `intent.md`. | Not built. | Milestone order. | partly: `maintain.yml` drafted for an owner PR (daily smoke test, monthly metrics and token renewal). σ bands won't be built for personal projects (PB-44) |
+| PD-11 | Stage 6, Maintain: σ control bands on a metric, read-only diagnosis at 2σ, a PR or pre-approved runbook at 3σ, findings written as `intent.md`. | Not built. | Milestone order. | fixed for v1: `maintain.yml` (#54) runs the daily smoke test and the monthly metrics and token renewal; both proven by manual runs (#56). σ bands won't be built for personal projects (PB-44) |
 | PD-12 | Leading and lagging metrics per stage, DORA measures, OpenTelemetry session export. | Defined in 0001 spec §7; nothing collects them yet, and no OpenTelemetry export is set up. | Milestone order. | partly fixed: `sdlc-metrics.sh` v1 (#50) covers DORA-style deploy metrics, review and first-pass `ci-ok`; the rest prints n/a. OpenTelemetry won't be set up (PB-25) |
 | PD-13 | "Gemini does the bulk work" is not a playbook rule; it's intent 0001's. Listed here because it changes who the build agent is. | Most of M2 and M3 was built by Claude Code in a cloud session; Antigravity re-runs are deferred. | No Antigravity and no bot key in cloud sessions. Recorded for M2 steps 1–2 in the plan; M3 and M4 went the same way. | open: recommend dropping the rule from intent 0001 unless Antigravity is used again |
 
