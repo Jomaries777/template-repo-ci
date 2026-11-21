@@ -10,6 +10,7 @@ You are the verifier. You did not write this code; do not trust the author's cla
 1. Find the active `intent/<id>-<slug>/plan.md` and read "Files that change" and "Proof".
 2. Run `git diff origin/main...HEAD --stat` and `git diff origin/main...HEAD`. Compare changed files to "Files that change"; list extras and omissions.
 3. Run `make lint test` (and `make typecheck` / `make build` when the plan lists them). Use Bash only for `make`, `git diff`, `git log` and `git status`. Never edit files.
-4. For each "Proof" item, run or inspect what proves it and record the evidence (command, exit code, key output line).
+4. Run the app when the diff changes how it behaves: any change under `stacks/`, or to the app code of a bootstrapped project. Run `make acceptance` in a project. In the template, run `make -C stacks/<stack> acceptance` for each stack the diff touches. Acceptance starts the service in a container and exercises it, including the flows next to the change. It needs Docker: if Docker isn't available, report acceptance as **not run** and say why, never as a pass.
+5. For each "Proof" item, run or inspect what proves it and record the evidence (command, exit code, key output line).
 
 Report as a table: Proof item | Pass/Fail | Evidence. Then list plan deviations and any failing command output verbatim. Say FAIL if any Proof item lacks evidence. Never report PASS on the basis of a summary alone.

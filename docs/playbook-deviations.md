@@ -99,7 +99,7 @@ To update: change a row's **Met?** when that changes, and link the PR.
 
 | ID | Playbook practice | Met? | How it's held here, or why not | Recommendation |
 |---|---|---|---|---|
-| PB-13 | Plan mode first; `plan.md` with Files, Order, Risks, Proof; updated in the same commit when the build departs | Partly | `write-plan` skill and Deviations tables, but plan mode was skipped more than once (PD-14) | Keep. Do: add the repeated slip to `CLAUDE.md` |
+| PB-13 | Plan mode first; `plan.md` with Files, Order, Risks, Proof; updated in the same commit when the build departs | Partly | `write-plan` skill and Deviations tables, but plan mode was skipped more than once (PD-14); the slip is now in `CLAUDE.md` | Keep |
 | PB-14 | A hook keeps `plan.md` in sync with the code | Not met | The Deviations table and the review's conformance pass catch drift | Skip |
 | PB-15 | Higher-risk plans go to a tech lead or architect | Met (adapted) | The owner (PD-1) | Keep adapted |
 | PB-16 | Auto mode for tightly specced, small, tested changes | Met | Used once the plan is accepted | Keep |
@@ -110,7 +110,7 @@ To update: change a row's **Met?** when that changes, and link the PR.
 | PB-21 | Build hooks: protected paths, format and lint after edits, no credentials | Met | `scripts/hooks/` | Keep |
 | PB-22 | 2–3 parallel worktree sessions, split by file | Partly | Plans mark independent steps; rarely used | Optional |
 | PB-23 | Safe commands pre-allowed to avoid prompt fatigue | Met | `.claude/settings.json` | Keep |
-| PB-24 | Subagents: simplifier, researcher, and a verifier that runs the app | Partly | All three exist; the verifier checks the diff and runs `make lint test`, but doesn't run the app | Do: have the verifier run `make acceptance` on stack changes |
+| PB-24 | Subagents: simplifier, researcher, and a verifier that runs the app | Met | All three exist; the verifier also runs the acceptance suite when the app's behaviour changes, and reports "not run" without Docker | Keep |
 | PB-25 | Metrics: parallel sessions, steering time, OpenTelemetry export | Not met | PD-12 | Skip |
 
 ### Stage 4: Test
@@ -153,12 +153,12 @@ To update: change a row's **Met?** when that changes, and link the PR.
 | PB-49 | Post-mortem lessons file | Not met | `deploy-failure` issues and `CLAUDE.md` cover it | Skip |
 | PB-50 | Recurring codebase security scans, findings dismissed with a reason | Met (adapted) | CodeQL, secret scanning, Dependabot, dependency review (PD-6); CodeQL runs on PRs only | Do: add the weekly CodeQL schedule to `pr.yml` (owner PR) |
 
-**Score (2026-11-21), 50 practices:** 18 met, 11 met (adapted), 9 partly, 10 not met, 2 N/A. Every "not met" row is either a deliberate skip for personal projects or has a **Do**.
+**Score (2026-11-21), 50 practices:** 19 met, 11 met (adapted), 8 partly, 10 not met, 2 N/A. Every "not met" row is either a deliberate skip for personal projects or has a **Do**.
 
 ### Open actions from the checklist
 
-- PB-13: add the repeated plan-mode slip to `CLAUDE.md`.
-- PB-24: have the `verifier` run `make acceptance` on stack changes.
+- PB-13: ~~add the repeated plan-mode slip to `CLAUDE.md`~~ done.
+- PB-24: ~~have the `verifier` run `make acceptance` on stack changes~~ done.
 - PB-45: owner merges `maintain.yml`.
 - PB-50: owner adds `schedule:` (weekly) to `pr.yml` for CodeQL.
 
@@ -189,7 +189,7 @@ To update: change a row's **Met?** when that changes, and link the PR.
 
 | ID | Date | Change | What was skipped | Status |
 |---|---|---|---|---|
-| PD-14 | 2026-11-18 | template #45; sandbox `sandbox-node-static` #5, #6 | Plan mode was not used. | open, repeated: the `sdlc-metrics.sh` design was agreed in chat (2026-11-20), not in plan mode. A slip made twice goes into `CLAUDE.md` (PB-13) |
+| PD-14 | 2026-11-18 | template #45; sandbox `sandbox-node-static` #5, #6 | Plan mode was not used. | repeated (the `sdlc-metrics.sh` design was agreed in chat, 2026-11-20, not in plan mode); now in `CLAUDE.md` "Things Claude gets wrong". Stays open until a few changes in a row start in plan mode |
 | PD-15 | 2026-11-18 | sandbox `sandbox-node-static` #6 | Merged before Claude's review ran. The review is skipped on drafts and the PR was merged right after it was marked ready. | open: wait for `claude-review` before merging |
 | PD-16 | 2026-11-18 | sandbox `sandbox-node-static` #1–#3 (Dependabot majors) | Merged on the owner's word in chat, with green CI but no review recorded on the PR. | open: closes with PD-10, when the owner reviews and merges in GitHub |
 | PD-17 | 2026-11-18 | M3 E2E on GitHub Pages | Results lived only in chat: the Pages 409 bootstrap bug, the 27 s revert, the post-revert check gap, and the Dependabot majors that waited. | open: `intent/0001-github-cicd-pipeline/spikes/m3-results.md` |

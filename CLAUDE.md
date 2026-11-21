@@ -41,3 +41,4 @@ Run `make lint test` before saying anything is done, then run the `verifier` sub
 - Using `--mode auto` for `agy`: not available on this account; use `--sandbox` in a worktree.
 - Making `claude-review` a required check or giving it an API-key fallback: it is advisory and Pro-quota only; only `ci-ok` is required.
 - Editing tests on a `fix/*` branch to make them pass: write and commit the failing test first.
+- Agreeing a design in chat instead of in plan mode (PD-14, twice): start every change in plan mode, from the accepted `spec.md` and `plan.md`, even when the owner approves the approach in chat.
