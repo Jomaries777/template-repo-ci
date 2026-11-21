@@ -30,6 +30,8 @@ env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   APP_NAME: ${{ vars.APP_NAME }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_WORKERS_SUBDOMAIN: ${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}
 
 jobs:
   classify:
@@ -116,6 +118,10 @@ jobs:
           gcp-wif-provider: ${{ vars.GCP_WIF_PROVIDER }}
           gcp-deploy-sa: ${{ vars.GCP_DEPLOY_SA }}
       - uses: ./.github/actions/release
+        env:
+          # cloudflare-workers (C10): an Environment secret. Only this step,
+          # which runs wrangler, sees it; empty for every other target.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         with:
           environment: dev
           sha: ${{ github.sha }}
@@ -168,6 +174,10 @@ jobs:
           gcp-wif-provider: ${{ vars.GCP_WIF_PROVIDER }}
           gcp-deploy-sa: ${{ vars.GCP_DEPLOY_SA }}
       - uses: ./.github/actions/release
+        env:
+          # cloudflare-workers (C10): an Environment secret. Only this step,
+          # which runs wrangler, sees it; empty for every other target.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         with:
           environment: production
           sha: ${{ github.sha }}

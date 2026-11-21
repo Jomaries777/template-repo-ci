@@ -1,0 +1,155 @@
+# Scheduled maintenance (spec §4.12, FR-10). Deterministic jobs only, no AI:
+# each opens (or updates) a GitHub issue when it finds a breach; the owner
+# triages it with /intent --from-issue <n>.
+#
+# v1 (plan.md Deviations, 2026-11-21):
+#   daily    prod-smoke: the prod-safe smoke suite against production
+#   monthly  metrics:    scripts/sdlc-metrics.sh report + token renewal issue
+# The weekly CodeQL scan is a `schedule:` on pr.yml, which reuses its
+# language matrix. Branch cleanup isn't here: delete_branch_on_merge already
+# removes merged PR branches.
+name: maintain
+
+on:
+  schedule:
+    - cron: "17 6 * * *" # daily 06:17 UTC: production smoke test
+    - cron: "41 7 1 * *" # monthly on the 1st, 07:41 UTC: metrics and tokens
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Which job to run
+        type: choice
+        options: [prod-smoke, metrics]
+        default: prod-smoke
+
+permissions:
+  contents: read
+
+env:
+  # Adapter settings, as in deploy.yml. Unused ones are empty and harmless.
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  APP_NAME: ${{ vars.APP_NAME }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_WORKERS_SUBDOMAIN: ${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}
+
+jobs:
+  prod-smoke:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '17 6 * * *')
+      || (github.event_name == 'workflow_dispatch' && inputs.job == 'prod-smoke')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # cloud-run: keyless sign-in to read the service URL
+      pages: read # github-pages: the site URL
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read deploy.yml
+        id: config
+        run: |
+          config="$(scripts/deploy-config.sh)"
+          echo "$config" >>"$GITHUB_OUTPUT"
+      - uses: ./.github/actions/target-auth
+        if: steps.config.outputs.target != 'none'
+        with:
+          target: ${{ steps.config.outputs.target }}
+          gcp-wif-provider: ${{ vars.GCP_WIF_PROVIDER }}
+          gcp-deploy-sa: ${{ vars.GCP_DEPLOY_SA }}
+      - name: No deploy target
+        if: steps.config.outputs.target == 'none'
+        run: echo "::notice title=prod-smoke::deploy.yml target is none; there is no production to test"
+      - name: Smoke test production
+        id: smoke
+        if: steps.config.outputs.target != 'none'
+        run: |
+          url="$(scripts/deploy.sh url production)"
+          url="${url%/}"
+          echo "url=$url" >>"$GITHUB_OUTPUT"
+          make smoke URL="$url"
+          curl -fsS --max-time 10 -o /dev/null "$url/health"
+      # Any failure, not only the smoke step: a broken sign-in or config read
+      # must not go quiet.
+      - name: Open or update the prod-smoke-failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ steps.smoke.outputs.url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create prod-smoke-failure --color B60205 \
+            --description "Automatic: the daily production smoke test failed" 2>/dev/null || true
+          # shellcheck disable=SC2016 # the backticks are Markdown
+          body="$(printf 'The daily smoke test failed against %s.\n\n- Run: %s\n- Commit on main: %s\n\nTriage with `/intent --from-issue <n>` in Claude Code.\n' \
+            "${URL:-production (the run failed before it read the URL)}" "$RUN_URL" "$GITHUB_SHA")"
+          # One open issue at a time: later failures add a comment to it.
+          open="$(gh issue list --label prod-smoke-failure --state open --json number -q '.[0].number')"
+          if [[ -n "$open" ]]; then
+            gh issue comment "$open" --body "$body"
+          else
+            gh issue create --title "Production smoke test failing" --label prod-smoke-failure --body "$body"
+          fi
+
+  metrics:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '41 7 1 * *')
+      || (github.event_name == 'workflow_dispatch' && inputs.job == 'metrics')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      deployments: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLAUDE_CODE_OAUTH_TOKEN_SET_AT: ${{ vars.CLAUDE_CODE_OAUTH_TOKEN_SET_AT }}
+      CLOUDFLARE_API_TOKEN_SET_AT: ${{ vars.CLOUDFLARE_API_TOKEN_SET_AT }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Post last month's SDLC metrics
+        run: |
+          report="$(scripts/sdlc-metrics.sh)"
+          title="$(head -n 1 <<<"$report" | sed 's/^# //')"
+          gh label create sdlc-metrics --color 0E8A16 \
+            --description "Automatic: monthly SDLC metrics (scripts/sdlc-metrics.sh)" 2>/dev/null || true
+          # A rerun updates the month's issue instead of opening a second one.
+          existing="$(gh issue list --label sdlc-metrics --state all --search "in:title \"$title\"" --json number,title |
+            jq -r --arg t "$title" '[.[] | select(.title == $t)][0].number // empty')"
+          if [[ -n "$existing" ]]; then
+            gh issue edit "$existing" --body "$report"
+          else
+            gh issue create --title "$title" --label sdlc-metrics --body "$report"
+          fi
+      - name: Open a renewal issue for tokens due
+        run: |
+          due="$(scripts/sdlc-metrics.sh --due-tokens)"
+          [[ -n "$due" ]] || { echo "No token is due for renewal."; exit 0; }
+          gh label create token-renewal --color FBCA04 \
+            --description "Automatic: a long-lived token is 11 months old" 2>/dev/null || true
+          while IFS= read -r name; do
+            title="Renew $name"
+            # One open issue per token.
+            if [[ -n "$(gh issue list --label token-renewal --state open --search "in:title \"$title\"" --json number -q '.[0].number')" ]]; then
+              continue
+            fi
+            # shellcheck disable=SC2016 # the backticks and $(date) are Markdown text
+            body="$(printf '`%s` was set over 11 months ago (repo variable `%s_SET_AT`).\n\nRenew it, store it again, then update the date:\n\n```bash\ngh variable set %s_SET_AT --body "$(date -u +%%Y-%%m-%%d)"\n```\n' "$name" "$name" "$name")"
+            gh issue create --title "$title" --label token-renewal --body "$body"
+          done <<<"$due"
+      - name: Open an issue when the metrics run fails
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create sdlc-metrics --color 0E8A16 \
+            --description "Automatic: monthly SDLC metrics (scripts/sdlc-metrics.sh)" 2>/dev/null || true
+          gh issue create --title "SDLC metrics run failed" --label sdlc-metrics \
+            --body "The monthly metrics job failed: $RUN_URL. Rerun it from Actions, maintain, Run workflow, metrics."

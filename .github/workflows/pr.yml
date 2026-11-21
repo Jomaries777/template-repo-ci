@@ -12,6 +12,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
+  # Weekly full CodeQL scan of main (spec §4.12, playbook checklist PB-50).
+  # Scheduled runs do only CodeQL: classify reports "scan", and the jobs that
+  # need a change to compare are skipped.
+  schedule:
+    - cron: "23 5 * * 1" # Monday 05:23 UTC
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -43,12 +48,17 @@ jobs:
       - name: Classify the change
         id: classify
         run: |
-          class="$(scripts/classify.sh "$BASE_SHA" "$HEAD_SHA")"
+          if [[ "$GITHUB_EVENT_NAME" == schedule ]]; then
+            class=scan
+          else
+            class="$(scripts/classify.sh "$BASE_SHA" "$HEAD_SHA")"
+          fi
           echo "class=$class" >>"$GITHUB_OUTPUT"
           echo "Change class: **$class**" >>"$GITHUB_STEP_SUMMARY"
 
   hygiene:
     needs: classify
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -102,6 +112,7 @@ jobs:
 
   secrets:
     needs: classify
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -126,7 +137,7 @@ jobs:
 
   lint:
     needs: classify
-    if: needs.classify.outputs.class != 'docs'
+    if: needs.classify.outputs.class != 'docs' && needs.classify.outputs.class != 'scan'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
