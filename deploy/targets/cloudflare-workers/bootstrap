@@ -85,4 +85,7 @@ for env in dev production; do
     printf '%s' "$CLOUDFLARE_API_TOKEN" | gh secret set CLOUDFLARE_API_TOKEN --env "$env" --repo "$repo" >&2
   fi
 done
+# The date the token was last written, for the yearly renewal check in
+# sdlc-metrics.sh (C10). Rerunning bootstrap with the same token moves it.
+run gh variable set CLOUDFLARE_API_TOKEN_SET_AT --repo "$repo" --body "$(date -u +%Y-%m-%d)"
 echo "cloudflare-workers: bootstrap done for ${APP_NAME} (${repo})" >&2
