@@ -49,9 +49,9 @@ fi
 
 # A target may list the stacks it supports (target.yml `stacks:`); no list
 # means every stack.
-supported="$(sed -n '/^stacks:/,/^[^[:space:]-]/p' "$target_yml" | sed -n 's/^[[:space:]]*-[[:space:]]*\([a-z0-9-]*\).*/\1/p' | tr '\n' ' ')"
-if [[ -n "$supported" && " $supported" != *" $stack "* ]]; then
-  usage_error "$target doesn't support the $stack stack (supported: ${supported% })"
+supported="$(scripts/target-stacks.sh "$target_yml")"
+if [[ -n "$supported" && " $supported " != *" $stack "* ]]; then
+  usage_error "$target doesn't support the $stack stack (supported: $supported)"
 fi
 
 if [[ -z "$repo" ]]; then

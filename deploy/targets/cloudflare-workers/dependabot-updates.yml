@@ -1,0 +1,20 @@
+  # cloudflare-workers adapter: the wrangler pinned in this folder's lockfile.
+  # Bootstrap appends these entries to the `updates:` list in
+  # .github/dependabot.yml only when the project's target is
+  # cloudflare-workers, so other projects get no wrangler PRs. A project that
+  # switches to this target later adds them by hand (plan.md Deviations).
+  - package-ecosystem: npm
+    directory: /deploy/targets/cloudflare-workers
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      wrangler-patch:
+        update-types:
+          - patch
+      wrangler-minor:
+        update-types:
+          - minor

@@ -88,10 +88,9 @@ names() {
 [[ -d "deploy/targets/$target" ]] || usage_error "unknown target: $target"
 # Refuse a stack the target doesn't support (target.yml `stacks:`) before any
 # file changes; bootstrap-target.sh checks it again for later switches.
-supported="$(sed -n '/^stacks:/,/^[^[:space:]-]/p' "deploy/targets/$target/target.yml" 2>/dev/null |
-  sed -n 's/^[[:space:]]*-[[:space:]]*\([a-z0-9-]*\).*/\1/p' | tr '\n' ' ')"
-if [[ -n "$supported" && " $supported" != *" $stack "* ]]; then
-  usage_error "$target doesn't support the $stack stack (supported: ${supported% })"
+supported="$(scripts/target-stacks.sh "deploy/targets/$target/target.yml")"
+if [[ -n "$supported" && " $supported " != *" $stack "* ]]; then
+  usage_error "$target doesn't support the $stack stack (supported: $supported)"
 fi
 
 current_stack="$(sed -n 's/^stack:[[:space:]]*\([a-z0-9-]*\).*/\1/p' deploy.yml 2>/dev/null | head -n 1)"
@@ -201,6 +200,10 @@ merge; the owner approves.
   # the entries to add to the `updates:` list.
   dependabot_fragment="stacks/$stack/dependabot-updates.yml"
   [[ -f "$dependabot_fragment" ]] || die "$dependabot_fragment is missing; every stack ships its Dependabot updates"
+  # An adapter with its own dependencies (cloudflare-workers pins wrangler)
+  # ships entries too; only the chosen target's are added. Its fragment stays,
+  # so a later switch to that target can add them by hand.
+  target_fragment="deploy/targets/$target/dependabot-updates.yml"
   # CodeQL scans the stack's language too (pr.yml's codeql matrix starts with
   # the workflows only): add the stack's entry after the actions one.
   case "$stack" in
@@ -217,12 +220,14 @@ merge; the owner approves.
     echo "DRY-RUN: write .github/CODEOWNERS (* @$owner)"
     echo "DRY-RUN: write README.md (project stub)"
     echo "DRY-RUN: append $dependabot_fragment to .github/dependabot.yml"
+    [[ ! -f "$target_fragment" ]] || echo "DRY-RUN: append $target_fragment to .github/dependabot.yml"
   else
     printf '%s' "$deploy_yml" >deploy.yml
     printf '%s' "$codeowners" >.github/CODEOWNERS
     printf '%s' "$readme" >README.md
     cat "$dependabot_fragment" >>.github/dependabot.yml
     rm -f "$dependabot_fragment"
+    [[ ! -f "$target_fragment" ]] || cat "$target_fragment" >>.github/dependabot.yml
     if [[ -n "$codeql_language" ]] && ! grep -qE "^[[:space:]]+- language: $codeql_language\$" .github/workflows/pr.yml; then
       # Insert after the "- language: actions" item and its build-mode line,
       # with the same indentation; fail if pr.yml no longer has that item.
