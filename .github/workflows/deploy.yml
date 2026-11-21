@@ -105,10 +105,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: dev
-    env:
-      # cloudflare-workers (C10): an Environment secret, so only this job
-      # reads it. Empty, and unused, for every other target.
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     permissions:
       contents: read
       id-token: write
@@ -122,6 +118,10 @@ jobs:
           gcp-wif-provider: ${{ vars.GCP_WIF_PROVIDER }}
           gcp-deploy-sa: ${{ vars.GCP_DEPLOY_SA }}
       - uses: ./.github/actions/release
+        env:
+          # cloudflare-workers (C10): an Environment secret. Only this step,
+          # which runs wrangler, sees it; empty for every other target.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         with:
           environment: dev
           sha: ${{ github.sha }}
@@ -140,10 +140,6 @@ jobs:
     # The owner is the required reviewer, deployment branch main only. Bootstrap
     # sets this up (spec §4.9); the first step refuses to deploy without it.
     environment: production
-    env:
-      # cloudflare-workers (C10): an Environment secret, so only this job
-      # reads it. Empty, and unused, for every other target.
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     permissions:
       # write: the github-pages target pushes the gh-pages branch with this
       # job's token (spec §4.11). Other targets don't use it, and the job runs
@@ -178,6 +174,10 @@ jobs:
           gcp-wif-provider: ${{ vars.GCP_WIF_PROVIDER }}
           gcp-deploy-sa: ${{ vars.GCP_DEPLOY_SA }}
       - uses: ./.github/actions/release
+        env:
+          # cloudflare-workers (C10): an Environment secret. Only this step,
+          # which runs wrangler, sees it; empty for every other target.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         with:
           environment: production
           sha: ${{ github.sha }}
