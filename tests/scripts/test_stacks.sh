@@ -27,17 +27,17 @@ if [[ -f stacks/node/package.json ]]; then
 fi
 
 if [[ -f stacks/python/Makefile ]]; then
-  if grep -qiE 'rerun|flaky' stacks/python/requirements-dev.txt stacks/python/pyproject.toml; then
+  if grep -qiE 'rerun|flaky|retr(y|ies)' stacks/python/requirements-dev.txt stacks/python/pyproject.toml; then
     not_ok "python: no pytest rerun plugin or option"
   else
     ok "python: no pytest rerun plugin or option"
   fi
-  if smoke_recipe python | grep -qiE 'rerun|flaky'; then not_ok "python: smoke never retries"; else ok "python: smoke never retries"; fi
+  if smoke_recipe python | grep -qiE 'rerun|flaky|retr(y|ies)'; then not_ok "python: smoke never retries"; else ok "python: smoke never retries"; fi
 fi
 
 if [[ -f stacks/go/Makefile ]]; then
   recipe="$(smoke_recipe go)"
-  if grep -q -- '-count=1' <<<"$recipe" && ! grep -qE -- '-count=([02-9]|1[0-9])|retry|rerun' <<<"$recipe"; then
+  if grep -q -- '-count=1' <<<"$recipe" && ! grep -qiE -- '-count=([02-9]|1[0-9])|retr(y|ies)|rerun' <<<"$recipe"; then
     ok "go: smoke runs each test once"
   else
     not_ok "go: smoke runs each test once (recipe: $recipe)"
