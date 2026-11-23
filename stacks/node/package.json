@@ -14,7 +14,7 @@
     "typecheck": "tsc",
     "test": "vitest run",
     "acceptance": "playwright test",
-    "smoke": "playwright test --grep @prod-safe"
+    "smoke": "playwright test --grep @prod-safe --retries=0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -67,7 +67,7 @@ This repo replaces `sandbox-node-static` for the Workers part of step 6 (plan De
 3. **Playwright's CI retries hide an intermittent live failure.** `stacks/node/playwright.config.ts` sets `retries: 2` when `CI` is set.
    - In live check 1, `GET /` got 500, and the retry reached an edge still serving the old version and got 200. Playwright reported "1 flaky" and the check passed.
    - Detection moved to check 2, 60 s later. That still met criterion 5, but a fault that only some requests hit could pass every check.
-   - **Open:** the smoke suite should run with no retries (or fail on flaky tests), in every stack. This needs its own change.
+   - **Fixed** on branch `fix/smoke-no-retries`: the node `smoke` script passes `--retries=0`, and `tests/scripts/test_stacks.sh` keeps every stack's smoke suite retry-free. Python (pytest, no rerun plugin) and Go (`go test -count=1`) already ran each test once.
 4. **A failed first deploy can't revert cleanly.** The only earlier version is bootstrap's 503 placeholder, so the re-check after a revert always fails ("revert NOT confirmed healthy: manual action needed").
    - This happened on the first deploy's rerun.
    - **Open:** it needs a decision, for example skipping the re-check when the previous version is the placeholder.
