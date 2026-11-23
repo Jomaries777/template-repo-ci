@@ -298,6 +298,10 @@ jobs:
           # only when it pushed a branch of this repository (write access:
           # the bot App), never Dependabot (its runs get no Actions secrets).
           # The owner is a User, so this list doesn't apply to the owner.
+          # github.actor is whoever started this run: on a re-run, the person
+          # who clicked re-run (a User, so again the list doesn't apply). A
+          # deleted fork leaves head.repo empty, so the list is empty: fails
+          # closed.
           allowed_bots: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.actor || '' }}
           # Off on purpose: this repo is public and tool output could expose data.
           show_full_output: false
