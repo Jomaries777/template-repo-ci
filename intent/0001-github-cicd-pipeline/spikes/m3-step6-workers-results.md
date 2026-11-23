@@ -57,8 +57,8 @@ This repo replaces `sandbox-node-static` for the Workers part of step 6 (plan De
 ## Findings
 
 1. **Cloudflare lags a few seconds (template #60).** The first deploy failed in dev twice ([run 45184414059](https://github.com/Jomaries777/sandbox-node-workers/actions/runs/45184414059)):
-   - `wrangler versions list` didn't yet include a version uploaded 5 s earlier, so `promote` found no `c<sha7>` tag.
-   - On the rerun, the live URL still served the 503 placeholder 2.5 s after promote.
+   - `wrangler versions list` didn't yet include a version uploaded about 6 s earlier, so `promote` found no `c<sha7>` tag.
+   - On the rerun, the live URL still served the 503 placeholder about 3 s after promote returned.
    - **Fix:** `version_for_tag` retries (7 × 5 s), and `promote` waits until `/health` reports the new sha (12 × 5 s, a warning if not).
    - **Proven:** in every later run, the lookup found the version and the URL served the sha 4–20 s after promote.
 2. **The automatic review never ran on bot PRs (template #61).** `claude-code-action` refused bot-started runs ("Workflow initiated by non-human actor"), and the skip comment blamed the Pro limit or the token.
@@ -72,7 +72,7 @@ This repo replaces `sandbox-node-static` for the Workers part of step 6 (plan De
    - This happened on the first deploy's rerun.
    - **Open:** it needs a decision, for example skipping the re-check when the previous version is the placeholder.
 5. **GitHub marked a skipped job "cancelled".** In run 45195252580, `report` (`if: failure()`) was marked cancelled, with no runner, instead of skipped, so the run showed "cancelled" although `dev` and `production` succeeded. The production deployment status was `success`, which is what `deploy-base.sh` reads.
-   - It happened once, during a 9.5 min wait for a hosted runner (the `production` job was queued 14:35:52–14:45:21). It looks like GitHub's behaviour, not the workflow's.
+   - It happened once. The cause is unexplained, probably GitHub's behaviour rather than the workflow's. In the same run, the `production` job waited 9.5 min between being created (14:35:48) and starting (14:45:16). The evidence doesn't show whether that was the environment approval or a runner wait.
 6. **README quick-start gaps (criterion 12).** These go to a separate docs PR:
    - the README still says the workflow lacks the Cloudflare settings;
    - step 5 has no example for exporting `CLOUDFLARE_ACCOUNT_ID` and reading the token without echoing it;
@@ -85,7 +85,7 @@ This repo replaces `sandbox-node-static` for the Workers part of step 6 (plan De
 | Step | Time |
 |---|---|
 | Dev release, criterion 4 (current → released) | 2 min 38 s, of which the live checks took 2 min 4 s |
-| Production release, criterion 4 | 2 min 25 s, after 9.5 min queued for a runner |
-| Promote → live URL serves the new sha | 4–20 s (6 promotes) |
+| Production release, criterion 4 | 2 min 25 s, after a 9.5 min wait between job creation and start |
+| Promote → live URL serves the new sha | 4–20 s (7 promotes) |
 | Failed live check → revert confirmed | 3.9 s |
 | First 500 → revert confirmed | 67 s |
