@@ -293,6 +293,16 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
+          # Agent PRs come from the bot App, and the action refuses runs a bot
+          # started unless it is listed. Allow only the actor of this run, and
+          # only when it pushed a branch of this repository (write access:
+          # the bot App), never Dependabot (its runs get no Actions secrets).
+          # The owner is a User, so this list doesn't apply to the owner.
+          # github.actor is whoever started this run: on a re-run, the person
+          # who clicked re-run (a User, so again the list doesn't apply). A
+          # deleted fork leaves head.repo empty, so the list is empty: fails
+          # closed.
+          allowed_bots: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && github.actor || '' }}
           # Off on purpose: this repo is public and tool output could expose data.
           show_full_output: false
           prompt: |
@@ -317,7 +327,7 @@ jobs:
         continue-on-error: true
         run: |
           body="<!-- claude-review-skipped -->
-          Claude review skipped: Claude Pro limit reached or token invalid. Comment \`@claude review\` later."
+          Claude review didn't run. The reason is in the [claude-review job log]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) (for example the Claude Pro limit, an expired \`CLAUDE_CODE_OAUTH_TOKEN\`, or an actor the action refuses). Comment \`@claude review\` to try again."
           gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
 
   # The only required status check. Skipped jobs pass; failed or cancelled fail.
