@@ -47,4 +47,18 @@ Every item needs the separate Cloudflare account (plan decision 4), on the Worke
 
 ## Results so far
 
-Phase 1 found no blocker, so the adapter was built (plan Deviations, 2026-11-20). Phase 2 is open.
+Phase 1 found no blocker, so the adapter was built (plan Deviations, 2026-11-20).
+
+Phase 2 ran on 2026-11-23 in `Jomaries777/sandbox-node-workers`, not `sandbox-node-static` (plan Deviations, 2026-11-23). Full evidence: [m3-step6-workers-results.md](m3-step6-workers-results.md).
+
+| Item | Result |
+|---|---|
+| 1 Account | ✅ Separate account, Workers Free plan, neutral subdomain `x7k2-apps` |
+| 2 Token | ✅ Custom API token, stored on the `dev` and `production` Environments only |
+| 3 Bootstrap | ✅ Via `make bootstrap` (a new project), not `make bootstrap-target`. Both Workers got the 503 placeholder, and the three variables were set |
+| 4 Token scope | ⏳ The token read `/accounts/<id>/workers/subdomain`. Whether it holds only Workers Scripts Edit is still to be confirmed by the owner |
+| 5 Full chain | ✅ Criterion 4, sandbox PR #10 |
+| 6 Auto-revert | ✅ Criterion 5, sandbox PR #11. Revert confirmed 3.9 s after the failed check (67 s after the first 500; see results finding 3) |
+| 7 wrangler output | ✅ All four match: `deployments status --json` (`current`), `versions list --json` with `annotations["workers/tag"]` (`promote`), the `version-upload` line in `WRANGLER_OUTPUT_FILE_PATH` (`deploy-dark`), and `rollback <id> --yes` with no prompt (`revert`). Two problems were timing, not format: the version list and the live URL lag a few seconds (template #60) |
+| 8 Environments | ✅ Bootstrap's Environments were found and got the token (checked via `gh api`). Not yet run as a separate `make bootstrap-target` on an existing repo: that comes with the criterion 11 switch |
+| 9 Free-plan facts | Partly answered. Preview URLs are public by default: the pre-traffic smoke reached them with no credentials. Still open: the daily request limit, version retention and deletion, and how far back `rollback` reaches |
