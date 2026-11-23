@@ -193,14 +193,50 @@ serving_version() {
   printf '%s\n' "$id"
 }
 
-# version_for_tag <tag>: the newest version of WORKER tagged <tag>.
+# version_for_tag <tag>: the newest version of WORKER tagged <tag>. A version
+# uploaded seconds ago may not be listed yet (seen live 2026-11-23: missing
+# 5 s after the upload), so ask CF_TAG_LOOKUP_ATTEMPTS times (default 7),
+# CF_TAG_LOOKUP_INTERVAL seconds apart (default 5): about 30 s in all.
 version_for_tag() {
-  local versions id
-  versions="$(query "$(fixture_versions "$1")" wrangler versions list --json --name "$WORKER" --config "$CONFIG")"
-  id="$(jq -r --arg t "$1" '[.[] | select(.annotations["workers/tag"] == $t)]
-    | sort_by(.metadata.created_on) | last | .id // empty' <<<"$versions")"
-  [[ -n "$id" ]] || die "no version of $WORKER is tagged $1 (did deploy-dark run?)"
-  printf '%s\n' "$id"
+  local versions id i attempts="${CF_TAG_LOOKUP_ATTEMPTS:-7}" interval="${CF_TAG_LOOKUP_INTERVAL:-5}"
+  for ((i = 1; i <= attempts; i++)); do
+    versions="$(query "$(fixture_versions "$1")" wrangler versions list --json --name "$WORKER" --config "$CONFIG")"
+    id="$(jq -r --arg t "$1" '[.[] | select(.annotations["workers/tag"] == $t)]
+      | sort_by(.metadata.created_on) | last | .id // empty' <<<"$versions")"
+    if [[ -n "$id" ]]; then
+      printf '%s\n' "$id"
+      return 0
+    fi
+    ((i == attempts)) || sleep "$interval"
+  done
+  die "no version of $WORKER is tagged $1 after $attempts lookups (did deploy-dark run?)"
+}
+
+# worker_url: the live workers.dev URL of WORKER.
+worker_url() {
+  require_vars CLOUDFLARE_WORKERS_SUBDOMAIN
+  [[ "$CLOUDFLARE_WORKERS_SUBDOMAIN" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || die "invalid CLOUDFLARE_WORKERS_SUBDOMAIN"
+  printf 'https://%s.%s.workers.dev\n' "$WORKER" "$CLOUDFLARE_WORKERS_SUBDOMAIN"
+}
+
+# wait_serving <sha>: after a deploy, wait until the live URL's /health
+# reports version <sha> (the stack's APP_VERSION, set by deploy-dark).
+# Cloudflare takes a few seconds to move traffic (seen live 2026-11-23: the
+# placeholder still answered 2.5 s after promote). Polls CF_SERVING_ATTEMPTS
+# times (default 12), CF_SERVING_INTERVAL seconds apart (default 5). Not
+# confirmed in time is only a warning: release.sh's live check decides.
+wait_serving() {
+  local url v i attempts="${CF_SERVING_ATTEMPTS:-12}" interval="${CF_SERVING_INTERVAL:-5}"
+  url="$(worker_url)"
+  for ((i = 1; i <= attempts; i++)); do
+    v="$(curl -fsS --max-time 10 "$url/health" 2>/dev/null | jq -r '.version? // empty' 2>/dev/null || true)"
+    if [[ "$v" == "$1" ]]; then
+      echo "cloudflare-workers: $url serves $1" >&2
+      return 0
+    fi
+    ((i == attempts)) || sleep "$interval"
+  done
+  echo "cloudflare-workers: warning: $url did not report version $1 within $((attempts * interval)) s; the live check decides" >&2
 }
 
 valid_version_id() {

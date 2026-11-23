@@ -470,7 +470,10 @@ d="$(dirname "$0")"
 echo "$* TOKEN=${CLOUDFLARE_API_TOKEN:-}" >>"$d/calls"
 case "$1 $2" in
   "deployments status") cat "$d/status.json" ;;
-  "versions list") cat "$d/versions.json" ;;
+  "versions list")
+    # versions.lag: Cloudflare doesn't list a new version yet (seen live,
+    # 2026-11-23): the first list after an upload comes back without it.
+    if [[ -f "$d/versions.lag" ]]; then rm "$d/versions.lag"; echo '[]'; else cat "$d/versions.json"; fi ;;
   "versions upload")
     echo "uploading" >&2
     [[ -f "$d/upload.json" ]] && cat "$d/upload.json" >>"$WRANGLER_OUTPUT_FILE_PATH" ;;
@@ -478,10 +481,20 @@ esac
 exit 0
 FAKE
   chmod +x "$cfw/wrangler"
+  # Fake curl for promote's wait on the live URL: answers /health with the
+  # first line of health.seq (consumed), else a version that never matches.
+  mkdir -p "$cfw/pbin"
+  cat >"$cfw/pbin/curl" <<'FAKE'
+#!/usr/bin/env bash
+d="$(dirname "$0")/.."
+echo "curl $*" >>"$d/calls"
+if [[ -s "$d/health.seq" ]]; then head -n 1 "$d/health.seq"; sed -i.bak 1d "$d/health.seq"; else echo '{"status": "ok", "version": "other"}'; fi
+FAKE
+  chmod +x "$cfw/pbin/curl"
   cfreal() {
     rc=0
     : >"$cfw/calls"
-    out="$(env -u DEPLOY_DRY_RUN "${cf_env[@]}" WRANGLER_BIN="$cfw/wrangler" CLOUDFLARE_API_TOKEN=s3cr3t-token \
+    out="$(env -u DEPLOY_DRY_RUN "${cf_env[@]}" WRANGLER_BIN="$cfw/wrangler" CLOUDFLARE_API_TOKEN=s3cr3t-token CF_TAG_LOOKUP_INTERVAL=0 CF_SERVING_INTERVAL=0 PATH="$cfw/pbin:$PATH" \
       DEPLOY_BUILD_CONTEXT="$root/stacks/node" "$root/deploy/targets/cloudflare-workers/$1" "${@:2}" 2>"$tmp/err")" || rc=$?
     err="$(cat "$tmp/err")"
   }
@@ -512,9 +525,26 @@ JSON
   cfreal promote production "$sha"
   rc_is "cloudflare-workers: promote" 0
   if grep -q "versions deploy 55555555-5555-4555-8555-555555555555@100% --name hello " "$cfw/calls"; then pass "cloudflare-workers: promote deploys the newest version with the tag at 100%"; else fail "cloudflare-workers: promote args ($(cat "$cfw/calls"))"; fi
+  printf '%s\n' '{"status": "ok", "version": "old"}' "{\"status\": \"ok\", \"version\": \"$sha\"}" >"$cfw/health.seq"
+  cfreal promote production "$sha"
+  rc_is "cloudflare-workers: promote waits for the live URL to serve the new version" 0
+  if [[ "$(grep -c '^curl .*https://hello.acme.workers.dev/health' "$cfw/calls")" == 2 ]]; then pass "cloudflare-workers: promote polls /health until it reports the sha"; else fail "cloudflare-workers: /health polls ($(cat "$cfw/calls"))"; fi
+  if [[ "$(grep -n '^versions deploy' "$cfw/calls" | cut -d: -f1)" -lt "$(grep -n '^curl' "$cfw/calls" | head -n 1 | cut -d: -f1)" ]]; then pass "cloudflare-workers: promote waits only after the deploy"; else fail "cloudflare-workers: wait order ($(cat "$cfw/calls"))"; fi
+  has_err() { if grep -q -- "$2" <<<"$err"; then pass "$1"; else fail "$1 (stderr: $err)"; fi; }
+  has_err "cloudflare-workers: promote says the new version is live" "serves $sha"
+  rm -f "$cfw/health.seq"
+  cfreal promote production "$sha"
+  rc_is "cloudflare-workers: promote leaves an unconfirmed switch to the live check" 0
+  has_err "cloudflare-workers: promote warns when the switch is not confirmed" "did not report version $sha"
+  if [[ "$(grep -c '^curl' "$cfw/calls")" == 12 ]]; then pass "cloudflare-workers: promote stops polling after 12 tries"; else fail "cloudflare-workers: /health polls before giving up ($(grep -c '^curl' "$cfw/calls"))"; fi
+  touch "$cfw/versions.lag"
+  cfreal promote production "$sha"
+  rc_is "cloudflare-workers: promote waits for a just-uploaded version to be listed" 0
+  if grep -q "versions deploy 55555555-5555-4555-8555-555555555555@100% --name hello " "$cfw/calls"; then pass "cloudflare-workers: promote deploys the version once it is listed"; else fail "cloudflare-workers: promote after lag ($(cat "$cfw/calls"))"; fi
   cfreal promote production abcdef1
   rc_is "cloudflare-workers: promote fails when no version has the tag" 1
   if grep -q "versions deploy" "$cfw/calls"; then fail "cloudflare-workers: promote deployed without a tagged version"; else pass "cloudflare-workers: no deploy without a tagged version"; fi
+  if [[ "$(grep -c '^versions list' "$cfw/calls")" == 7 ]]; then pass "cloudflare-workers: promote gives up after 7 lookups"; else fail "cloudflare-workers: lookups before giving up ($(grep -c '^versions list' "$cfw/calls"))"; fi
   cfreal revert production "$prev_id"
   if grep -q "^rollback $prev_id --name hello .*--yes" "$cfw/calls"; then pass "cloudflare-workers: revert rolls back to the given version without prompting"; else fail "cloudflare-workers: revert args ($(cat "$cfw/calls"))"; fi
 

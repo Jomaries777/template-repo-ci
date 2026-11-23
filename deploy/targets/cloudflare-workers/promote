@@ -2,7 +2,8 @@
 set -euo pipefail
 # shellcheck source=deploy/targets/cloudflare-workers/lib.sh disable=SC1091
 source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
-# promote <env> <sha>: send 100% of traffic to the version tagged c<sha7>.
+# promote <env> <sha>: send 100% of traffic to the version tagged c<sha7>,
+# then wait until the live URL serves it (wait_serving, lib.sh).
 init_common
 need_token
 worker_for "${1:-}"
@@ -11,3 +12,4 @@ write_config "$WORKER" "$(entry_point)"
 
 id="$(version_for_tag "$TAG")"
 run wrangler versions deploy "${id}@100%" --name "$WORKER" --config "$CONFIG" --yes --message "promote $SHA"
+[[ "$DRY_RUN" == "1" ]] || wait_serving "$SHA"
