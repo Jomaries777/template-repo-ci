@@ -115,6 +115,17 @@ fi
 name="${repo#*/}"
 name="${name:-$(basename "$root")}"
 
+# Never bootstrap the template itself: its push is stopped by the ruleset, but
+# the local checkout would be rewritten first (M3 step 6, finding 6). GitHub
+# names are case-insensitive.
+template_repo="${TEMPLATE_REPO:-Jomaries777/template-repo-ci}"
+[[ "$template_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || usage_error "invalid TEMPLATE_REPO: $template_repo"
+# tr, not ${x,,}: macOS ships bash 3.2.
+lower() { tr '[:upper:]' '[:lower:]' <<<"$1"; }
+if [[ -n "$repo" && "$(lower "$repo")" == "$(lower "$template_repo")" ]]; then
+  usage_error "$repo is the template itself: create a new repo from it (README, \"Start a new project\") and run bootstrap in that clone"
+fi
+
 # Bootstrap commits with `git add -A`, so it must start from a clean tree:
 # then its commit holds only its own changes, never a stray local file.
 if ! ((local_only)) && ! ((dry_run)) && [[ -n "$(git status --porcelain)" ]]; then
@@ -160,8 +171,6 @@ else
     if [[ -d "$d" ]]; then fs rm -r "$d"; fi
   done
 
-  template_repo="${TEMPLATE_REPO:-Jomaries777/template-repo-ci}"
-  [[ "$template_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || usage_error "invalid TEMPLATE_REPO: $template_repo"
   deploy_yml="target: $target
 stack: $stack
 environments:
@@ -423,10 +432,11 @@ fi
 run gh variable set BOT_APP_ID --repo "$repo" --body "${app_id:-<id>}"
 
 # --- 4. target: the same script that switches targets later (criterion 11).
-step "Target: $target"
+# bootstrap-target.sh prints the "==> Target:" header itself. BOOTSTRAP_FIRST
+# drops its "commit deploy.yml's target in a PR" hint: this commit has it.
 target_args=(--target "$target" --stack "$stack" --repo "$repo")
 ((dry_run)) && target_args+=(--dry-run)
-"$root/scripts/bootstrap-target.sh" "${target_args[@]}"
+BOOTSTRAP_FIRST=1 "$root/scripts/bootstrap-target.sh" "${target_args[@]}"
 
 # --- 5. push. Pushing main starts the first deploy, so this comes after the
 # Environments (production's reviewer), secrets and the target's resources and

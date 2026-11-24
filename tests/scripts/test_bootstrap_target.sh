@@ -54,6 +54,15 @@ done
 after="$(cd "$p" && find . -path ./deploy.yml -prune -o -type f -print | sort | xargs cksum)"
 check "switching targets changes no file, workflows included (criterion 11)" '[[ "$before" == "$after" ]]'
 
+# A switch later on gets the "commit deploy.yml's target" hint; a first
+# bootstrap (BOOTSTRAP_FIRST=1, set by bootstrap.sh) commits it itself.
+run cloud-run
+check "switch: prints the commit-the-target hint" 'grep -q "Commit deploy.yml.s target: cloud-run" <<<"$out"'
+printf 'target: cloud-run\nstack: node\n' >"$p/deploy.yml"
+rc=0
+out="$(cd "$p" && BOOTSTRAP_FIRST=1 GCP_PROJECT_ID=proj-1 BILLING_ACCOUNT=0A1B2C-3D4E5F-6A7B8C scripts/bootstrap-target.sh --repo acme/hello --dry-run 2>&1)" || rc=$?
+check "first bootstrap: no commit-the-target hint" '[[ $rc == 0 ]] && ! grep -q "Commit deploy.yml" <<<"$out"'
+
 run nope
 check "an unknown target is refused with 64" '[[ $rc == 64 ]] && grep -q "unknown target" <<<"$out"'
 

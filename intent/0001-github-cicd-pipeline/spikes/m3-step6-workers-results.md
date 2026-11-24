@@ -73,7 +73,7 @@ This repo replaces `sandbox-node-static` for the Workers part of step 6 (plan De
    - **Open:** it needs a decision, for example skipping the re-check when the previous version is the placeholder.
 5. **GitHub marked a skipped job "cancelled".** In run 45195252580, `report` (`if: failure()`) was marked cancelled, with no runner, instead of skipped, so the run showed "cancelled" although `dev` and `production` succeeded. The production deployment status was `success`, which is what `deploy-base.sh` reads.
    - It happened once. The cause is unexplained, probably GitHub's behaviour rather than the workflow's. In the same run, the `production` job waited 9.5 min between being created (14:35:48) and starting (14:45:16). The evidence doesn't show whether that was the environment approval or a runner wait.
-6. **README quick-start gaps (criterion 12).** These go to a separate docs PR:
+6. **README quick-start gaps (criterion 12).** **Fixed (2026-11-24, `fix/bootstrap-quickstart-gaps`):** the README's Workers note is current, step 5 shows each target's exports (the token read with `read -rs`), the hint and the second header are gone from a first bootstrap, and bootstrap refuses the template repo before changing anything. The gaps were:
    - the README still says the workflow lacks the Cloudflare settings;
    - step 5 has no example for exporting `CLOUDFLARE_ACCOUNT_ID` and reading the token without echoing it;
    - bootstrap prints "Commit deploy.yml's target… in a PR" during a first bootstrap, where it doesn't apply;
