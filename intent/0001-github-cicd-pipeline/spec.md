@@ -272,12 +272,12 @@ The workflow knows nothing about any particular host. It calls `scripts/deploy.s
 
 **`release` composite** (shell, no AI). It runs the same sequence for every target:
 
-1. `PREV=$(deploy.sh current <env>)`. Then a **baseline**: one live test (step 5's check, once) against `deploy.sh url <env>`. It is logged and never fails the release (amended 2026-11-24, see plan.md Deviations).
+1. `PREV=$(deploy.sh current <env>)`. Then a **baseline**: one live test (step 5's check; a failure is retried once) against `deploy.sh url <env>`. It is logged and never fails the release (amended 2026-11-24, see plan.md Deviations).
 2. **Dark deploy**: `CANDIDATE_URL=$(deploy.sh deploy-dark <env> <sha>)`. The new version is deployed but receives no traffic.
 3. **Pre-traffic test**: `make smoke URL=$CANDIDATE_URL`. On failure: `deploy.sh discard <env>`, fail, and send no traffic.
 4. **Promote**: `deploy.sh promote <env> <sha>`
 5. **Live test**: `make smoke URL=$(deploy.sh url <env>)` three times, 60 s apart, plus `/health`. All must pass. Count and interval are set in `deploy.yml`.
-6. **Auto-revert** on failure: `deploy.sh revert <env> $PREV`. Then re-run the live test to confirm the revert, and fail the job. If `PREV` failed the baseline too (on a first deploy, bootstrap's placeholder), the re-check is skipped: the job fails with "not healthy before this release: fix forward" instead of "NOT confirmed" (amended 2026-11-24).
+6. **Auto-revert** on failure: `deploy.sh revert <env> $PREV`. Then re-run the live test to confirm the revert, and fail the job. If `PREV` failed the baseline too (on a first deploy, bootstrap's placeholder), the re-check is skipped: the job fails with "not healthy before this release: fix forward" instead of "NOT confirmed". The cost: on that path nothing confirms that the revert restored even `PREV`; the job still fails and the report issue opens (amended 2026-11-24).
 7. `deploy.sh cleanup <env>`: removes candidate tags and prunes old versions.
 
 If an adapter declares `dark_deploy: false` (e.g. GitHub Pages), steps 2–3 become a smoke test against the built artifact served locally inside the job (`deploy.sh preview <env> <sha>` prints its local URL; `discard` stops it), and step 4 is the deploy itself. Steps 5–7 are unchanged (C9).

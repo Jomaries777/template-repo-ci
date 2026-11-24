@@ -19,7 +19,8 @@
 # stops it; step 4 (promote) is the deploy.
 #
 # Env: RELEASE_LIVE_CHECKS (default 3), RELEASE_INTERVAL (seconds, default 60),
-#      RELEASE_DARK_DEPLOY (default true),
+#      RELEASE_DARK_DEPLOY (default true), RELEASE_BASELINE_RETRY_DELAY
+#      (seconds before the baseline's one retry, default 10),
 #      DEPLOY_SH (default scripts/deploy.sh), SMOKE_CMD (default: make smoke URL=)
 set -euo pipefail
 
@@ -91,13 +92,24 @@ log "serving now: ${prev:-<none>}"
 # sample image on Cloud Run), which never passes, so a re-check after
 # reverting to it can't confirm anything. Logged only: it never fails a
 # release, and an unreadable URL counts as healthy (the re-check decides).
+# A failure is retried once: "not healthy" skips the re-check, so one
+# transient failure must not hide a revert that really failed.
 prev_healthy=1
+baseline_delay="${RELEASE_BASELINE_RETRY_DELAY:-10}"
+[[ "$baseline_delay" =~ ^[0-9]{1,2}$ ]] || {
+  echo "release: invalid RELEASE_BASELINE_RETRY_DELAY: $baseline_delay" >&2
+  exit 64
+}
 if [[ -n "$prev" ]]; then
   base_url="$("$deploy_sh" url "$env_name")" || base_url=""
   base_url="${base_url%/}"
   if [[ -n "$base_url" ]] && ! live_check "$base_url"; then
-    prev_healthy=0
-    log "baseline: the serving version is not healthy before this release ($prev at $base_url)"
+    log "baseline: the serving version failed the live check; retrying once in ${baseline_delay}s"
+    sleep "$baseline_delay"
+    if ! live_check "$base_url"; then
+      prev_healthy=0
+      log "baseline: the serving version is not healthy before this release ($prev at $base_url)"
+    fi
   fi
 fi
 

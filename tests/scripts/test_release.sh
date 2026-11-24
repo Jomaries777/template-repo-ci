@@ -17,11 +17,18 @@ case "$1" in
   revert) [[ -z "${REVERT_FAIL:-}" ]] || exit 1; touch "$CALLS.reverted" ;;
   deploy-dark) [[ -z "${DARK_FAIL:-}" ]] || exit 1; echo "https://cand.example" ;;
   preview) [[ -z "${PREVIEW_FAIL:-}" ]] || exit 1; echo "http://127.0.0.1:9999/" ;;
-  url) if [[ -n "${URL_FOLLOWS_REVERT:-}" && -e "$CALLS.reverted" ]]; then echo "https://prev.example/"; else echo "https://live.example/"; fi ;;
+  url)
+    # URL_FAIL_FIRST: the first `url` call (the baseline's) fails.
+    if [[ -n "${URL_FAIL_FIRST:-}" && ! -e "$CALLS.url1" ]]; then touch "$CALLS.url1"; exit 1; fi
+    if [[ -n "${URL_FOLLOWS_REVERT:-}" && -e "$CALLS.reverted" ]]; then echo "https://prev.example/"; else echo "https://live.example/"; fi ;;
 esac
 EOF
 # Fake smoke: fails for the URL in SMOKE_FAIL_URL; with SMOKE_FAIL_AFTER=n,
-# fails from the (n+1)th call on.
+# fails from the (n+1)th call on; SMOKE_FAIL_NTH=n fails only call n, and
+# SMOKE_FAIL_NTHS="n m ..." each listed call.
+# Smoke call order when PREV exists and its baseline passes: 1 the baseline
+# (the serving version, before the deploy), 2 the candidate, 3.. the live
+# checks, then the re-check after a revert. A failed baseline adds one retry.
 cat >"$tmp/smoke" <<'EOF'
 #!/usr/bin/env bash
 echo "smoke $1" >>"$CALLS"
@@ -29,6 +36,7 @@ n=$(($(cat "$COUNT" 2>/dev/null || echo 0) + 1)); echo "$n" >"$COUNT"
 [[ "$1" == "${SMOKE_FAIL_URL:-}" ]] && exit 1
 [[ -n "${SMOKE_FAIL_AFTER:-}" && "$n" -gt "$SMOKE_FAIL_AFTER" ]] && exit 1
 [[ -n "${SMOKE_FAIL_NTH:-}" && "$n" == "$SMOKE_FAIL_NTH" ]] && exit 1
+[[ " ${SMOKE_FAIL_NTHS:-} " == *" $n "* ]] && exit 1
 exit 0
 EOF
 mkdir -p "$tmp/bin"
@@ -40,7 +48,7 @@ echo "curl $url" >>"$CALLS"
 exit 0
 EOF
 chmod +x "$tmp/deploy.sh" "$tmp/smoke" "$tmp/bin/curl"
-export PATH="$tmp/bin:$PATH" DEPLOY_SH="$tmp/deploy.sh" SMOKE_CMD="$tmp/smoke" RELEASE_INTERVAL=0
+export PATH="$tmp/bin:$PATH" DEPLOY_SH="$tmp/deploy.sh" SMOKE_CMD="$tmp/smoke" RELEASE_INTERVAL=0 RELEASE_BASELINE_RETRY_DELAY=0
 # The fake deploy.sh prints its live URL with a trailing slash, as some hosts do.
 
 sha=1234567abcdef
@@ -165,15 +173,28 @@ if grep -q "^::error.*(revert confirmed)" "$tmp/out.confirm"; then pass "confirm
 run unhealthy SMOKE_FAIL_URL=https://live.example
 rc_is "unhealthy baseline, live failure: exits 1" 1
 has "unhealthy baseline, live failure: still reverts" "revert dev svc-00001-old"
-count_is "unhealthy baseline, live failure: no re-check after revert" "smoke https://live.example" 2
+count_is "unhealthy baseline, live failure: retries the baseline once, no re-check after revert" "smoke https://live.example" 3
 if grep -q "^::error.*(not healthy before this release: fix forward)" "$tmp/out.unhealthy"; then pass "unhealthy baseline: annotated as not healthy before"; else fail "unhealthy baseline: no annotation"; fi
 if grep -q "NOT confirmed" "$tmp/out.unhealthy"; then fail "unhealthy baseline: says NOT confirmed"; else pass "unhealthy baseline: no NOT confirmed annotation"; fi
 if grep -q "which was not healthy before this release either" "$tmp/err.unhealthy"; then pass "unhealthy baseline: logs why there is no re-check"; else fail "unhealthy baseline: no log"; fi
-# Only the baseline fails: the baseline never fails a release on its own.
-run baselineonly SMOKE_FAIL_NTH=1
+# Only the baseline and its retry fail: the baseline never fails a release.
+run baselineonly SMOKE_FAIL_NTHS="1 2"
 rc_is "unhealthy baseline, healthy release: exits 0" 0
 lacks "unhealthy baseline, healthy release: no revert" "revert"
 if grep -q "serving version is not healthy" "$tmp/err.baselineonly"; then pass "unhealthy baseline: logged before the deploy"; else fail "unhealthy baseline: not logged"; fi
+
+# A baseline that fails once and passes on its retry counts as healthy, so a
+# failed re-check after a revert is still reported as NOT confirmed (review
+# of #64: one transient failure must not hide a failed revert).
+run baselineflake SMOKE_FAIL_NTHS="1 6 7"
+rc_is "flaky baseline: exits 1" 1
+count_is "flaky baseline: retried once" "smoke https://live.example" 6
+if grep -q "^::error.*NOT confirmed" "$tmp/out.baselineflake"; then pass "flaky baseline, failed re-check: still NOT confirmed"; else fail "flaky baseline: not annotated NOT confirmed: $(cat "$tmp/out.baselineflake")"; fi
+# An unreadable URL during the baseline counts as healthy: no baseline
+# smoke, and the release goes on.
+run baselineurl URL_FAIL_FIRST=1
+rc_is "baseline URL unreadable: the release still succeeds" 0
+if [[ "$(sed -n 3p <<<"$calls")" == "deploy-dark dev $sha" ]]; then pass "baseline URL unreadable: no baseline smoke"; else fail "baseline URL unreadable: calls $(tr '\n' ';' <<<"$calls")"; fi
 
 # --- revert itself fails
 run revfail SMOKE_FAIL_AFTER=3 REVERT_FAIL=1
