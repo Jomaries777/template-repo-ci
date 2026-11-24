@@ -450,7 +450,9 @@ check "broker: a refusal stops bootstrap" '[[ $rc != 0 ]] && grep -q "github_den
 check "broker: no fallback to the phase 1 key" '[[ ! -e "$tmp/sec4/BOT_APP_PRIVATE_KEY_actions" ]]'
 
 # --- prompts are visible on a terminal (a pty from util-linux `script`)
-if command -v script >/dev/null 2>&1; then
+# Only util-linux's: BSD/macOS script has no -c, and under set -e it would end
+# this test silently.
+if script --version 2>/dev/null | grep -q util-linux; then
   sed -n '/^ask() {$/,/^}$/p' "$src/scripts/bootstrap.sh" >"$tmp/ask.sh"
   printf 'source %q\nask v "Bot App ID: " && echo "got=[$v]"\n' "$tmp/ask.sh" >"$tmp/ask_run.sh"
   pty_out="$(printf '12345\n' | PATH="$ORIG_PATH" script -qec "bash $tmp/ask_run.sh" /dev/null 2>&1 | tr -d '\r')"
