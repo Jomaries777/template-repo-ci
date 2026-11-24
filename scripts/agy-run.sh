@@ -379,7 +379,8 @@ main() {
 
   local root planabs
   root="$(git rev-parse --show-toplevel)"
-  planabs="$(cd "$(dirname "$plan")" && pwd)/$(basename "$plan")"
+  # pwd -P: git's toplevel is physical, so a symlinked cwd must not leave a logical prefix.
+  planabs="$(cd "$(dirname "$plan")" && pwd -P)/$(basename "$plan")"
   local planrel="${planabs#"$root"/}"
   if [[ ! "$planrel" =~ ^intent/([0-9]+)-([a-z0-9-]+)/plan\.md$ ]]; then
     die "plan must be intent/<id>-<slug>/plan.md inside this repo (got: $planrel)"
