@@ -74,6 +74,17 @@ if out="$("$run" boost tests/fixtures/agy/plain.ndjson --dry-run 2>&1)"; then
 else
   has "non-plan path errors" "$out" 'plan must be intent'
 fi
+# The repo reached through a symlink (macOS $TMPDIR is /var -> /private/var):
+# git's toplevel is physical, so the plan check must not compare it to a logical path.
+link_dir="$(mktemp -d)"
+ln -s "$root" "$link_dir/repo"
+if out="$(cd "$link_dir/repo" && "$link_dir/repo/scripts/agy-run.sh" boost "$plan" --repo o/r --dry-run 2>&1)"; then
+  has "symlinked repo path: plan accepted" "$out" "agy/$slug"
+else
+  nok "symlinked repo path: plan accepted"
+  while IFS= read -r line; do echo "#   $line"; done <<<"$out"
+fi
+rm -rf "$link_dir" # removes the link, not the repo
 if "$run" bogus "$plan" --dry-run >/dev/null 2>&1; then nok "bad mode errors"; else ok "bad mode errors"; fi
 
 # agy-report.sh
