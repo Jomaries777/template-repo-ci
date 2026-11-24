@@ -24,7 +24,12 @@ EOF
 printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/bin/gcloud"
 chmod +x "$tmp/bin/gh" "$tmp/bin/gcloud"
 # No gcloud login and no bot check: those checks must SKIP, not fail.
-export PATH="$tmp/bin:$PATH" FIX="$tmp/fix" DOCTOR_BOT_CHECK=/nonexistent
+# No broker sign-in either: an empty BOT_CONFIG_DIR, so a signed-in machine's
+# real ~/.config/agent-bot is never read (the broker cases set their own), and
+# no BOT_BROKER_URL (cloud sessions export one).
+mkdir -p "$tmp/no-botcfg"
+unset BOT_BROKER_URL
+export PATH="$tmp/bin:$PATH" FIX="$tmp/fix" DOCTOR_BOT_CHECK=/nonexistent BOT_CONFIG_DIR="$tmp/no-botcfg"
 
 R=repos_acme_hello
 good() {
