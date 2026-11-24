@@ -45,6 +45,8 @@ cat >"$tmp/bin/curl" <<'EOF'
 url="${*: -1}"
 echo "curl $url" >>"$CALLS"
 [[ "$url" == "${CURL_FAIL_URL:-}" ]] && exit 22
+# CURL_FAIL_HEALTH_AFTER_REVERT: /health fails once the fake revert ran.
+[[ -n "${CURL_FAIL_HEALTH_AFTER_REVERT:-}" && "$url" == */health && -e "$CALLS.reverted" ]] && exit 22
 exit 0
 EOF
 chmod +x "$tmp/deploy.sh" "$tmp/smoke" "$tmp/bin/curl"
@@ -173,10 +175,24 @@ if grep -q "^::error.*(revert confirmed)" "$tmp/out.confirm"; then pass "confirm
 run unhealthy SMOKE_FAIL_URL=https://live.example
 rc_is "unhealthy baseline, live failure: exits 1" 1
 has "unhealthy baseline, live failure: still reverts" "revert dev svc-00001-old"
-count_is "unhealthy baseline, live failure: retries the baseline once, no re-check after revert" "smoke https://live.example" 3
+count_is "unhealthy baseline, live failure: retries the baseline once, re-checks after revert" "smoke https://live.example" 4
 if grep -q "^::error.*(not healthy before this release: fix forward)" "$tmp/out.unhealthy"; then pass "unhealthy baseline: annotated as not healthy before"; else fail "unhealthy baseline: no annotation"; fi
 if grep -q "NOT confirmed" "$tmp/out.unhealthy"; then fail "unhealthy baseline: says NOT confirmed"; else pass "unhealthy baseline: no NOT confirmed annotation"; fi
-if grep -q "which was not healthy before this release either" "$tmp/err.unhealthy"; then pass "unhealthy baseline: logs why there is no re-check"; else fail "unhealthy baseline: no log"; fi
+if grep -q "which was not healthy before this release either" "$tmp/err.unhealthy"; then pass "unhealthy baseline: logs why it is fix forward"; else fail "unhealthy baseline: no log"; fi
+# Review of #64: a PREV that only fails the new commit's smoke tests must
+# not hide a revert that broke service. /health decides: it passed at the
+# baseline, so a failing /health after the revert is NOT confirmed.
+run healthlost SMOKE_FAIL_URL=https://live.example CURL_FAIL_HEALTH_AFTER_REVERT=1
+rc_is "baseline failed, revert broke /health: exits 1" 1
+if grep -q "^::error.*NOT confirmed" "$tmp/out.healthlost"; then pass "baseline failed, revert broke /health: NOT confirmed"; else fail "baseline failed, revert broke /health: not NOT confirmed: $(cat "$tmp/out.healthlost")"; fi
+if grep -q "/health passed before this release" "$tmp/err.healthlost"; then pass "baseline failed, revert broke /health: logs why"; else fail "baseline failed, revert broke /health: no log"; fi
+# A failed baseline doesn't stop a passing re-check from confirming the revert.
+run recheckok SMOKE_FAIL_NTHS="1 2 4"
+rc_is "baseline failed, re-check passes: exits 1" 1
+if grep -q "^::error.*(revert confirmed)" "$tmp/out.recheckok"; then pass "baseline failed, re-check passes: revert confirmed"; else fail "baseline failed, re-check passes: not confirmed: $(cat "$tmp/out.recheckok")"; fi
+# The placeholder: /health failed at the baseline too, so fix forward.
+run placeholder SMOKE_FAIL_URL=https://live.example CURL_FAIL_URL=https://live.example/health
+if grep -q "^::error.*(not healthy before this release: fix forward)" "$tmp/out.placeholder" && ! grep -q "NOT confirmed" "$tmp/out.placeholder"; then pass "placeholder: fix forward, not NOT confirmed"; else fail "placeholder: $(cat "$tmp/out.placeholder")"; fi
 # Only the baseline and its retry fail: the baseline never fails a release.
 run baselineonly SMOKE_FAIL_NTHS="1 2"
 rc_is "unhealthy baseline, healthy release: exits 0" 0

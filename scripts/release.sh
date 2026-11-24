@@ -9,8 +9,9 @@
 #   3. pre-traffic test: make smoke URL=$CANDIDATE_URL; on failure discard, fail
 #   4. promote
 #   5. live test: smoke + /health, RELEASE_LIVE_CHECKS times, RELEASE_INTERVAL s apart
-#   6. on live failure: revert to PREV, re-check once (skipped when PREV
-#      failed the baseline too, e.g. bootstrap's placeholder), fail
+#   6. on live failure: revert to PREV, re-check once, fail. When PREV
+#      failed the baseline too (e.g. bootstrap's placeholder), a failed
+#      re-check is "fix forward" unless /health passed before and fails now
 #   7. cleanup
 #
 # With RELEASE_DARK_DEPLOY=false (adapters without dark deploys, C9), step 2
@@ -70,9 +71,13 @@ smoke() {
   fi
 }
 
+health_ok() {
+  curl -fsS --max-time 10 -o /dev/null "$1/health"
+}
+
 # One live check: the prod-safe smoke suite plus /health.
 live_check() {
-  smoke "$1" && curl -fsS --max-time 10 -o /dev/null "$1/health"
+  smoke "$1" && health_ok "$1"
 }
 
 # Fail closed: without the stack's prod-safe suite (bootstrap writes `stack:`
@@ -89,12 +94,13 @@ log "serving now: ${prev:-<none>}"
 
 # Baseline: is the serving version healthy under this commit's live test? A
 # first deploy's PREV is bootstrap's placeholder (503 on Workers, Google's
-# sample image on Cloud Run), which never passes, so a re-check after
-# reverting to it can't confirm anything. Logged only: it never fails a
-# release, and an unreadable URL counts as healthy (the re-check decides).
-# A failure is retried once: "not healthy" skips the re-check, so one
-# transient failure must not hide a revert that really failed.
+# sample image on Cloud Run), which never passes, so a failed re-check after
+# reverting to it is "fix forward", not "NOT confirmed" (step 6). Logged
+# only: it never fails a release, and an unreadable URL counts as healthy.
+# A failure is retried once, so one transient failure can't turn a failed
+# revert into "fix forward".
 prev_healthy=1
+prev_health_ok=1
 baseline_delay="${RELEASE_BASELINE_RETRY_DELAY:-10}"
 [[ "$baseline_delay" =~ ^[0-9]{1,2}$ ]] || {
   echo "release: invalid RELEASE_BASELINE_RETRY_DELAY (0-99 seconds): $baseline_delay" >&2
@@ -110,7 +116,10 @@ if [[ -n "$prev" ]]; then
       log "baseline: passed on retry: the serving version is flaky ($prev at $base_url)"
     else
       prev_healthy=0
-      log "baseline: the serving version is not healthy before this release ($prev at $base_url)"
+      # /health doesn't depend on this commit's smoke tests, so it tells a
+      # revert that broke service from a PREV that only fails new tests.
+      health_ok "$base_url" || prev_health_ok=0
+      log "baseline: the serving version is not healthy before this release ($prev at $base_url; /health $( ((prev_health_ok)) && echo passed || echo failed))"
     fi
   fi
 fi
@@ -177,19 +186,21 @@ if ((failed)); then
     log "revert failed; manual action needed"
     exit 1
   fi
-  if ((!prev_healthy)); then
-    log "reverted to $prev, which was not healthy before this release either (on a first deploy, bootstrap's placeholder): no re-check; fix forward"
-    echo "::error title=release $env_name::live test failed; reverted to $prev (not healthy before this release: fix forward)"
-    exit 1
-  fi
   # Ask again: on some targets the live URL follows the serving revision.
   url="$("$deploy_sh" url "$env_name")" || url=""
   url="${url%/}"
   if [[ -n "$url" ]] && live_check "$url"; then
     log "revert confirmed: $prev is serving and healthy"
-    # Annotations let the report issue and triage tell the two outcomes apart.
+    # Annotations let the report issue and triage tell the outcomes apart.
     echo "::error title=release $env_name::live test failed; reverted to $prev (revert confirmed)"
+  elif ((!prev_healthy)) && [[ -n "$url" ]] && { ((!prev_health_ok)) || health_ok "$url"; }; then
+    # PREV failed the baseline too, and /health is no worse than before.
+    log "reverted to $prev, which was not healthy before this release either (on a first deploy, bootstrap's placeholder): fix forward"
+    echo "::error title=release $env_name::live test failed; reverted to $prev (not healthy before this release: fix forward)"
   else
+    if ((!prev_healthy && prev_health_ok)); then
+      log "the revert lost service: /health passed before this release and fails now"
+    fi
     log "revert did not pass the live check; manual action needed"
     echo "::error title=release $env_name::live test failed; reverted to $prev but the revert is NOT confirmed healthy: manual action needed"
   fi
