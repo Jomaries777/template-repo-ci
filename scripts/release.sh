@@ -97,7 +97,7 @@ log "serving now: ${prev:-<none>}"
 prev_healthy=1
 baseline_delay="${RELEASE_BASELINE_RETRY_DELAY:-10}"
 [[ "$baseline_delay" =~ ^[0-9]{1,2}$ ]] || {
-  echo "release: invalid RELEASE_BASELINE_RETRY_DELAY: $baseline_delay" >&2
+  echo "release: invalid RELEASE_BASELINE_RETRY_DELAY (0-99 seconds): $baseline_delay" >&2
   exit 64
 }
 if [[ -n "$prev" ]]; then
@@ -106,7 +106,9 @@ if [[ -n "$prev" ]]; then
   if [[ -n "$base_url" ]] && ! live_check "$base_url"; then
     log "baseline: the serving version failed the live check; retrying once in ${baseline_delay}s"
     sleep "$baseline_delay"
-    if ! live_check "$base_url"; then
+    if live_check "$base_url"; then
+      log "baseline: passed on retry: the serving version is flaky ($prev at $base_url)"
+    else
       prev_healthy=0
       log "baseline: the serving version is not healthy before this release ($prev at $base_url)"
     fi

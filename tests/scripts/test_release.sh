@@ -189,6 +189,7 @@ if grep -q "serving version is not healthy" "$tmp/err.baselineonly"; then pass "
 run baselineflake SMOKE_FAIL_NTHS="1 6 7"
 rc_is "flaky baseline: exits 1" 1
 count_is "flaky baseline: retried once" "smoke https://live.example" 6
+if grep -q "baseline: passed on retry" "$tmp/err.baselineflake"; then pass "flaky baseline: logs that it passed on retry"; else fail "flaky baseline: no passed-on-retry log"; fi
 if grep -q "^::error.*NOT confirmed" "$tmp/out.baselineflake"; then pass "flaky baseline, failed re-check: still NOT confirmed"; else fail "flaky baseline: not annotated NOT confirmed: $(cat "$tmp/out.baselineflake")"; fi
 # An unreadable URL during the baseline counts as healthy: no baseline
 # smoke, and the release goes on.
