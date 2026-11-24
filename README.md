@@ -79,6 +79,20 @@ export BOT_APP_ID="$(gh variable get BOT_APP_ID --repo <you>/template-repo-ci)" 
 make bootstrap STACK=node TARGET=github-pages
 ```
 
+The target's settings, before `make bootstrap` (`github-pages` and `none` need none):
+
+```bash
+# cloud-run: a new GCP project, and the billing account to link it to
+export GCP_PROJECT_ID=<new-project-id> BILLING_ACCOUNT=<XXXXXX-XXXXXX-XXXXXX>
+
+# cloudflare-workers: the account ID (dashboard: Workers & Pages), and the API
+# token read without echoing it, so it is not in your shell history
+export CLOUDFLARE_ACCOUNT_ID=<32-hex-account-id>
+read -rs -p "Cloudflare API token: " CLOUDFLARE_API_TOKEN && echo && export CLOUDFLARE_API_TOKEN
+```
+
+Run bootstrap in the new repo's clone, never in the template's own checkout: it refuses to run against the template repo (by `--repo`, or by `origin` with `--local-only`).
+
 Bootstrap is safe to rerun: it only fills in what is missing. To see every change and remote call first without making any, run `scripts/bootstrap.sh --stack node --target github-pages --dry-run`. It does this, in order:
 
 1. Keeps `stacks/<stack>/`, writes `deploy.yml`, `CODEOWNERS` and a short project `README.md` in place of this one, removes the template's own files, and commits.
@@ -132,7 +146,7 @@ Approve each artifact by merging it before asking for the next one.
 | `cloudflare-workers` | Edge APIs, light backends; **node only** | Version with a preview URL, then a deploy at 100%; revert with `rollback` | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` (Workers Scripts Edit on that one account). The token is stored on the `dev` and `production` Environments only | Workers Free plan, no card on file |
 | `none` | Libraries, CLIs, docs | No deploy | Nothing | Nothing is provisioned |
 
-`cloudflare-workers` is new and not yet proven end to end on a live account: see [`spikes/m3-step4-cloudflare-workers.md`](intent/0001-github-cicd-pipeline/spikes/m3-step4-cloudflare-workers.md). It can't deploy until `deploy.yml` passes it `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKERS_SUBDOMAIN` and `CLOUDFLARE_API_TOKEN`, an owner workflow edit described in the [plan's Deviations](intent/0001-github-cicd-pipeline/plan.md#deviations) (2026-11-20).
+`cloudflare-workers` was proven end to end on a live account on 2026-11-23, with a bootstrap, a gated production release and an automatic revert: see [`spikes/m3-step6-workers-results.md`](intent/0001-github-cicd-pipeline/spikes/m3-step6-workers-results.md).
 
 ## Continue on another computer
 

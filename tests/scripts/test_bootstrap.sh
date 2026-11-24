@@ -225,6 +225,38 @@ if [[ -s "$tmp/calls" ]]; then
 else
   pass "no real gh or Keychain call"
 fi
+# README quick-start gaps (M3 step 6, finding 6): one target header, and no
+# "commit deploy.yml's target in a PR" hint, which only fits a later switch.
+check "dry run: prints the Target header once" '[[ "$(grep -c "^==> Target:" <<<"$out")" == 1 ]]'
+check "dry run: no switch-target hint on a first bootstrap" '! grep -q "Commit deploy.yml" <<<"$out"'
+
+# --- refuses to run against the template repo itself, before any change
+g="$tmp/g"
+copy "$g"
+list_before="$(cd "$g" && find . | sort)"
+for args in "--repo Jomaries777/template-repo-ci --dry-run" "--repo jomaries777/Template-Repo-CI"; do
+  : >"$tmp/calls"
+  rc=0
+  # shellcheck disable=SC2086 # split the arguments on purpose
+  out="$(BOT_APP_ID=123 "$g/scripts/bootstrap.sh" --stack node --target none $args 2>&1)" || rc=$?
+  check "template guard: '$args' is refused with 64" '[[ $rc == 64 ]] && grep -q "is the template itself" <<<"$out"'
+  check "template guard: '$args' calls no gh" '[[ ! -s "$tmp/calls" ]]'
+done
+list_after="$(cd "$g" && find . | sort)"
+check "template guard: changes no file" '[[ "$list_before" == "$list_after" ]]'
+# --local-only has no repo: the guard reads origin instead (review of #65).
+# The other local-only runs here are in copies with no .git, so they pass.
+for url in https://github.com/Jomaries777/template-repo-ci.git git@github.com:jomaries777/Template-Repo-CI; do
+  t="$tmp/t"
+  rm -rf "$t"
+  copy "$t"
+  git -C "$t" init -q && git -C "$t" remote add origin "$url"
+  list_before="$(cd "$t" && find . -path ./.git -prune -o -print | sort)"
+  rc=0
+  out="$(BOOTSTRAP_OWNER=acme "$t/scripts/bootstrap.sh" --stack node --target none --local-only 2>&1)" || rc=$?
+  list_after="$(cd "$t" && find . -path ./.git -prune -o -print | sort)"
+  check "template guard, local-only, origin $url: refused with 64, no file changed" '[[ $rc == 64 && "$list_before" == "$list_after" ]] && grep -q "is the template itself" <<<"$out"'
+done
 
 # --- --skip-bot-key: everything else still happens; the key is left for later
 k="$tmp/k"

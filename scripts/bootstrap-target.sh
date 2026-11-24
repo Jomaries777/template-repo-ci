@@ -78,5 +78,10 @@ if ((dry_run)); then
   DEPLOY_DRY_RUN=1 DEPLOY_TARGET="$target" scripts/deploy.sh bootstrap 2>&1 | sed 's/^/    /' >&2
 else
   DEPLOY_TARGET="$target" scripts/deploy.sh bootstrap
+fi
+# Only for a switch: a first bootstrap (BOOTSTRAP_FIRST=1, set by
+# bootstrap.sh) commits deploy.yml itself.
+if [[ "${BOOTSTRAP_FIRST:-}" != 1 ]]; then
+  ((dry_run)) && echo "    (dry run: nothing was provisioned)" >&2
   echo "==> $target is ready. Commit deploy.yml's target: $target in a PR; the next deploy after the merge uses it." >&2
 fi
