@@ -28,7 +28,8 @@ EOF
 # SMOKE_FAIL_NTHS="n m ..." each listed call.
 # Smoke call order when PREV exists and its baseline passes: 1 the baseline
 # (the serving version, before the deploy), 2 the candidate, 3.. the live
-# checks, then the re-check after a revert. A failed baseline adds one retry.
+# checks, then the re-check, which always follows a revert (whether or not
+# the baseline passed). A failed baseline adds one retry.
 cat >"$tmp/smoke" <<'EOF'
 #!/usr/bin/env bash
 echo "smoke $1" >>"$CALLS"
@@ -169,14 +170,25 @@ rc_is "confirmed revert: still exits 1" 1
 if grep -q "^::error.*(revert confirmed)" "$tmp/out.confirm"; then pass "confirmed revert: annotated as confirmed"; else fail "confirmed revert: no annotation"; fi
 
 # --- the serving version already failed the live check before this release
-# (a first deploy over bootstrap's placeholder): revert, but no re-check
+# (a first deploy over bootstrap's placeholder): revert, then re-check anyway
+# (the baseline runs this commit's suite, so a healthy PREV can fail it when
+# the release adds a smoke test; review of #64)
 run unhealthy SMOKE_FAIL_URL=https://live.example
 rc_is "unhealthy baseline, live failure: exits 1" 1
 has "unhealthy baseline, live failure: still reverts" "revert dev svc-00001-old"
-count_is "unhealthy baseline, live failure: retries the baseline once, no re-check after revert" "smoke https://live.example" 3
-if grep -q "^::error.*(not healthy before this release: fix forward)" "$tmp/out.unhealthy"; then pass "unhealthy baseline: annotated as not healthy before"; else fail "unhealthy baseline: no annotation"; fi
+# Smoke calls of the live URL: baseline, its retry, live check 1, re-check.
+count_is "unhealthy baseline, live failure: retries the baseline once, re-checks once after revert" "smoke https://live.example" 4
+if [[ "$(grep -A2 -xF "revert dev svc-00001-old" <<<"$calls" | sed -n 2,3p | tr '\n' ';')" == "url dev;smoke https://live.example;" ]]; then pass "unhealthy baseline: re-checks after the revert"; else fail "unhealthy baseline: no re-check after revert: $(tr '\n' ';' <<<"$calls")"; fi
+if grep -q "^::error.*live test failed; reverted to svc-00001-old, which was not healthy before this release either (on a first deploy, bootstrap's placeholder): fix forward" "$tmp/out.unhealthy"; then pass "unhealthy baseline, failed re-check: annotated as not healthy before"; else fail "unhealthy baseline: no annotation: $(cat "$tmp/out.unhealthy")"; fi
 if grep -q "NOT confirmed" "$tmp/out.unhealthy"; then fail "unhealthy baseline: says NOT confirmed"; else pass "unhealthy baseline: no NOT confirmed annotation"; fi
-if grep -q "which was not healthy before this release either" "$tmp/err.unhealthy"; then pass "unhealthy baseline: logs why there is no re-check"; else fail "unhealthy baseline: no log"; fi
+if grep -q "which was not healthy before this release either" "$tmp/err.unhealthy"; then pass "unhealthy baseline, failed re-check: logs it"; else fail "unhealthy baseline: no log"; fi
+# Baseline and retry fail (calls 1, 2), the candidate passes (3), live check 1
+# fails (4), the re-check passes (5): the revert is confirmed.
+run unhealthyconfirm SMOKE_FAIL_NTHS="1 2 4"
+rc_is "unhealthy baseline, passing re-check: exits 1" 1
+has "unhealthy baseline, passing re-check: reverts" "revert dev svc-00001-old"
+if grep -q "^::error.*(revert confirmed)" "$tmp/out.unhealthyconfirm"; then pass "unhealthy baseline, passing re-check: annotated as confirmed"; else fail "unhealthy baseline, passing re-check: no confirmed annotation: $(cat "$tmp/out.unhealthyconfirm")"; fi
+if grep -q "fix forward" "$tmp/out.unhealthyconfirm"; then fail "unhealthy baseline, passing re-check: says fix forward"; else pass "unhealthy baseline, passing re-check: no fix forward annotation"; fi
 # Only the baseline and its retry fail: the baseline never fails a release.
 run baselineonly SMOKE_FAIL_NTHS="1 2"
 rc_is "unhealthy baseline, healthy release: exits 0" 0
