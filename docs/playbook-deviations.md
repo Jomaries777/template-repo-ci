@@ -151,7 +151,7 @@ To update: change a row's **Met?** when that changes, and link the PR.
 | PB-47 | An eval for each incident | Not met | Tied to PB-29 | Skip |
 | PB-48 | Claude Tag on call in incident channels | N/A | No incident channel | Skip |
 | PB-49 | Post-mortem lessons file | Not met | `deploy-failure` issues and `CLAUDE.md` cover it | Skip |
-| PB-50 | Recurring codebase security scans, findings dismissed with a reason | Met (adapted) | CodeQL, secret scanning, Dependabot, dependency review (PD-6); CodeQL on PRs and weekly on Mondays (#54; first scheduled run pending) | Keep adapted |
+| PB-50 | Recurring codebase security scans, findings dismissed with a reason | Met (adapted) | CodeQL, secret scanning, Dependabot, dependency review (PD-6); CodeQL on PRs and weekly on Mondays (#54; first scheduled run [45213625625](https://github.com/Jomaries777/template-repo-ci/actions/runs/45213625625), 2026-11-23, passed) | Keep adapted |
 
 **Score (2026-11-21), 50 practices:** 20 met, 11 met (adapted), 7 partly, 10 not met, 2 N/A. Every "not met" row is either a deliberate skip for personal projects or has a **Do**.
 
