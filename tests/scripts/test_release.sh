@@ -17,11 +17,18 @@ case "$1" in
   revert) [[ -z "${REVERT_FAIL:-}" ]] || exit 1; touch "$CALLS.reverted" ;;
   deploy-dark) [[ -z "${DARK_FAIL:-}" ]] || exit 1; echo "https://cand.example" ;;
   preview) [[ -z "${PREVIEW_FAIL:-}" ]] || exit 1; echo "http://127.0.0.1:9999/" ;;
-  url) if [[ -n "${URL_FOLLOWS_REVERT:-}" && -e "$CALLS.reverted" ]]; then echo "https://prev.example/"; else echo "https://live.example/"; fi ;;
+  url)
+    # URL_FAIL_FIRST: the first `url` call (the baseline's) fails.
+    if [[ -n "${URL_FAIL_FIRST:-}" && ! -e "$CALLS.url1" ]]; then touch "$CALLS.url1"; exit 1; fi
+    if [[ -n "${URL_FOLLOWS_REVERT:-}" && -e "$CALLS.reverted" ]]; then echo "https://prev.example/"; else echo "https://live.example/"; fi ;;
 esac
 EOF
 # Fake smoke: fails for the URL in SMOKE_FAIL_URL; with SMOKE_FAIL_AFTER=n,
-# fails from the (n+1)th call on.
+# fails from the (n+1)th call on; SMOKE_FAIL_NTH=n fails only call n, and
+# SMOKE_FAIL_NTHS="n m ..." each listed call.
+# Smoke call order when PREV exists and its baseline passes: 1 the baseline
+# (the serving version, before the deploy), 2 the candidate, 3.. the live
+# checks, then the re-check after a revert. A failed baseline adds one retry.
 cat >"$tmp/smoke" <<'EOF'
 #!/usr/bin/env bash
 echo "smoke $1" >>"$CALLS"
@@ -29,6 +36,7 @@ n=$(($(cat "$COUNT" 2>/dev/null || echo 0) + 1)); echo "$n" >"$COUNT"
 [[ "$1" == "${SMOKE_FAIL_URL:-}" ]] && exit 1
 [[ -n "${SMOKE_FAIL_AFTER:-}" && "$n" -gt "$SMOKE_FAIL_AFTER" ]] && exit 1
 [[ -n "${SMOKE_FAIL_NTH:-}" && "$n" == "$SMOKE_FAIL_NTH" ]] && exit 1
+[[ " ${SMOKE_FAIL_NTHS:-} " == *" $n "* ]] && exit 1
 exit 0
 EOF
 mkdir -p "$tmp/bin"
@@ -40,7 +48,7 @@ echo "curl $url" >>"$CALLS"
 exit 0
 EOF
 chmod +x "$tmp/deploy.sh" "$tmp/smoke" "$tmp/bin/curl"
-export PATH="$tmp/bin:$PATH" DEPLOY_SH="$tmp/deploy.sh" SMOKE_CMD="$tmp/smoke" RELEASE_INTERVAL=0
+export PATH="$tmp/bin:$PATH" DEPLOY_SH="$tmp/deploy.sh" SMOKE_CMD="$tmp/smoke" RELEASE_INTERVAL=0 RELEASE_BASELINE_RETRY_DELAY=0
 # The fake deploy.sh prints its live URL with a trailing slash, as some hosts do.
 
 sha=1234567abcdef
@@ -73,6 +81,9 @@ count_is() {
 run ok
 rc_is "happy: exits 0" 0
 want="current dev
+url dev
+smoke https://live.example
+curl https://live.example/health
 deploy-dark dev $sha
 smoke https://cand.example
 promote dev $sha
@@ -95,13 +106,14 @@ has "pre-traffic failure: discards the candidate" "discard dev $sha"
 lacks "pre-traffic failure: never promotes" "promote"
 lacks "pre-traffic failure: no cleanup" "cleanup"
 
-# --- live failure on the 2nd check: revert to PREV and re-check
-run live SMOKE_FAIL_AFTER=2
+# --- live failure on the 2nd check: revert to PREV and re-check. Smoke call 1
+# is the baseline check of the serving version, 2 the candidate, 3+ live.
+run live SMOKE_FAIL_AFTER=3
 rc_is "live failure: exits 1" 1
 has "live failure: reverts to the previous revision" "revert dev svc-00001-old"
 lacks "live failure: no cleanup" "cleanup"
 lacks "live failure: no discard" "discard"
-count_is "live failure: re-checks once after revert" "smoke https://live.example" 3
+count_is "live failure: re-checks once after revert" "smoke https://live.example" 4
 
 # --- /health failure counts as a live failure
 run health CURL_FAIL_URL=https://live.example/health
@@ -110,7 +122,8 @@ has "health failure: reverts" "revert dev svc-00001-old"
 
 # --- live checks count comes from RELEASE_LIVE_CHECKS
 run five RELEASE_LIVE_CHECKS=5
-count_is "live checks: honours RELEASE_LIVE_CHECKS" "curl https://live.example/health" 5
+# 5 live checks plus the baseline check before the deploy.
+count_is "live checks: honours RELEASE_LIVE_CHECKS" "curl https://live.example/health" 6
 
 # --- no dark deploy (C9): promote is the deploy
 run nodark RELEASE_DARK_DEPLOY=false
@@ -121,11 +134,14 @@ has "no dark deploy: cleans up" "cleanup dev"
 # C9: without a dark deploy, the pre-traffic test runs against the artifact
 # served locally (`deploy.sh preview`), which is stopped before the deploy.
 want="current dev
+url dev
+smoke https://live.example
+curl https://live.example/health
 preview dev $sha
 smoke http://127.0.0.1:9999/
 discard dev $sha
 promote dev $sha"
-got="$(head -n 5 <<<"$calls")"
+got="$(head -n 8 <<<"$calls")"
 if [[ "$got" == "$want" ]]; then pass "no dark deploy: local pre-traffic test, then promote"; else fail "no dark deploy: order was: $(tr '\n' ';' <<<"$got")"; fi
 run nodarkfail RELEASE_DARK_DEPLOY=false SMOKE_FAIL_URL=http://127.0.0.1:9999/
 rc_is "no dark deploy: failed local pre-traffic test exits 1" 1
@@ -139,20 +155,50 @@ lacks "no dark deploy: a preview that fails never promotes" "promote"
 run first CURRENT_EMPTY=1 SMOKE_FAIL_AFTER=1
 if [[ "$rc" == 1 ]] && grep -q "no previous revision" "$tmp/err.first"; then pass "no previous revision: fails and says so"; else fail "no previous revision (rc $rc)"; fi
 lacks "no previous revision: no revert" "revert"
+if [[ "$(sed -n 2p <<<"$calls")" == "deploy-dark dev $sha" ]]; then pass "no previous revision: no baseline check"; else fail "no previous revision: baseline ran: $(tr '\n' ';' <<<"$calls")"; fi
 lacks "no previous revision: no cleanup" "cleanup"
 
 # --- revert whose re-check fails
-run recheck SMOKE_FAIL_AFTER=2
+run recheck SMOKE_FAIL_AFTER=3
 if grep -q "revert did not pass the live check" "$tmp/err.recheck"; then pass "failed re-check after revert: says manual action is needed"; else fail "failed re-check: no message"; fi
 rc_is "failed re-check after revert: exits 1" 1
 if grep -q "^::error.*NOT confirmed" "$tmp/out.recheck"; then pass "failed re-check: annotates the revert as not confirmed"; else fail "failed re-check: no annotation"; fi
-# Only the 2nd live check (3rd smoke call) fails; the re-check after revert passes.
-run confirm SMOKE_FAIL_NTH=3
+# Only the 2nd live check (4th smoke call) fails; the re-check after revert passes.
+run confirm SMOKE_FAIL_NTH=4
 rc_is "confirmed revert: still exits 1" 1
 if grep -q "^::error.*(revert confirmed)" "$tmp/out.confirm"; then pass "confirmed revert: annotated as confirmed"; else fail "confirmed revert: no annotation"; fi
 
+# --- the serving version already failed the live check before this release
+# (a first deploy over bootstrap's placeholder): revert, but no re-check
+run unhealthy SMOKE_FAIL_URL=https://live.example
+rc_is "unhealthy baseline, live failure: exits 1" 1
+has "unhealthy baseline, live failure: still reverts" "revert dev svc-00001-old"
+count_is "unhealthy baseline, live failure: retries the baseline once, no re-check after revert" "smoke https://live.example" 3
+if grep -q "^::error.*(not healthy before this release: fix forward)" "$tmp/out.unhealthy"; then pass "unhealthy baseline: annotated as not healthy before"; else fail "unhealthy baseline: no annotation"; fi
+if grep -q "NOT confirmed" "$tmp/out.unhealthy"; then fail "unhealthy baseline: says NOT confirmed"; else pass "unhealthy baseline: no NOT confirmed annotation"; fi
+if grep -q "which was not healthy before this release either" "$tmp/err.unhealthy"; then pass "unhealthy baseline: logs why there is no re-check"; else fail "unhealthy baseline: no log"; fi
+# Only the baseline and its retry fail: the baseline never fails a release.
+run baselineonly SMOKE_FAIL_NTHS="1 2"
+rc_is "unhealthy baseline, healthy release: exits 0" 0
+lacks "unhealthy baseline, healthy release: no revert" "revert"
+if grep -q "serving version is not healthy" "$tmp/err.baselineonly"; then pass "unhealthy baseline: logged before the deploy"; else fail "unhealthy baseline: not logged"; fi
+
+# A baseline that fails once and passes on its retry counts as healthy, so a
+# failed re-check after a revert is still reported as NOT confirmed (review
+# of #64: one transient failure must not hide a failed revert).
+run baselineflake SMOKE_FAIL_NTHS="1 6 7"
+rc_is "flaky baseline: exits 1" 1
+count_is "flaky baseline: retried once" "smoke https://live.example" 6
+if grep -q "baseline: passed on retry" "$tmp/err.baselineflake"; then pass "flaky baseline: logs that it passed on retry"; else fail "flaky baseline: no passed-on-retry log"; fi
+if grep -q "^::error.*NOT confirmed" "$tmp/out.baselineflake"; then pass "flaky baseline, failed re-check: still NOT confirmed"; else fail "flaky baseline: not annotated NOT confirmed: $(cat "$tmp/out.baselineflake")"; fi
+# An unreadable URL during the baseline counts as healthy: no baseline
+# smoke, and the release goes on.
+run baselineurl URL_FAIL_FIRST=1
+rc_is "baseline URL unreadable: the release still succeeds" 0
+if [[ "$(sed -n 3p <<<"$calls")" == "deploy-dark dev $sha" ]]; then pass "baseline URL unreadable: no baseline smoke"; else fail "baseline URL unreadable: calls $(tr '\n' ';' <<<"$calls")"; fi
+
 # --- revert itself fails
-run revfail SMOKE_FAIL_AFTER=2 REVERT_FAIL=1
+run revfail SMOKE_FAIL_AFTER=3 REVERT_FAIL=1
 if [[ "$rc" == 1 ]] && grep -q "revert failed; manual action needed" "$tmp/err.revfail"; then pass "failed revert: logs it and exits 1"; else fail "failed revert (rc $rc)"; fi
 
 # --- the live URL's trailing slash is stripped before /health
@@ -185,7 +231,7 @@ rc_is "rejects live checks longer than 10 minutes with 64" 64
 
 # --- the re-check after revert asks for the live URL again (targets whose
 # URL follows the serving revision, like the test-only local target)
-run follows URL_FOLLOWS_REVERT=1 SMOKE_FAIL_NTH=3
+run follows URL_FOLLOWS_REVERT=1 SMOKE_FAIL_NTH=4
 has "revert re-check: uses the URL after revert" "smoke https://prev.example"
 if grep -q "^::error.*(revert confirmed)" "$tmp/out.follows"; then pass "revert re-check: confirmed against the restored URL"; else fail "revert re-check: not confirmed"; fi
 

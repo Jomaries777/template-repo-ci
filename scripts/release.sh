@@ -4,12 +4,13 @@
 #
 # Usage: scripts/release.sh <env> <sha>
 #
-#   1. PREV=$(deploy.sh current <env>)
+#   1. PREV=$(deploy.sh current <env>); baseline: one live test of PREV
 #   2. dark deploy: CANDIDATE_URL=$(deploy.sh deploy-dark <env> <sha>)
 #   3. pre-traffic test: make smoke URL=$CANDIDATE_URL; on failure discard, fail
 #   4. promote
 #   5. live test: smoke + /health, RELEASE_LIVE_CHECKS times, RELEASE_INTERVAL s apart
-#   6. on live failure: revert to PREV, re-check once, fail
+#   6. on live failure: revert to PREV, re-check once (skipped when PREV
+#      failed the baseline too, e.g. bootstrap's placeholder), fail
 #   7. cleanup
 #
 # With RELEASE_DARK_DEPLOY=false (adapters without dark deploys, C9), step 2
@@ -18,7 +19,8 @@
 # stops it; step 4 (promote) is the deploy.
 #
 # Env: RELEASE_LIVE_CHECKS (default 3), RELEASE_INTERVAL (seconds, default 60),
-#      RELEASE_DARK_DEPLOY (default true),
+#      RELEASE_DARK_DEPLOY (default true), RELEASE_BASELINE_RETRY_DELAY
+#      (seconds before the baseline's one retry, default 10),
 #      DEPLOY_SH (default scripts/deploy.sh), SMOKE_CMD (default: make smoke URL=)
 set -euo pipefail
 
@@ -85,6 +87,34 @@ log "1/7 current revision"
 prev="$("$deploy_sh" current "$env_name")"
 log "serving now: ${prev:-<none>}"
 
+# Baseline: is the serving version healthy under this commit's live test? A
+# first deploy's PREV is bootstrap's placeholder (503 on Workers, Google's
+# sample image on Cloud Run), which never passes, so a re-check after
+# reverting to it can't confirm anything. Logged only: it never fails a
+# release, and an unreadable URL counts as healthy (the re-check decides).
+# A failure is retried once: "not healthy" skips the re-check, so one
+# transient failure must not hide a revert that really failed.
+prev_healthy=1
+baseline_delay="${RELEASE_BASELINE_RETRY_DELAY:-10}"
+[[ "$baseline_delay" =~ ^[0-9]{1,2}$ ]] || {
+  echo "release: invalid RELEASE_BASELINE_RETRY_DELAY (0-99 seconds): $baseline_delay" >&2
+  exit 64
+}
+if [[ -n "$prev" ]]; then
+  base_url="$("$deploy_sh" url "$env_name")" || base_url=""
+  base_url="${base_url%/}"
+  if [[ -n "$base_url" ]] && ! live_check "$base_url"; then
+    log "baseline: the serving version failed the live check; retrying once in ${baseline_delay}s"
+    sleep "$baseline_delay"
+    if live_check "$base_url"; then
+      log "baseline: passed on retry: the serving version is flaky ($prev at $base_url)"
+    else
+      prev_healthy=0
+      log "baseline: the serving version is not healthy before this release ($prev at $base_url)"
+    fi
+  fi
+fi
+
 if [[ "$dark" == true ]]; then
   log "2/7 dark deploy of $sha"
   # A failed or half-done dark deploy is discarded too: no candidate is left
@@ -145,6 +175,11 @@ if ((failed)); then
   log "6/7 reverting to $prev"
   if ! "$deploy_sh" revert "$env_name" "$prev"; then
     log "revert failed; manual action needed"
+    exit 1
+  fi
+  if ((!prev_healthy)); then
+    log "reverted to $prev, which was not healthy before this release either (on a first deploy, bootstrap's placeholder): no re-check; fix forward"
+    echo "::error title=release $env_name::live test failed; reverted to $prev (not healthy before this release: fix forward)"
     exit 1
   fi
   # Ask again: on some targets the live URL follows the serving revision.

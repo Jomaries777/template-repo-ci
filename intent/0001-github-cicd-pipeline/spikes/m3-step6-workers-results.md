@@ -70,7 +70,7 @@ This repo replaces `sandbox-node-static` for the Workers part of step 6 (plan De
    - **Fixed** on branch `fix/smoke-no-retries`: the node `smoke` script passes `--retries=0`, and `tests/scripts/test_stacks.sh` keeps every stack's smoke suite retry-free. Python (pytest, no rerun plugin) and Go (`go test -count=1`) already ran each test once.
 4. **A failed first deploy can't revert cleanly.** The only earlier version is bootstrap's 503 placeholder, so the re-check after a revert always fails ("revert NOT confirmed healthy: manual action needed").
    - This happened on the first deploy's rerun.
-   - **Open:** it needs a decision, for example skipping the re-check when the previous version is the placeholder.
+   - **Fixed (2026-11-24, `fix/first-deploy-revert`):** `release.sh` checks the serving version once before deploying. When that baseline failed too, a revert skips the re-check and reports "not healthy before this release: fix forward". This works on every target, the placeholder included.
 5. **GitHub marked a skipped job "cancelled".** In run 45195252580, `report` (`if: failure()`) was marked cancelled, with no runner, instead of skipped, so the run showed "cancelled" although `dev` and `production` succeeded. The production deployment status was `success`, which is what `deploy-base.sh` reads.
    - It happened once. The cause is unexplained, probably GitHub's behaviour rather than the workflow's. In the same run, the `production` job waited 9.5 min between being created (14:35:48) and starting (14:45:16). The evidence doesn't show whether that was the environment approval or a runner wait.
 6. **README quick-start gaps (criterion 12).** These go to a separate docs PR:
