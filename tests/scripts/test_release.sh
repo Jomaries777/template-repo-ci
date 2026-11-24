@@ -73,6 +73,9 @@ count_is() {
 run ok
 rc_is "happy: exits 0" 0
 want="current dev
+url dev
+smoke https://live.example
+curl https://live.example/health
 deploy-dark dev $sha
 smoke https://cand.example
 promote dev $sha
@@ -95,13 +98,14 @@ has "pre-traffic failure: discards the candidate" "discard dev $sha"
 lacks "pre-traffic failure: never promotes" "promote"
 lacks "pre-traffic failure: no cleanup" "cleanup"
 
-# --- live failure on the 2nd check: revert to PREV and re-check
-run live SMOKE_FAIL_AFTER=2
+# --- live failure on the 2nd check: revert to PREV and re-check. Smoke call 1
+# is the baseline check of the serving version, 2 the candidate, 3+ live.
+run live SMOKE_FAIL_AFTER=3
 rc_is "live failure: exits 1" 1
 has "live failure: reverts to the previous revision" "revert dev svc-00001-old"
 lacks "live failure: no cleanup" "cleanup"
 lacks "live failure: no discard" "discard"
-count_is "live failure: re-checks once after revert" "smoke https://live.example" 3
+count_is "live failure: re-checks once after revert" "smoke https://live.example" 4
 
 # --- /health failure counts as a live failure
 run health CURL_FAIL_URL=https://live.example/health
@@ -110,7 +114,8 @@ has "health failure: reverts" "revert dev svc-00001-old"
 
 # --- live checks count comes from RELEASE_LIVE_CHECKS
 run five RELEASE_LIVE_CHECKS=5
-count_is "live checks: honours RELEASE_LIVE_CHECKS" "curl https://live.example/health" 5
+# 5 live checks plus the baseline check before the deploy.
+count_is "live checks: honours RELEASE_LIVE_CHECKS" "curl https://live.example/health" 6
 
 # --- no dark deploy (C9): promote is the deploy
 run nodark RELEASE_DARK_DEPLOY=false
@@ -121,11 +126,14 @@ has "no dark deploy: cleans up" "cleanup dev"
 # C9: without a dark deploy, the pre-traffic test runs against the artifact
 # served locally (`deploy.sh preview`), which is stopped before the deploy.
 want="current dev
+url dev
+smoke https://live.example
+curl https://live.example/health
 preview dev $sha
 smoke http://127.0.0.1:9999/
 discard dev $sha
 promote dev $sha"
-got="$(head -n 5 <<<"$calls")"
+got="$(head -n 8 <<<"$calls")"
 if [[ "$got" == "$want" ]]; then pass "no dark deploy: local pre-traffic test, then promote"; else fail "no dark deploy: order was: $(tr '\n' ';' <<<"$got")"; fi
 run nodarkfail RELEASE_DARK_DEPLOY=false SMOKE_FAIL_URL=http://127.0.0.1:9999/
 rc_is "no dark deploy: failed local pre-traffic test exits 1" 1
@@ -139,20 +147,36 @@ lacks "no dark deploy: a preview that fails never promotes" "promote"
 run first CURRENT_EMPTY=1 SMOKE_FAIL_AFTER=1
 if [[ "$rc" == 1 ]] && grep -q "no previous revision" "$tmp/err.first"; then pass "no previous revision: fails and says so"; else fail "no previous revision (rc $rc)"; fi
 lacks "no previous revision: no revert" "revert"
+if [[ "$(sed -n 2p <<<"$calls")" == "deploy-dark dev $sha" ]]; then pass "no previous revision: no baseline check"; else fail "no previous revision: baseline ran: $(tr '\n' ';' <<<"$calls")"; fi
 lacks "no previous revision: no cleanup" "cleanup"
 
 # --- revert whose re-check fails
-run recheck SMOKE_FAIL_AFTER=2
+run recheck SMOKE_FAIL_AFTER=3
 if grep -q "revert did not pass the live check" "$tmp/err.recheck"; then pass "failed re-check after revert: says manual action is needed"; else fail "failed re-check: no message"; fi
 rc_is "failed re-check after revert: exits 1" 1
 if grep -q "^::error.*NOT confirmed" "$tmp/out.recheck"; then pass "failed re-check: annotates the revert as not confirmed"; else fail "failed re-check: no annotation"; fi
-# Only the 2nd live check (3rd smoke call) fails; the re-check after revert passes.
-run confirm SMOKE_FAIL_NTH=3
+# Only the 2nd live check (4th smoke call) fails; the re-check after revert passes.
+run confirm SMOKE_FAIL_NTH=4
 rc_is "confirmed revert: still exits 1" 1
 if grep -q "^::error.*(revert confirmed)" "$tmp/out.confirm"; then pass "confirmed revert: annotated as confirmed"; else fail "confirmed revert: no annotation"; fi
 
+# --- the serving version already failed the live check before this release
+# (a first deploy over bootstrap's placeholder): revert, but no re-check
+run unhealthy SMOKE_FAIL_URL=https://live.example
+rc_is "unhealthy baseline, live failure: exits 1" 1
+has "unhealthy baseline, live failure: still reverts" "revert dev svc-00001-old"
+count_is "unhealthy baseline, live failure: no re-check after revert" "smoke https://live.example" 2
+if grep -q "^::error.*(not healthy before this release: fix forward)" "$tmp/out.unhealthy"; then pass "unhealthy baseline: annotated as not healthy before"; else fail "unhealthy baseline: no annotation"; fi
+if grep -q "NOT confirmed" "$tmp/out.unhealthy"; then fail "unhealthy baseline: says NOT confirmed"; else pass "unhealthy baseline: no NOT confirmed annotation"; fi
+if grep -q "which was not healthy before this release either" "$tmp/err.unhealthy"; then pass "unhealthy baseline: logs why there is no re-check"; else fail "unhealthy baseline: no log"; fi
+# Only the baseline fails: the baseline never fails a release on its own.
+run baselineonly SMOKE_FAIL_NTH=1
+rc_is "unhealthy baseline, healthy release: exits 0" 0
+lacks "unhealthy baseline, healthy release: no revert" "revert"
+if grep -q "serving version is not healthy" "$tmp/err.baselineonly"; then pass "unhealthy baseline: logged before the deploy"; else fail "unhealthy baseline: not logged"; fi
+
 # --- revert itself fails
-run revfail SMOKE_FAIL_AFTER=2 REVERT_FAIL=1
+run revfail SMOKE_FAIL_AFTER=3 REVERT_FAIL=1
 if [[ "$rc" == 1 ]] && grep -q "revert failed; manual action needed" "$tmp/err.revfail"; then pass "failed revert: logs it and exits 1"; else fail "failed revert (rc $rc)"; fi
 
 # --- the live URL's trailing slash is stripped before /health
@@ -185,7 +209,7 @@ rc_is "rejects live checks longer than 10 minutes with 64" 64
 
 # --- the re-check after revert asks for the live URL again (targets whose
 # URL follows the serving revision, like the test-only local target)
-run follows URL_FOLLOWS_REVERT=1 SMOKE_FAIL_NTH=3
+run follows URL_FOLLOWS_REVERT=1 SMOKE_FAIL_NTH=4
 has "revert re-check: uses the URL after revert" "smoke https://prev.example"
 if grep -q "^::error.*(revert confirmed)" "$tmp/out.follows"; then pass "revert re-check: confirmed against the restored URL"; else fail "revert re-check: not confirmed"; fi
 
