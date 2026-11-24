@@ -122,8 +122,17 @@ template_repo="${TEMPLATE_REPO:-Jomaries777/template-repo-ci}"
 [[ "$template_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || usage_error "invalid TEMPLATE_REPO: $template_repo"
 # tr, not ${x,,}: macOS ships bash 3.2.
 lower() { tr '[:upper:]' '[:lower:]' <<<"$1"; }
-if [[ -n "$repo" && "$(lower "$repo")" == "$(lower "$template_repo")" ]]; then
-  usage_error "$repo is the template itself: create a new repo from it (README, \"Start a new project\") and run bootstrap in that clone"
+# --local-only has no repo, so check the checkout's origin (any GitHub URL
+# form: https://github.com/o/r(.git), git@github.com:o/r(.git)).
+guard_repo="$repo"
+if [[ -z "$guard_repo" ]]; then
+  origin_url="$(git -C "$root" remote get-url origin 2>/dev/null || true)"
+  if [[ "$origin_url" =~ github\.com[:/]([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$ ]]; then
+    guard_repo="${BASH_REMATCH[1]%.git}"
+  fi
+fi
+if [[ -n "$guard_repo" && "$(lower "$guard_repo")" == "$(lower "$template_repo")" ]]; then
+  usage_error "$guard_repo is the template itself: create a new repo from it (README, \"Start a new project\") and run bootstrap in that clone"
 fi
 
 # Bootstrap commits with `git add -A`, so it must start from a clean tree:

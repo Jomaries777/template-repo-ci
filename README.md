@@ -91,7 +91,7 @@ export CLOUDFLARE_ACCOUNT_ID=<32-hex-account-id>
 read -rs -p "Cloudflare API token: " CLOUDFLARE_API_TOKEN && echo && export CLOUDFLARE_API_TOKEN
 ```
 
-Run bootstrap in the new repo's clone, never in the template's own checkout: it refuses to run against the template repo.
+Run bootstrap in the new repo's clone, never in the template's own checkout: it refuses to run against the template repo (by `--repo`, or by `origin` with `--local-only`).
 
 Bootstrap is safe to rerun: it only fills in what is missing. To see every change and remote call first without making any, run `scripts/bootstrap.sh --stack node --target github-pages --dry-run`. It does this, in order:
 

@@ -244,6 +244,19 @@ for args in "--repo Jomaries777/template-repo-ci --dry-run" "--repo jomaries777/
 done
 list_after="$(cd "$g" && find . | sort)"
 check "template guard: changes no file" '[[ "$list_before" == "$list_after" ]]'
+# --local-only has no repo: the guard reads origin instead (review of #65).
+# The other local-only runs here are in copies with no .git, so they pass.
+for url in https://github.com/Jomaries777/template-repo-ci.git git@github.com:jomaries777/Template-Repo-CI; do
+  t="$tmp/t"
+  rm -rf "$t"
+  copy "$t"
+  git -C "$t" init -q && git -C "$t" remote add origin "$url"
+  list_before="$(cd "$t" && find . -path ./.git -prune -o -print | sort)"
+  rc=0
+  out="$(BOOTSTRAP_OWNER=acme "$t/scripts/bootstrap.sh" --stack node --target none --local-only 2>&1)" || rc=$?
+  list_after="$(cd "$t" && find . -path ./.git -prune -o -print | sort)"
+  check "template guard, local-only, origin $url: refused with 64, no file changed" '[[ $rc == 64 && "$list_before" == "$list_after" ]] && grep -q "is the template itself" <<<"$out"'
+done
 
 # --- --skip-bot-key: everything else still happens; the key is left for later
 k="$tmp/k"
