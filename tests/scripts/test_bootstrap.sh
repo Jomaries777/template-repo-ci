@@ -20,6 +20,12 @@ for cli in gh security; do
 done
 ORIG_PATH="$PATH"
 export PATH="$tmp/bin:$PATH"
+# No broker sign-in: an empty BOT_CONFIG_DIR, so a signed-in machine's real
+# ~/.config/agent-bot never sends bootstrap down the broker path (the broker
+# cases set their own), and no BOT_BROKER_URL (cloud sessions export one).
+mkdir -p "$tmp/no-botcfg"
+unset BOT_BROKER_URL
+export BOT_CONFIG_DIR="$tmp/no-botcfg"
 
 pass() { echo "ok - $1"; }
 fail() {
@@ -106,7 +112,9 @@ fi
 # stop rather than insert the stack's entry somewhere else.
 cqb="$tmp/cqb"
 copy "$cqb"
-sed -i '/^[[:space:]]*- language: actions$/{n;d}' "$cqb/.github/workflows/pr.yml"
+# Portable for GNU and BSD sed: no bare -i, and ';' before '}'.
+sed '/^[[:space:]]*- language: actions$/{n;d;}' "$cqb/.github/workflows/pr.yml" >"$cqb/pr.yml.new"
+mv "$cqb/pr.yml.new" "$cqb/.github/workflows/pr.yml"
 rc=0
 out="$(BOOTSTRAP_OWNER=acme "$cqb/scripts/bootstrap.sh" --stack node --target none --local-only 2>&1)" || rc=$?
 check "codeql: an actions item without build-mode stops bootstrap" '[[ $rc != 0 ]] && grep -q "codeql" <<<"$out"'
@@ -442,7 +450,9 @@ check "broker: a refusal stops bootstrap" '[[ $rc != 0 ]] && grep -q "github_den
 check "broker: no fallback to the phase 1 key" '[[ ! -e "$tmp/sec4/BOT_APP_PRIVATE_KEY_actions" ]]'
 
 # --- prompts are visible on a terminal (a pty from util-linux `script`)
-if command -v script >/dev/null 2>&1; then
+# Only util-linux's: BSD/macOS script has no -c, and under set -e it would end
+# this test silently.
+if script --version 2>/dev/null | grep -q util-linux; then
   sed -n '/^ask() {$/,/^}$/p' "$src/scripts/bootstrap.sh" >"$tmp/ask.sh"
   printf 'source %q\nask v "Bot App ID: " && echo "got=[$v]"\n' "$tmp/ask.sh" >"$tmp/ask_run.sh"
   pty_out="$(printf '12345\n' | PATH="$ORIG_PATH" script -qec "bash $tmp/ask_run.sh" /dev/null 2>&1 | tr -d '\r')"
