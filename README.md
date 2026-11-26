@@ -137,7 +137,7 @@ Approve each artifact by merging it before asking for the next one.
 | `python` | standard-library `http.server` | ruff, mypy, pytest (hash-pinned) |
 | `go` | standard-library `net/http` | `gofmt`, `go vet`, staticcheck, `go test`; distroless image |
 
-`TARGET` is where merges deploy. You can switch later: edit `target:` in `deploy.yml`, run `make bootstrap-target`, and merge. No workflow changes.
+`TARGET` is where merges deploy. You can switch later: edit `target:` in `deploy.yml`, run `make bootstrap-target`, and merge. No workflow changes. Switching does not tear down the old target, which keeps serving its last version until you remove it yourself. `make doctor` checks only the active target.
 
 | Target | Best for | Release | Needs at bootstrap | $0 when idle because |
 |---|---|---|---|---|
