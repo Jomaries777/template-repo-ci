@@ -14,6 +14,8 @@
 #                worktree, draft PR and check run, then prints next steps;
 #                the agent reports via scripts/agy-report.sh.
 # --dry-run      prints every git/gh/agy command, executes nothing.
+#                With AGY_DRY_RUN_PROMPT_FILE=<file>, also writes the full
+#                headless agy prompt there (stdout shows it truncated).
 # --allow-protected  owner override: permit diffs touching protected harness
 #                paths (.github/**, Makefile, tests/scripts/**, scripts/**,
 #                .claude/settings.json, CLAUDE.md, AGENTS.md, REVIEW.md).
@@ -346,6 +348,24 @@ usage() {
   exit "${1:-2}"
 }
 
+# plan_sections <plan file> <repo-relative path>: the plan text agy gets.
+# Only the "## Order of work" and "## Proof" sections (the write-plan skill's
+# headings; a heading may carry a suffix, e.g. "## Proof (spec §8 ...)"),
+# after a pointer to the full plan. A whole plan costs too many tokens (#85).
+# A plan with neither heading is sent whole.
+plan_sections() {
+  local sections
+  sections="$(awk '
+    /^(```|~~~)/ { fence = !fence }
+    !fence && /^## / { keep = ($0 ~ /^## (Order of work|Proof)([^[:alnum:]]|$)/) }
+    keep' "$1")"
+  if [[ -z "$sections" ]]; then
+    cat "$1"
+    return
+  fi
+  printf 'Full plan: %s; read it for context, deviations and risks.\n\n%s\n' "$2" "$sections"
+}
+
 cost_class() {
   case "$1" in
     boost | plain) echo low ;;
@@ -480,9 +500,13 @@ EOF
 
   # 5. headless boost / plain
   local prompt plan_text
-  plan_text="$(cat "$planabs")"
+  plan_text="$(plan_sections "$planabs" "$planrel")"
   prompt="$instruction"$'\n\n'"--- plan.md ---"$'\n'"$plan_text"
   [[ "$mode" != boost ]] || prompt="/boost $prompt"
+  # Dry run prints the prompt truncated; this writes it whole, for tests.
+  if [[ "$DRY_RUN" == 1 && -n "${AGY_DRY_RUN_PROMPT_FILE:-}" ]]; then
+    printf '%s\n' "$prompt" >"$AGY_DRY_RUN_PROMPT_FILE"
+  fi
   local timeout="${AGY_TIMEOUT:-45m}" work summary_file cb agy_rc=0
   work="$(mktemp -d)"
   summary_file="$work/summary.json"

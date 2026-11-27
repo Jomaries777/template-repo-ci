@@ -10,13 +10,16 @@ plan="intent/0001-github-cicd-pipeline/plan.md"
 slug="0001-github-cicd-pipeline"
 # A bootstrapped project has no template intent: use a fixture plan instead
 # (agy-run.sh needs intent/<id>-<slug>/plan.md inside the repo).
+fixtures=("$root/intent/0000-agy-run-sections" "$root/intent/0000-agy-run-whole")
 if [[ ! -f "$plan" ]]; then
   slug="0000-agy-run-fixture"
   plan="intent/$slug/plan.md"
+  fixtures+=("$root/intent/$slug")
   mkdir -p "intent/$slug"
-  trap 'rm -rf "$root/intent/0000-agy-run-fixture"' EXIT
   printf '# Plan (test fixture)\n\nStatus: Accepted\n' >"$plan"
 fi
+prompt_file="$(mktemp)"
+trap 'rm -rf "${fixtures[@]}" "$prompt_file"' EXIT
 fail=0
 
 ok() { echo "ok - $1"; }
@@ -60,6 +63,50 @@ done
 out="$("$run" plain "$plan" --repo o/r --dry-run 2>&1)"
 has "plain: agy -p" "$out" 'agy -p'
 hasnt "plain: no /boost prefix" "$out" 'agy -p /boost'
+
+# The headless prompt carries only the plan's Order of work and Proof sections,
+# plus the plan's path (#85); a plan without those headings is sent whole.
+sections="intent/0000-agy-run-sections/plan.md"
+mkdir -p "${sections%/plan.md}"
+cat >"$sections" <<'EOF'
+# Plan (test fixture)
+
+CONTEXT_MARKER
+
+## Order of work
+
+1. ORDER_MARKER
+
+## Deviations
+
+DEVIATIONS_MARKER
+
+## Proof (spec acceptance criteria)
+
+PROOF_MARKER
+
+## Risks
+
+RISKS_MARKER
+EOF
+: >"$prompt_file"
+AGY_DRY_RUN_PROMPT_FILE="$prompt_file" "$run" plain "$sections" --repo o/r --dry-run >/dev/null 2>&1
+prompt="$(cat "$prompt_file")"
+has "plan sections: Order of work sent" "$prompt" 'ORDER_MARKER'
+has "plan sections: Proof sent (heading with suffix)" "$prompt" 'PROOF_MARKER'
+has "plan sections: full plan path sent" "$prompt" "Full plan: $sections"
+hasnt "plan sections: Deviations not sent" "$prompt" 'DEVIATIONS_MARKER'
+hasnt "plan sections: Risks and context not sent" "$prompt" 'RISKS_MARKER|CONTEXT_MARKER'
+
+whole="intent/0000-agy-run-whole/plan.md"
+mkdir -p "${whole%/plan.md}"
+printf '# Plan (test fixture)\n\nWHOLE_TOP_MARKER\n\n## Steps\n\nWHOLE_STEPS_MARKER\n' >"$whole"
+: >"$prompt_file"
+AGY_DRY_RUN_PROMPT_FILE="$prompt_file" "$run" plain "$whole" --repo o/r --dry-run >/dev/null 2>&1
+prompt="$(cat "$prompt_file")"
+has "plan without the sections: whole text sent" "$prompt" 'WHOLE_TOP_MARKER'
+has "plan without the sections: later sections sent" "$prompt" 'WHOLE_STEPS_MARKER'
+hasnt "plan without the sections: no Full plan pointer" "$prompt" 'Full plan:'
 
 if out="$("$run" swarm "$plan" --repo o/r --dry-run 2>&1)"; then
   nok "swarm without --yes refuses"
