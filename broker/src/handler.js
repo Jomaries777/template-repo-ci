@@ -1,12 +1,13 @@
-// Bot token broker (spec 0002, phase 2). A caller proves it is the owner with
-// a user token of the login-only GitHub App (no permissions). The broker
+// Bot token broker (spec 0002, spec 0003). A caller proves it is the owner
+// with a user token of the login-only GitHub App (no permissions). The broker
 // checks that token with GitHub's "Check a token" endpoint, which confirms it
 // was issued by that App and names the user, then answers with a 1-hour
-// installation token of the bot App, limited to one repo. Any other token of
-// the owner's (gh CLI, a PAT, another OAuth app) is refused. The App key never
-// leaves this Worker. Requests from identified callers are audited without
-// tokens; anonymous and throttled refusals are not stored, so nobody can fill
-// the database. Without a working audit database the broker refuses.
+// installation token of the requested agent App (claude or agy), limited to
+// one repo. Any other token of the owner's (gh CLI, a PAT, another OAuth app)
+// is refused. The App keys never leave this Worker. Requests from identified
+// callers are audited without tokens; anonymous and throttled refusals are not
+// stored, so nobody can fill the database. Without a working audit database
+// the broker refuses.
 // Dependencies are injected so tests run offline:
 //   handle(request, env, { fetch, now, random })   now() returns milliseconds.
 
@@ -30,14 +31,27 @@ const NON_OWNER_PER_HOUR = 1;
 const RETENTION_MS = 90 * 24 * 3600 * 1000;
 // Old rows are deleted on about 1 write in 50, not every write (CPU, C7).
 const PRUNE_CHANCE = 0.02;
-// The bot App's own permissions; GitHub refuses anything wider.
+// The agent Apps' permissions (spec 0003 token table); GitHub refuses wider.
 const PERMISSIONS = {
   contents: "write",
   pull_requests: "write",
   issues: "write",
   checks: "write",
+  actions: "read",
   metadata: "read",
 };
+
+// Only agent Apps (claude, agy) may mint tokens here; the CI App key is never
+// reachable from /token or /relay (spec 0003 FR-2, FR-4).
+function agentApp(env, agent) {
+  if (agent === "claude") {
+    return { id: env.CLAUDE_APP_ID, slug: env.CLAUDE_APP_SLUG, key: env.CLAUDE_KEY_PKCS8 };
+  }
+  if (agent === "agy") {
+    return { id: env.AGY_APP_ID, slug: env.AGY_APP_SLUG, key: env.AGY_KEY_PKCS8 };
+  }
+  return null;
+}
 
 function json(status, obj) {
   return new Response(JSON.stringify(obj), {
@@ -56,12 +70,13 @@ async function audit(env, row, nowMs, random) {
   if (!env.AUDIT) return;
   try {
     await env.AUDIT.prepare(
-      "INSERT INTO audit (ts, caller_id, endpoint, repo, outcome, reason, expires_at, ip, branch, files, paths) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO audit (ts, caller_id, endpoint, agent, repo, outcome, reason, expires_at, ip, branch, files, paths) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
       .bind(
         nowMs,
         row.caller_id,
         row.endpoint,
+        row.agent ?? null,
         row.repo,
         row.outcome,
         row.reason,
@@ -90,7 +105,9 @@ let schemaChecked = false;
 async function schemaOk(env) {
   if (schemaChecked) return true;
   try {
-    await env.AUDIT.prepare("SELECT ts, caller_id, endpoint, repo, outcome, reason, expires_at, ip, branch, files, paths FROM audit LIMIT 0").all();
+    await env.AUDIT.prepare(
+      "SELECT ts, caller_id, endpoint, agent, repo, outcome, reason, expires_at, ip, branch, files, paths FROM audit LIMIT 0",
+    ).all();
     schemaChecked = true;
     return true;
   } catch {
@@ -203,10 +220,22 @@ export function checkRepo(env, full, row) {
   return { name: m[2] };
 }
 
-// mintToken: a 1-hour installation token of the bot App for one repo.
-// Returns { token, expires_at } or { error }.
-export async function mintToken(env, deps, repo, nowMs) {
-  const jwt = await appJwt(env.APP_ID, env.APP_KEY_PKCS8, Math.floor(nowMs / 1000));
+// mintToken: a 1-hour installation token of an agent App (claude or agy) for
+// one repo. Returns { token, expires_at } or { error }.
+export async function mintToken(env, deps, agent, repo, nowMs) {
+  const app = agentApp(env, agent);
+  if (!app) return { error: [400, { error: "bad_agent" }] };
+  if (typeof app.key !== "string" || app.key.trim().length === 0) {
+    return { error: [500, { error: "missing_key" }] };
+  }
+  if (
+    !/^[1-9]\d*$/.test(String(app.id ?? "")) ||
+    typeof app.slug !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(app.slug)
+  ) {
+    return { error: [500, { error: "misconfigured" }] };
+  }
+  const jwt = await appJwt(app.id, app.key, Math.floor(nowMs / 1000));
   const inst = await gh(deps.fetch, `/repos/${env.OWNER_LOGIN}/${repo}/installation`, {
     auth: `Bearer ${jwt}`,
   });
@@ -228,16 +257,27 @@ async function token(request, env, deps, row) {
 
   const body = await readJson(request);
   if (body.error) return [body.error[0], { error: body.error[1] }];
+  const app = agentApp(env, body.value.agent);
+  if (!app) return [400, { error: "bad_agent" }];
+  row.agent = body.value.agent;
   const repo = checkRepo(env, body.value.repo, row);
   if (repo.error) return repo.error;
 
-  const minted = await mintToken(env, deps, repo.name, nowMs);
+  const minted = await mintToken(env, deps, body.value.agent, repo.name, nowMs);
   if (minted.error) return minted.error;
+  const login = `${app.slug}[bot]`;
+  const user = await gh(deps.fetch, `/users/${encodeURIComponent(login)}`, {
+    auth: `Bearer ${minted.token}`,
+  });
+  if (user.status !== 200 || !Number.isSafeInteger(user.data?.id) || user.data.id <= 0) {
+    return [502, { error: "github_error" }];
+  }
   row.expires_at = minted.expires_at;
-  return [200, { token: minted.token, expires_at: minted.expires_at }];
+  return [200, { token: minted.token, expires_at: minted.expires_at, login, id: user.data.id }];
 }
 
 async function relayRoute(request, env, deps, row) {
+  row.agent = "claude";
   const nowMs = deps.now();
   const who = await identify(request, env, deps, row, "relay", nowMs);
   if (who.error) return who.error;
@@ -273,6 +313,7 @@ export async function handle(request, env, deps) {
   const row = {
     caller_id: null,
     endpoint: url.pathname.replace(/^\/|\/$/g, ""),
+    agent: null,
     repo: null,
     outcome: "refused",
     reason: null,

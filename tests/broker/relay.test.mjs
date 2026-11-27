@@ -1,8 +1,23 @@
-// Tests for POST /relay (spec 0002 FR-6, C3; S0002-8, 14). Offline: a fake
-// GitHub repo keeps refs and commits in memory and records every call.
+// Tests for POST /relay (spec 0002 FR-6, C3; spec 0003 FR-3 & NFR-5). Offline:
+// a fake GitHub repo keeps refs and commits in memory and records every call.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { OWNER_ID, OTHER_CRED, OWNER_CRED, d1, github, env, req, call } from "./helpers.mjs";
+import {
+  OWNER_ID,
+  OTHER_CRED,
+  OWNER_CRED,
+  CLAUDE_APP_ID,
+  CLAUDE_APP_SLUG,
+  AGY_APP_SLUG,
+  CI_APP_SLUG,
+  claudePair,
+  agyPair,
+  d1,
+  github,
+  env,
+  req,
+  call,
+} from "./helpers.mjs";
 import { resetSchemaCheck } from "../../broker/src/handler.js";
 
 const R = "https://api.github.com/repos/Jomaries777/sandbox-node-local";
@@ -11,8 +26,14 @@ const BOT_HEAD = "b".repeat(40);
 const OWNER_HEAD = "c".repeat(40);
 const SPOOF_HEAD = "f".repeat(40);
 const OTHER_COMMITTER_HEAD = "9".repeat(40);
-const BOT = "jomaries777-agent-bot[bot]";
+const AGY_HEAD = "7".repeat(40);
+const CI_HEAD = "8".repeat(40);
+const BOT = `${CLAUDE_APP_SLUG}[bot]`;
 const b64 = (s) => Buffer.from(s).toString("base64");
+
+function b64urlDecode(s) {
+  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
 
 // repo({ branches, failRef, openPr }): a fake repo behind the fake GitHub.
 // branches maps a branch name to its head; commits know their authors.
@@ -27,6 +48,9 @@ function repo({ branches = {}, failRef, openPr = false } = {}) {
     [SPOOF_HEAD]: { login: BOT, tree: "t-spoof", verified: false },
     // Verified, bot as author, but committed by someone else.
     [OTHER_COMMITTER_HEAD]: { login: BOT, tree: "t-other", verified: true, committer: "someone-else" },
+    // Verified commits made by the other Apps: relay acts as Claude only.
+    [AGY_HEAD]: { login: `${AGY_APP_SLUG}[bot]`, tree: "t-agy", verified: true, committer: "web-flow" },
+    [CI_HEAD]: { login: `${CI_APP_SLUG}[bot]`, tree: "t-ci", verified: true, committer: "web-flow" },
   };
   let blobN = 0;
   const routes = (url, init, reply) => {
@@ -100,11 +124,23 @@ const bodyOf = (gh, method, suffix) => {
 };
 const repoCalls = (gh) => gh.calls.filter((c) => c.url.startsWith(R));
 
-test("a new branch gets one bot commit and a draft PR", async () => {
+test("a new branch gets one claude commit and a draft PR", async () => {
   const { gh, refs } = repo();
   const { res, body, e } = await call(relayReq(payload()), env(), gh);
   assert.equal(res.status, 200, JSON.stringify(body));
   assert.deepEqual(body, { commit: "d".repeat(40), branch: "test/relay-check", pr_url: "https://github.com/x/pull/8" });
+
+  // Relay mints with the claude App only.
+  const mint = gh.calls.find((c) => c.url.endsWith("/access_tokens"));
+  const [h, p, s] = mint.auth.replace(/^Bearer /, "").split(".");
+  assert.ok(
+    await crypto.subtle.verify("RSASSA-PKCS1-v1_5", claudePair.publicKey, b64urlDecode(s), new TextEncoder().encode(`${h}.${p}`)),
+    "relay signs its JWT with the claude App key",
+  );
+  assert.ok(
+    !(await crypto.subtle.verify("RSASSA-PKCS1-v1_5", agyPair.publicKey, b64urlDecode(s), new TextEncoder().encode(`${h}.${p}`))),
+  );
+  assert.equal(JSON.parse(b64urlDecode(p)).iss, CLAUDE_APP_ID);
 
   assert.deepEqual(bodyOf(gh, "POST", "/git/trees"), {
     base_tree: "t-main",
@@ -129,6 +165,7 @@ test("a new branch gets one bot commit and a draft PR", async () => {
 
   const row = e.AUDIT.rows.at(-1);
   assert.equal(row.endpoint, "relay");
+  assert.equal(row.agent, "claude");
   assert.equal(row.outcome, "issued");
   assert.equal(row.branch, "test/relay-check");
   assert.equal(row.files, 4);
@@ -137,7 +174,7 @@ test("a new branch gets one bot commit and a draft PR", async () => {
   assert.ok(!stored.includes("secret-ish") && !stored.includes(b64("secret-ish body 42\n")), "no contents in the audit");
 });
 
-test("an existing bot branch moves fast-forward, and no second PR is opened", async () => {
+test("an existing claude branch moves fast-forward, and no second PR is opened", async () => {
   const { gh } = repo({ branches: { "test/relay-check": BOT_HEAD }, openPr: true });
   const { res, body } = await call(relayReq(payload({ parent: BOT_HEAD })), env(), gh);
   assert.equal(res.status, 200, JSON.stringify(body));
@@ -145,6 +182,28 @@ test("an existing bot branch moves fast-forward, and no second PR is opened", as
   assert.deepEqual(bodyOf(gh, "PATCH", "/git/refs/heads/test/relay-check"), { sha: "d".repeat(40), force: false });
   assert.equal(bodyOf(gh, "POST", "/git/trees").base_tree, "t-bot");
   assert.ok(!gh.calls.some((c) => c.method === "POST" && c.url === `${R}/pulls`));
+});
+
+test("relay ignores any agent field and refuses branches headed by agy or ci", async () => {
+  for (const [head, label] of [
+    [AGY_HEAD, "agy"],
+    [CI_HEAD, "ci"],
+  ]) {
+    const { gh, refs } = repo({ branches: { "test/relay-check": head } });
+    const { res, body, e } = await call(relayReq(payload({ parent: head, agent: label })), env(), gh);
+    assert.equal(res.status, 409, `${label} head must be refused`);
+    assert.equal(body.error, "not_bot_branch");
+    assert.equal(refs["test/relay-check"], head);
+    assert.ok(!gh.calls.some((c) => c.url.endsWith("/git/trees")));
+    assert.equal(e.AUDIT.rows.at(-1).agent, "claude");
+  }
+  const { gh } = repo();
+  const { res, e } = await call(relayReq(payload({ agent: "agy" })), env(), gh);
+  assert.equal(res.status, 200);
+  const mint = gh.calls.find((c) => c.url.endsWith("/access_tokens"));
+  const claims = JSON.parse(b64urlDecode(mint.auth.replace(/^Bearer /, "").split(".")[1]));
+  assert.equal(claims.iss, CLAUDE_APP_ID, "still mints with claude");
+  assert.equal(e.AUDIT.rows.at(-1).agent, "claude");
 });
 
 test("bad paths are refused before any repo call", async () => {
@@ -270,15 +329,19 @@ test("relay shares the identity checks and has its own hourly limit", async () =
   out = await call(relayReq(payload()), e, repo().gh);
   assert.equal(out.res.status, 429);
   // /token keeps its own budget.
-  const tok = await call(req({ repo: "Jomaries777/sandbox-node-local" }), e);
+  const tok = await call(req({ repo: "Jomaries777/sandbox-node-local", agent: "claude" }), e);
   assert.equal(tok.res.status, 200);
-  assert.ok(e.AUDIT.rows.every((r) => r.caller_id === OWNER_ID));
+  assert.ok(e.AUDIT.rows.every((r) => r.caller_id === OWNER_ID && r.agent === "claude"));
 });
 
 test("a broker deployed before its migration refuses instead of losing audit rows", async () => {
   resetSchemaCheck();
   const old = d1({ oldSchema: true });
-  for (const r of [relayReq(payload()), req({ repo: "Jomaries777/sandbox-node-local" })]) {
+  for (const r of [
+    relayReq(payload()),
+    req({ repo: "Jomaries777/sandbox-node-local", agent: "claude" }),
+    req({ repo: "Jomaries777/sandbox-node-local", key: "claude" }, OWNER_CRED, { path: "/secrets" }),
+  ]) {
     const { res, body, gh } = await call(r, env({ AUDIT: old }), repo().gh);
     assert.equal(res.status, 503);
     assert.equal(body.error, "audit_unavailable");
@@ -330,6 +393,7 @@ test("/relay/ (trailing slash) is the same endpoint, for path-limited secrets", 
   const { res, body, e } = await call(req(payload(), OWNER_CRED, { path: "/relay/" }), env(), gh);
   assert.equal(res.status, 200, JSON.stringify(body));
   assert.equal(e.AUDIT.rows.at(-1).endpoint, "relay", "same audit row and hourly limit as /relay");
+  assert.equal(e.AUDIT.rows.at(-1).agent, "claude");
 });
 
 test("a Verified head committed by anyone but the bot or web-flow is refused", async () => {
@@ -338,4 +402,20 @@ test("a Verified head committed by anyone but the bot or web-flow is refused", a
   assert.equal(res.status, 409);
   assert.equal(body.error, "not_bot_branch");
   assert.equal(refs["test/relay-check"], OTHER_COMMITTER_HEAD);
+});
+
+test("relay fails closed with 500 if claude key or App config is missing or placeholder", async () => {
+  let { gh } = repo();
+  let r = await call(relayReq(payload()), env({ CLAUDE_KEY_PKCS8: "  \n" }), gh);
+  assert.equal(r.res.status, 500);
+  assert.equal(r.body.error, "missing_key");
+  assert.equal(r.e.AUDIT.rows.at(-1).agent, "claude");
+  assert.equal(repoCalls(gh).length, 0);
+
+  ({ gh } = repo());
+  r = await call(relayReq(payload()), env({ CLAUDE_APP_ID: "0" }), gh);
+  assert.equal(r.res.status, 500);
+  assert.equal(r.body.error, "misconfigured");
+  assert.equal(r.e.AUDIT.rows.at(-1).agent, "claude");
+  assert.equal(repoCalls(gh).length, 0);
 });
