@@ -453,6 +453,18 @@ check "broker: bot-secrets.sh called for both apps" 'grep -q "bot-secrets --apps
 check "broker: a refusal stops bootstrap" '[[ $rc != 0 ]] && grep -q "github_denied" <<<"$out"'
 check "broker: no fallback to the phase 1 key" '[[ ! -e "$tmp/sec4/BOT_APP_PRIVATE_KEY_actions" ]]'
 
+# --- ask() uses only a terminal (review of #99). A BOOTSTRAP_TTY that isn't
+# one must fail: `>` would create a missing path as a file, and a prompt that
+# ends in a newline would then read its own text back as the answer.
+sed -n '/^ask() {$/,/^}$/p' "$src/scripts/bootstrap.sh" >"$tmp/ask_nl.sh"
+cat >"$tmp/ask_nl_run.sh" <<'EOF_NL'
+source "$1"
+if ask v $'Bot App ID:\n'; then echo "got=[$v]"; else echo no-terminal; fi
+EOF_NL
+nl_out="$(BOOTSTRAP_TTY="$tmp/not-a-tty" bash "$tmp/ask_nl_run.sh" "$tmp/ask_nl.sh" 2>&1)"
+check "prompt: a BOOTSTRAP_TTY that isn't a terminal fails, even for a prompt ending in a newline" 'grep -q "no-terminal" <<<"$nl_out" && ! grep -q "got=" <<<"$nl_out"'
+check "prompt: a missing BOOTSTRAP_TTY is never created" '[[ ! -e "$tmp/not-a-tty" ]]'
+
 # --- prompts are visible on a terminal (a pty from util-linux `script`)
 # Only util-linux's: BSD/macOS script has no -c, and under set -e it would end
 # this test silently.
