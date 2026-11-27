@@ -319,9 +319,11 @@ fi
 # ask <var> <prompt> [-s]: read a line from the terminal into <var>. The
 # prompt goes straight to the terminal, $BOOTSTRAP_TTY or /dev/tty (read -p
 # would print it on stderr, which the failure redirect hides). Fails if there
-# is no terminal.
+# is no terminal, or if $BOOTSTRAP_TTY isn't a character device: writing to
+# a missing path would create it as a file and read the prompt back.
 ask() {
   local __var="$1" __prompt="$2" __silent="${3:-}" __v="" __tty="${BOOTSTRAP_TTY:-/dev/tty}"
+  [[ -c "$__tty" ]] || return 1
   { printf '%s' "$__prompt" >"$__tty"; } 2>/dev/null || return 1
   if [[ "$__silent" == -s ]]; then
     IFS= read -r -s __v <"$__tty" || return 1
