@@ -22,8 +22,9 @@
 #                Changes under .github/workflows/ always fail the gate.
 #
 # Token handling: the bot token is minted by `scripts/bot-token.sh --agent agy`
-# (the Antigravity App, spec 0003 FR-5) into a NON-exported shell variable and passed inline (GH_TOKEN=... gh ...) only to
-# the individual gh/git calls this script makes. Headless agy runs with
+# (the Antigravity App, spec 0003 FR-5) into a NON-exported shell variable
+# and passed inline (GH_TOKEN=... gh ...) only to the individual gh/git calls
+# this script makes. Headless agy runs with
 # GH_TOKEN/GITHUB_TOKEN stripped. The interactive agent never sees a token:
 # scripts/agy-report.sh mints its own short-lived token per call and never
 # exports it.
