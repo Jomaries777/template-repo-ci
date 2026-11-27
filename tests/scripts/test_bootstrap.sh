@@ -26,6 +26,10 @@ export PATH="$tmp/bin:$PATH"
 mkdir -p "$tmp/no-botcfg"
 unset BOT_BROKER_URL
 export BOT_CONFIG_DIR="$tmp/no-botcfg"
+# No terminal: bootstrap prompts $BOOTSTRAP_TTY, so point it at nothing. A run
+# under an agent's pty or make test in Terminal then never prompts, and never
+# waits on, whoever runs it. The pty prompt tests below set /dev/tty back.
+export BOOTSTRAP_TTY="$tmp/no-tty"
 
 pass() { echo "ok - $1"; }
 fail() {
@@ -455,7 +459,7 @@ check "broker: no fallback to the phase 1 key" '[[ ! -e "$tmp/sec4/BOT_APP_PRIVA
 if script --version 2>/dev/null | grep -q util-linux; then
   sed -n '/^ask() {$/,/^}$/p' "$src/scripts/bootstrap.sh" >"$tmp/ask.sh"
   printf 'source %q\nask v "Bot App ID: " && echo "got=[$v]"\n' "$tmp/ask.sh" >"$tmp/ask_run.sh"
-  pty_out="$(printf '12345\n' | PATH="$ORIG_PATH" script -qec "bash $tmp/ask_run.sh" /dev/null 2>&1 | tr -d '\r')"
+  pty_out="$(printf '12345\n' | PATH="$ORIG_PATH" BOOTSTRAP_TTY=/dev/tty script -qec "bash $tmp/ask_run.sh" /dev/null 2>&1 | tr -d '\r')"
   check "prompt: shown on the terminal" 'grep -q "Bot App ID: " <<<"$pty_out"'
   check "prompt: reads the answer" 'grep -q "got=\[12345\]" <<<"$pty_out"'
   # BOOTSTRAP_TTY names the terminal to prompt. Pointed at nothing, ask()
@@ -463,8 +467,9 @@ if script --version 2>/dev/null | grep -q util-linux; then
   # on whoever runs it (an agent's pty, or make test in Terminal).
   pty_off="$(printf '12345\n' | PATH="$ORIG_PATH" BOOTSTRAP_TTY="$tmp/no-tty" script -qec "bash $tmp/ask_run.sh || echo no-terminal" /dev/null 2>&1 | tr -d '\r')"
   check "prompt: BOOTSTRAP_TTY without a terminal never reads the real one" 'grep -q "no-terminal" <<<"$pty_off" && ! grep -q "got=" <<<"$pty_off"'
-  # No "fails without a terminal" case here: run from a real terminal it would
-  # prompt that terminal. The real-mode run above covers the no-terminal path.
+  # The real-mode run above covers the no-terminal path for bootstrap itself:
+  # with BOOTSTRAP_TTY pointed at nothing for this whole file, it fails the
+  # same way with or without a real terminal attached.
 else
   echo "ok - prompt tests skipped: no util-linux script"
 fi
