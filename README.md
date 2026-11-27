@@ -146,6 +146,8 @@ Approve each artifact by merging it before asking for the next one.
 | `cloudflare-workers` | Edge APIs, light backends; **node only** | Version with a preview URL, then a deploy at 100%; revert with `rollback` | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` (Workers Scripts Edit on that one account). The token is stored on the `dev` and `production` Environments only | Workers Free plan, no card on file |
 | `none` | Libraries, CLIs, docs | No deploy | Nothing | Nothing is provisioned |
 
+On `github-pages`, `GET /health` answers `301` to `/health/`: the static export writes each route as `<route>/index.html`, and Pages redirects the bare path. The smoke suites follow the redirect. Point an uptime check at `/health/`, or have it follow redirects.
+
 `cloudflare-workers` was proven end to end on a live account on 2026-11-23, with a bootstrap, a gated production release and an automatic revert: see [`spikes/m3-step6-workers-results.md`](intent/0001-github-cicd-pipeline/spikes/m3-step6-workers-results.md).
 
 ## Continue on another computer

@@ -6,7 +6,7 @@ Review rubric for the automated Claude review. Findings are advisory.
 
 1. **Correctness**: bugs, wrong logic, unhandled errors, edge cases, race conditions.
 2. **Security**: secrets in code or logs, injection (shell, SQL, template), unsafe deserialization, missing authn/authz, workflow permissions broader than needed, untrusted input in `run:` steps. Cover the OWASP basics.
-3. **Conformance**: does the diff match `spec.md` and the "Files that change" list in `plan.md`? Flag files changed outside the plan and planned files left untouched.
+3. **Conformance**: does the diff match `spec.md` and the "Files that change" list in `plan.md`? Flag files changed outside the plan and planned files left untouched. A new project has no `intent/NNNN-*/` folder until its first intent (bootstrap removes the template's). When the repo has none, skip this pass and don't flag the missing folder.
 4. **Test adequacy**: new behavior has a test that would fail without the change; tests assert outcomes, not implementation.
 5. **Cost**: new always-on resources, jobs without `timeout-minutes`, unbounded loops or retries, workflows that run on every push without path filters, missing "$0 when idle" for deploy targets.
 
