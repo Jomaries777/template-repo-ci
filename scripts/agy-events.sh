@@ -20,7 +20,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 : >"$tmp/steps" # unique conv:step keys
 : >"$tmp/tools" # unique "conv:step<US>tool" keys
-: >"$tmp/files" # repo-relative paths written in the workspace
+: >"$tmp/files" # repo-relative paths written or edited in the workspace
 : >"$tmp/deleg" # unique conv:step keys of delegation calls
 : >"$tmp/errors" # unique conv:step keys in state ERROR
 status=""
@@ -99,7 +99,9 @@ while IFS= read -r line || [[ -n "$line" ]]; do
         case "$tool" in
           invoke_subagent | send_message) echo "$key" >>"$tmp/deleg" ;;
         esac
-        if [[ "$tool" == "write_file" && -n "$path" ]]; then
+        # write_file creates a file; edit_file (agy 1.5.x) changes an
+        # existing one. Both take Path.
+        if [[ ("$tool" == write_file || "$tool" == edit_file) && -n "$path" ]]; then
           rel=""
           if [[ "$path" != /* ]]; then
             rel="$path"

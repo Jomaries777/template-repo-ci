@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for scripts/agy-events.sh against the real Spike A fixtures.
+# Tests for scripts/agy-events.sh against real agy event fixtures (Spike A, #87).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -18,7 +18,7 @@ check() { # name jq-expr file
   fi
 }
 
-for m in plain boost teamwork; do
+for m in plain boost teamwork edit; do
   "$events" <"$fx/$m.ndjson" >"$tmp/$m.json"
 done
 
@@ -33,6 +33,10 @@ check "teamwork: delegations >= 1" '.delegations >= 1' "$tmp/teamwork.json"
 check "teamwork: 0 files in workspace" '(.files_written | length) == 0' "$tmp/teamwork.json"
 check "teamwork: delegated_without_changes_risk" '.delegated_without_changes_risk == true' "$tmp/teamwork.json"
 check "boost: no risk flag" '.delegated_without_changes_risk == false' "$tmp/boost.json"
+# agy 1.5.x changes an existing file with edit_file, not write_file (#87).
+# edit.ndjson is a real agy 1.5.18 run, paths rewritten to /ws.
+check "edit: SUCCESS" '.status == "SUCCESS"' "$tmp/edit.json"
+check "edit: edited file counted as written" '.files_written == ["README.md"]' "$tmp/edit.json"
 
 # Throttle callback invoked with AGY_THROTTLE_SECONDS=0.
 cat >"$tmp/cb.sh" <<EOF
