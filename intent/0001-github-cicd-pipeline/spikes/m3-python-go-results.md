@@ -54,7 +54,7 @@ Every time below comes from a log timestamp (UTC).
 
 ## Findings
 
-1. **Creating a repo from the template starts a deploy run that does nothing.** The template's own commit (`Initial commit`) triggered `deploy.yml` in both new repos, before bootstrap ran: runs 45815986990 and 45816013773. `classify` passed and every other job was skipped. It is harmless, but it is the first entry in each new project's Actions list. Fixed on 2026-11-27: `classify` is skipped when the push creates `main`, so that run does no work.
+1. **Creating a repo from the template starts a deploy run that does nothing.** The template's own commit (`Initial commit`) triggered `deploy.yml` in both new repos, before bootstrap ran: runs 45815986990 and 45816013773. `classify` passed and every other job was skipped. It is harmless, but it is the first entry in each new project's Actions list. Fixed on 2026-11-27: `classify` is skipped when the push creates `main`, so that run does no work (#92).
 2. **`/health` on Pages answers 301 to `/health/`.** The export writes each route as `<route>/index.html`, so Pages redirects the bare path. The smoke suites follow the redirect and pass in all three stacks. A client that doesn't follow redirects gets the 301. This was already true for node: `sandbox-node-static`'s `/health` returns the same 301. It is first written down here. No fix.
 
 ## Timings
