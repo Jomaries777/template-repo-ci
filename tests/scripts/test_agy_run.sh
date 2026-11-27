@@ -42,6 +42,21 @@ has "boost: gate runs make lint test" "$out" 'make .* lint test'
 has "boost: cost class low" "$out" 'cost class: low'
 hasnt "boost: no token printed" "$out" 'ghs_|x-access-token:[A-Za-z0-9_]{10,}'
 
+# The draft PR's title must pass pr.yml's hygiene check, or ci-ok fails on
+# every agent PR. The regex is read from pr.yml so the two can't drift apart.
+title_re="$(sed -n "s/^ *re='\(.*\)'$/\1/p" .github/workflows/pr.yml | head -1)"
+pr_title() { # dry-run output -> the --title argument, printf %q escaping removed
+  grep 'gh pr create' <<<"$1" | sed -n 's/.*--title \(.*\) --body-file.*/\1/p' | sed 's/\\\(.\)/\1/g'
+}
+for mode in boost teamwork; do
+  t="$(pr_title "$("$run" "$mode" "$plan" --repo o/r --dry-run 2>&1)")"
+  if [[ -n "$title_re" && "$t" =~ $title_re ]]; then
+    ok "$mode: PR title passes pr.yml's conventional-title check ($t)"
+  else
+    nok "$mode: PR title passes pr.yml's conventional-title check (got: ${t:-<none>})"
+  fi
+done
+
 out="$("$run" plain "$plan" --repo o/r --dry-run 2>&1)"
 has "plain: agy -p" "$out" 'agy -p'
 hasnt "plain: no /boost prefix" "$out" 'agy -p /boost'

@@ -441,7 +441,7 @@ Progress is reported on the \`antigravity/$mode\` check run.
 EOF
   local prurl pr
   cap prurl "https://github.com/$repo/pull/<PR_NUMBER>" ghb pr create --repo "$repo" --draft \
-    --base main --head "$branch" --title "agy($mode): $idslug" --body-file "$body"
+    --base main --head "$branch" --title "feat($idslug): agy $mode run" --body-file "$body"
   pr="${prurl##*/}"
   rm -f "$body"
 
