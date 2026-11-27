@@ -130,6 +130,7 @@ function validate(p) {
 }
 
 export async function relay(env, deps, p, row, nowMs, { checkRepo, mintToken }) {
+  row.agent = "claude";
   const repo = checkRepo(env, p.repo, row);
   if (repo.error) return repo.error;
   const checked = validate(p);
@@ -139,12 +140,12 @@ export async function relay(env, deps, p, row, nowMs, { checkRepo, mintToken }) 
   row.files = files.length;
   row.paths = files.map((f) => f.path).join(",").slice(0, MAX_PATHS_AUDIT);
 
-  const minted = await mintToken(env, deps, repo.name, nowMs);
+  const minted = await mintToken(env, deps, "claude", repo.name, nowMs);
   if (minted.error) return minted.error;
   const auth = `Bearer ${minted.token}`;
   const r = `/repos/${env.OWNER_LOGIN}/${repo.name}`;
   const call = (path, opts = {}) => gh(deps.fetch, `${r}${path}`, { auth, ...opts });
-  const bot = `${env.APP_SLUG}[bot]`;
+  const bot = `${env.CLAUDE_APP_SLUG}[bot]`;
 
   // Where the commit goes, and whether it may.
   const head = await call(`/git/ref/heads/${branch}`);

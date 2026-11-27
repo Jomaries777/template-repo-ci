@@ -1,8 +1,9 @@
--- Audit log of the bot token broker (spec 0002, FR-7). No tokens are stored.
+-- Audit log of the bot token broker (spec 0002 FR-7, spec 0003 NFR-5). No tokens are stored.
 CREATE TABLE IF NOT EXISTS audit (
   ts INTEGER NOT NULL,        -- milliseconds since the epoch
   caller_id TEXT,             -- GitHub user ID, once known
-  endpoint TEXT NOT NULL,     -- token | relay (secrets follows in 7d)
+  endpoint TEXT NOT NULL,     -- token | relay | secrets
+  agent TEXT,                 -- claude | agy (token/relay), or claude | ci (secrets)
   repo TEXT,
   outcome TEXT NOT NULL,      -- issued | refused
   reason TEXT,                -- error code when refused

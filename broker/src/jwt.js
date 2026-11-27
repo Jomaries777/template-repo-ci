@@ -2,7 +2,7 @@
 // The key arrives as a PKCS#8 PEM (the App's PKCS#1 key, converted once with
 // `openssl pkcs8 -topk8 -nocrypt`, because WebCrypto imports PKCS#8 only).
 
-let cached = { pem: null, key: null };
+const cached = new Map();
 
 function b64url(bytes) {
   let s = "";
@@ -26,7 +26,8 @@ function pemToDer(pem) {
 }
 
 async function importKey(pem) {
-  if (cached.pem === pem && cached.key) return cached.key;
+  const hit = cached.get(pem);
+  if (hit) return hit;
   const key = await crypto.subtle.importKey(
     "pkcs8",
     pemToDer(pem),
@@ -34,7 +35,8 @@ async function importKey(pem) {
     false,
     ["sign"],
   );
-  cached = { pem, key };
+  if (cached.size >= 8) cached.clear();
+  cached.set(pem, key);
   return key;
 }
 

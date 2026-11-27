@@ -1,6 +1,6 @@
-# Bot token broker (spec 0002). Deployed by hand by the owner (C6); see
-# README.md. The App key is a secret (`wrangler secret put APP_KEY_PKCS8`),
-# never in this file.
+# Bot token broker (spec 0002, spec 0003). Deployed by hand by the owner; see
+# README.md. The three App keys are Worker secrets (`wrangler secret put
+# CLAUDE_KEY_PKCS8`, `AGY_KEY_PKCS8`, `CI_KEY_PKCS8`), never in this file.
 name = "agent-bot-broker"
 main = "src/index.js"
 compatibility_date = "2026-11-01"
@@ -12,9 +12,15 @@ preview_urls = false
 [vars]
 OWNER_LOGIN = "Jomaries777"
 OWNER_ID = "322333432"
-APP_ID = "5766032"
-# The bot App's slug: /relay only moves branches whose head is "<slug>[bot]"'s.
-APP_SLUG = "jomaries777-agent-bot"
+# The three Apps (spec 0003). IDs are placeholders "0" until M3 cutover.
+# /relay uses CLAUDE_APP_SLUG: it only moves branches whose head is
+# "<CLAUDE_APP_SLUG>[bot]"'s.
+CLAUDE_APP_ID = "0"
+CLAUDE_APP_SLUG = "jomaries777-claude"
+AGY_APP_ID = "0"
+AGY_APP_SLUG = "jomaries777-agy"
+CI_APP_ID = "0"
+CI_APP_SLUG = "jomaries777-ci"
 # The login-only App (jomaries777-agent-login). Its client secret is a Worker
 # secret (LOGIN_CLIENT_SECRET): the broker uses it to check that a token was
 # issued by this App, so no other token of the owner's is accepted.

@@ -1,4 +1,4 @@
-// Shared fakes for the broker tests: a throwaway App key, an in-memory D1,
+// Shared fakes for the broker tests: throwaway App keys, an in-memory D1,
 // a fake GitHub and request helpers. Nothing touches the network.
 import { handle } from "../../broker/src/handler.js";
 
@@ -13,15 +13,31 @@ export const OWNER_OTHER_APP = ["owner", "gh", "cli"].join("-");
 export const LOGIN_ID = "Iv23liFOZk5YaGC6CJc9";
 export const LOGIN_SECRET = ["login", "client", "secret"].join("-");
 
-// --- a throwaway App key, exported as a PKCS#8 PEM
-export const pair = await crypto.subtle.generateKey(
-  { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-  true,
-  ["sign", "verify"],
-);
-const der = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
-const label = ["PRIVATE", "KEY"].join(" ");
-export const pem = `-----BEGIN ${label}-----\n${Buffer.from(der).toString("base64")}\n-----END ${label}-----\n`;
+export const CLAUDE_APP_ID = "1001";
+export const CLAUDE_APP_SLUG = "jomaries777-claude";
+export const CLAUDE_BOT_ID = 2001001;
+export const AGY_APP_ID = "1002";
+export const AGY_APP_SLUG = "jomaries777-agy";
+export const AGY_BOT_ID = 2002002;
+export const CI_APP_ID = "1003";
+export const CI_APP_SLUG = "jomaries777-ci";
+
+// --- three throwaway App keys, exported as PKCS#8 PEMs
+async function makeAppKey() {
+  const pair = await crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"],
+  );
+  const der = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
+  const label = ["PRIVATE", "KEY"].join(" ");
+  const pem = `-----BEGIN ${label}-----\n${Buffer.from(der).toString("base64")}\n-----END ${label}-----\n`;
+  return { pair, pem };
+}
+
+export const { pair: claudePair, pem: claudePem } = await makeAppKey();
+export const { pair: agyPair, pem: agyPem } = await makeAppKey();
+export const { pair: ciPair, pem: ciPem } = await makeAppKey();
 
 // --- in-memory D1 stub for the three statements the handler uses
 export function d1({ failRead = false, oldSchema = false } = {}) {
@@ -31,16 +47,18 @@ export function d1({ failRead = false, oldSchema = false } = {}) {
     prepare(sql) {
       return {
         async all() {
-          if (!sql.startsWith("SELECT ts, caller_id")) throw new Error(`unexpected all: ${sql}`);
-          if (oldSchema) throw new Error("D1_ERROR: no such column: branch");
+          if (!sql.startsWith("SELECT ts, caller_id") || !sql.includes("agent")) {
+            throw new Error(`unexpected all: ${sql}`);
+          }
+          if (oldSchema) throw new Error("D1_ERROR: no such column: agent");
           return { results: [] };
         },
         bind(...args) {
           return {
             async run() {
               if (sql.startsWith("INSERT INTO audit")) {
-                const [ts, caller_id, endpoint, repo, outcome, reason, expires_at, ip, branch, files, paths] = args;
-                rows.push({ ts, caller_id, endpoint, repo, outcome, reason, expires_at, ip, branch, files, paths });
+                const [ts, caller_id, endpoint, agent, repo, outcome, reason, expires_at, ip, branch, files, paths] = args;
+                rows.push({ ts, caller_id, endpoint, agent, repo, outcome, reason, expires_at, ip, branch, files, paths });
               } else if (sql.startsWith("DELETE FROM audit")) {
                 for (let i = rows.length - 1; i >= 0; i--) if (rows[i].ts < args[0]) rows.splice(i, 1);
               } else throw new Error(`unexpected run: ${sql}`);
@@ -61,10 +79,21 @@ export function d1({ failRead = false, oldSchema = false } = {}) {
 }
 
 // --- fake GitHub
-export // github({ installStatus, tokenStatus, routes }): routes(url, init, reply)
-// answers repo API calls for the relay tests, or returns undefined.
-function github({ installStatus = 200, tokenStatus = 201, routes } = {}) {
+// github({ installStatus, tokenStatus, userStatus, userId, routes }):
+// routes(url, init, reply) answers repo API calls for the relay/secrets tests,
+// or returns undefined.
+export function github({ installStatus = 200, tokenStatus = 201, userStatus = 200, userId, routes } = {}) {
   const calls = [];
+  const botUsers = {
+    [`https://api.github.com/users/${CLAUDE_APP_SLUG}%5Bbot%5D`]: {
+      login: `${CLAUDE_APP_SLUG}[bot]`,
+      id: CLAUDE_BOT_ID,
+    },
+    [`https://api.github.com/users/${AGY_APP_SLUG}%5Bbot%5D`]: {
+      login: `${AGY_APP_SLUG}[bot]`,
+      id: AGY_BOT_ID,
+    },
+  };
   const fetch = async (url, init = {}) => {
     const auth = init.headers?.Authorization || "";
     calls.push({ url, method: init.method || "GET", auth, body: init.body });
@@ -88,6 +117,11 @@ function github({ installStatus = 200, tokenStatus = 201, routes } = {}) {
         ? reply(201, { token: INST_TOKEN, expires_at: "2026-11-16T17:00:00Z" })
         : reply(tokenStatus, { message: "x" });
     }
+    if (Object.hasOwn(botUsers, url) && (init.method || "GET") === "GET") {
+      if (userStatus !== 200) return reply(userStatus, { message: "x" });
+      const u = botUsers[url];
+      return reply(200, { login: u.login, id: userId !== undefined ? userId : u.id });
+    }
     const routed = routes?.(url, init, reply);
     if (routed) return routed;
     return reply(404, { message: "Not Found" });
@@ -99,10 +133,16 @@ export function env(over = {}) {
   return {
     OWNER_LOGIN: "Jomaries777",
     OWNER_ID,
-    APP_ID: "5766032",
-    APP_SLUG: "jomaries777-agent-bot",
+    CLAUDE_APP_ID,
+    CLAUDE_APP_SLUG,
+    CLAUDE_KEY_PKCS8: claudePem,
+    AGY_APP_ID,
+    AGY_APP_SLUG,
+    AGY_KEY_PKCS8: agyPem,
+    CI_APP_ID,
+    CI_APP_SLUG,
+    CI_KEY_PKCS8: ciPem,
     BROKER_ENABLED: "true",
-    APP_KEY_PKCS8: pem,
     LOGIN_CLIENT_ID: LOGIN_ID,
     LOGIN_CLIENT_SECRET: LOGIN_SECRET,
     AUDIT: d1(),
@@ -136,4 +176,3 @@ export async function call(request, e = env(), gh = github(), random = () => 0.5
   const res = await handle(request, e, { fetch: gh.fetch, now: () => NOW, random });
   return { res, body: await res.json(), e, gh };
 }
-
