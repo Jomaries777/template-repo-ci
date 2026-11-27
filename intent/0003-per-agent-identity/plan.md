@@ -36,6 +36,8 @@ Facts found while planning (2026-11-27):
 | `broker/src/secrets.js` | Modified | `key: claude\|ci` with fixed targets; only reader of `CI_KEY_PKCS8` (FR-4) |
 | `broker/wrangler.toml` | Modified | Three Apps' IDs and slugs in place of `APP_ID`/`APP_SLUG` |
 | `broker/migrations/0003_agent.sql` | New | `agent` audit column (NFR-5) |
+| `broker/schema.sql` | Modified | The `agent` column for a fresh install (NFR-5). Added during the build (see Deviations) |
+| `broker/src/jwt.js` | Modified | The key cache holds one key per App, not one in all. Added during the build (see Deviations) |
 | `broker/README.md` | Modified | Migration runbook (FR-11) and new secrets |
 | `tests/broker/handler.test.mjs`, `relay.test.mjs`, `secrets.test.mjs`, `helpers.mjs` | Modified | Criterion 6 |
 | `scripts/bot-token.sh` | Modified | `--agent` required; broker only (FR-5, D6) |
@@ -144,7 +146,7 @@ Dependabot auto-merge is down from step 5 until step 7, so steps 5–7 run back 
 
 | Milestone | Status | PRs |
 |---|---|---|
-| M0: spikes ‖ broker | In progress. Spikes done on 2026-11-28 ([results](spikes/s1-s4-results.md)), and the gate passed within its fallbacks: S1 → C3 `workflow_run` merge, S2 → C6 manual step, S3 confirms the review token, S4 finds the secret empty. Criterion 4 passed early. Broker (1a) in progress (AGY) | #96 (broker, draft) |
+| M0: spikes ‖ broker | In progress. Spikes done on 2026-11-28 ([results](spikes/s1-s4-results.md)), and the gate passed within its fallbacks: S1 → C3 `workflow_run` merge, S2 → C6 manual step, S3 confirms the review token, S4 finds the secret empty. Criterion 4 passed early. Broker (1a) built by AGY and fixed by CC, in review. #96 was closed for a gitleaks false positive in its commit | #97 (spikes), #98 (broker) |
 | M1: device scripts ‖ setup | Not started | – |
 | M2: workflows | Not started | – |
 | M3: cutover | Not started | – |
@@ -174,3 +176,4 @@ Dependabot auto-merge is down from step 5 until step 7, so steps 5–7 run back 
 | Date | What changed from this plan | Why | Approved by |
 |---|---|---|---|
 | 2026-11-27 | **From the spec, at planning time.** The cutover order in M3, which `broker/README.md` follows, differs from FR-11's order. The agent Apps are created and the new broker is deployed before the rename and the new `-ci` key. | Today's key stays usable until the new broker is proven (M3 step 3), so a rollback is still possible. FR-11's order deletes the old key before anything is tested | Owner, with this plan |
+| 2026-11-28 | **1a (#98) changes two broker files the table didn't list:** `broker/schema.sql` gains the `agent` column, and `broker/src/jwt.js` caches one imported key per App (a `Map` keyed by PEM, capped at 8) instead of a single key. | `schema.sql` is what a fresh install runs, so without the column a new broker would fail its own schema check. With one cached key, switching between the `claude` and `agy` keys would re-import a key on every switch. Both stay inside 1a's `broker/**` | Owner, on merging #98 |
