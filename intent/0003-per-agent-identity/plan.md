@@ -146,8 +146,8 @@ Dependabot auto-merge is down from step 5 until step 7, so steps 5–7 run back 
 
 | Milestone | Status | PRs |
 |---|---|---|
-| M0: spikes ‖ broker | In progress. Spikes done on 2026-11-28 ([results](spikes/s1-s4-results.md)), and the gate passed within its fallbacks: S1 → C3 `workflow_run` merge, S2 → C6 manual step, S3 confirms the review token, S4 finds the secret empty. Criterion 4 passed early. Broker (1a) built by AGY and fixed by CC, in review. #96 was closed for a gitleaks false positive in its commit | #97 (spikes), #98 (broker) |
-| M1: device scripts ‖ setup | Not started | – |
+| M0: spikes ‖ broker | Done. Spikes done on 2026-11-28 ([results](spikes/s1-s4-results.md)), and the gate passed within its fallbacks: S1 → C3 `workflow_run` merge, S2 → C6 manual step, S3 confirms the review token, S4 finds the secret empty. Criterion 4 passed early. Broker (1a) built by AGY and fixed by CC; not deployed until M3. #96 was closed for a gitleaks false positive in its commit | #97 (spikes), #98 (broker) |
+| M1: device scripts ‖ setup | In progress. 1b is split into two CC PRs so 1c can start sooner: 1b-1 (`app-manifest.sh`, the manifest template, `bot-secrets.sh --key`, the interfaces 1c calls) in review; then 1b-2 (`bot-token.sh --agent`, agy-run author) alongside AGY's 1c. Merge order: 1b-1, 1b-2, then 1c, because 1c's doctor passes `--agent`. Until cutover the deployed broker refuses `--key` (`bad_apps`), so no repo is bootstrapped in that window (Risks) | 1b-1: this PR |
 | M2: workflows | Not started | – |
 | M3: cutover | Not started | – |
 | M4: proofs ‖ docs | Not started | – |
