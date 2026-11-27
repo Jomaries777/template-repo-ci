@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | **Accepted** by the product owner on 2026-11-27 (#94). The owner's C1–C12 decisions, also made on 2026-11-27, missed that merge and land with `plan.md`'s PR |
 | Intent | [intent.md](intent.md), accepted by the owner on 2026-11-27 (#93) |
 | Created | 2026-11-27 |
 | Owner decisions | Intent decisions 1–5 and open questions 1–4 (2026-11-27). Two more, taken while this spec was planned on 2026-11-27: agents get tokens from the broker only (D6), and bootstrap adds each new repo to the Apps (D7). C1–C12 decided on 2026-11-27. C9 changes intent decision 3: the Antigravity App is `<login>-agy` (`jomaries777-agy`), not `jomaries777-antigravity` |
