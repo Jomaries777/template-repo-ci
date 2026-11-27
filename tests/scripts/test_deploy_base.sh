@@ -83,6 +83,16 @@ rc=0
 "$base_sh" not-a-sha >/dev/null 2>&1 || rc=$?
 if [[ "$rc" == 64 ]]; then pass "rejects a bad head sha"; else fail "bad head sha rc $rc"; fi
 
+# The push that creates main (a repo just made from the template) has nothing
+# to classify yet, so deploy.yml's classify job, and every job after it, is
+# skipped for it.
+classify_job="$(awk '/^  classify:$/ {on = 1; next} on && /^  [a-z]/ {exit} on' .github/workflows/deploy.yml)"
+if grep -qE '^    if: \$\{\{ !github\.event\.created \}\}$' <<<"$classify_job"; then
+  pass "deploy.yml skips classify on the push that creates main"
+else
+  fail "deploy.yml's classify job doesn't skip the push that creates main"
+fi
+
 [[ "$failures" -eq 0 ]] || {
   echo "$failures failure(s)"
   exit 1
