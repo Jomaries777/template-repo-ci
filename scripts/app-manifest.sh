@@ -26,7 +26,7 @@ if [[ "${1:-}" == --name ]]; then
 fi
 [[ $# -eq 2 ]] || usage
 login="$1" agent="$2"
-[[ "$login" =~ ^[A-Za-z0-9-]{1,39}$ ]] || usage
+[[ "$login" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || usage # a GitHub login
 case "$agent" in claude | agy | ci) ;; *) usage ;; esac
 
 prefix="$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')"

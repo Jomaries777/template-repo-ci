@@ -36,7 +36,7 @@ if ((cut_ok)); then pass "name: a 30-character login is cut to 27, every name fi
 same "name: a 27-character login is kept whole" "$(am --name abcdefghijklmnopqrstuvwxyz1 claude)" abcdefghijklmnopqrstuvwxyz1-claude
 same "name: a hyphen left at the end of the cut is dropped" "$(am --name abcdefghijklmnopqrstuvwxyz-ABCD claude)" abcdefghijklmnopqrstuvwxyz-claude
 
-for bad in "" "a b" "has_underscore" "$long$long" "--"; do
+for bad in "" "a b" "has_underscore" "$long$long" "--" "-jomaries777"; do
   rc=0
   am --name "$bad" claude >/dev/null 2>&1 || rc=$?
   same "usage: login [${bad}] is refused" "$rc" 64

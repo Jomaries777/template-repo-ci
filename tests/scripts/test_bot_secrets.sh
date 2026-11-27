@@ -92,6 +92,8 @@ FAKE_CODE=400 FAKE_BODY='{"error":"bad_apps"}' run --key ci Jomaries777/two
 check "a broker from before the cutover gets a hint" grep -q "bad_apps (HTTP 400); this broker predates --key" <<<"$err"
 FAKE_CODE=500 FAKE_BODY='{"error":"missing_key"}' run --key ci Jomaries777/two
 check "a missing broker key gets a hint" grep -q "missing_key (HTTP 500); the broker has no ci App key loaded" <<<"$err"
+FAKE_CODE=200 FAKE_BODY='{"key":"ci"}' run --key ci Jomaries777/two
+check "a 200 that names no secret fails" test "$rc" != 0 -a -z "$out"
 FAKE_CODE=404 FAKE_BODY='{"error":"not_found"}' run --key ci Jomaries777/two
 check "not_found gets a hint" grep -q "not_found (HTTP 404); the repo doesn't exist" <<<"$err"
 

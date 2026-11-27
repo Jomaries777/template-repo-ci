@@ -84,6 +84,8 @@ for repo in "${repos[@]}"; do
     esac
     die "the broker refused $repo: $error (HTTP ${code:-no answer})${hint:+; $hint}"
   fi
-  echo "bot-secrets: $repo: $(jq -r '"\(.secret) set (\(.app))"' <<<"$body")"
+  done_msg="$(jq -er '"\(.secret | strings) set (\(.app | strings))"' <<<"$body" 2>/dev/null)" ||
+    die "the broker answered 200 for $repo without naming the secret it set"
+  echo "bot-secrets: $repo: $done_msg"
 done
 unset gh_token
