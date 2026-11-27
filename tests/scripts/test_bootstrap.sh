@@ -458,6 +458,11 @@ if script --version 2>/dev/null | grep -q util-linux; then
   pty_out="$(printf '12345\n' | PATH="$ORIG_PATH" script -qec "bash $tmp/ask_run.sh" /dev/null 2>&1 | tr -d '\r')"
   check "prompt: shown on the terminal" 'grep -q "Bot App ID: " <<<"$pty_out"'
   check "prompt: reads the answer" 'grep -q "got=\[12345\]" <<<"$pty_out"'
+  # BOOTSTRAP_TTY names the terminal to prompt. Pointed at nothing, ask()
+  # must fail even with a real terminal attached, so a test run never waits
+  # on whoever runs it (an agent's pty, or make test in Terminal).
+  pty_off="$(printf '12345\n' | PATH="$ORIG_PATH" BOOTSTRAP_TTY="$tmp/no-tty" script -qec "bash $tmp/ask_run.sh || echo no-terminal" /dev/null 2>&1 | tr -d '\r')"
+  check "prompt: BOOTSTRAP_TTY without a terminal never reads the real one" 'grep -q "no-terminal" <<<"$pty_off" && ! grep -q "got=" <<<"$pty_off"'
   # No "fails without a terminal" case here: run from a real terminal it would
   # prompt that terminal. The real-mode run above covers the no-terminal path.
 else
