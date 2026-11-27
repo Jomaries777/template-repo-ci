@@ -35,6 +35,10 @@ env:
 
 jobs:
   classify:
+    # The push that creates main (a repo just made from the template) has
+    # nothing to deploy yet: bootstrap hasn't run. Skipping classify skips
+    # every later job, so that first run shows as skipped, not as a deploy.
+    if: ${{ !github.event.created }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
