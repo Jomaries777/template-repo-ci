@@ -45,6 +45,7 @@ The app's own PR monitor (Auto-fix) can't be used for this. The app turns it on 
    - **What happened:** `agy-run.sh` titles its PRs `agy(<mode>): <id>-<slug>`. That isn't a conventional-commit type, so `hygiene` failed and `ci-ok` failed with it (run [45824194943](https://github.com/Jomaries777/template-repo-ci/actions/runs/45824194943)).
    - **The workaround:** Claude Code retitled #76 as the bot ("docs: note that switching targets leaves the old target serving"), then closed and reopened it. `pr.yml` doesn't run on `edited`, and a re-run reuses the old event's title. On the reopened run, [45824751234](https://github.com/Jomaries777/template-repo-ci/actions/runs/45824751234), `hygiene` and `ci-ok` pass. The agent's diff was not touched.
    - **To fix:** `agy-run.sh` should open the PR with a conventional title, in a `fix/*` PR whose failing test (`tests/scripts/test_agy_run.sh`) comes first.
+   - **Fixed** in #78. Titles are now `feat(<id>-<slug>): agy <mode> run`, and `tests/scripts/test_agy_run.sh` checks them against `pr.yml`'s regex.
 2. **The check run under-reports edits.**
    - **What happened:** the summary says "files written: 0", although the agent changed `README.md`. `agy-events.sh` counts only `write_file` events, and agy 1.5.9 edited the existing file with `edit_file`. The Spike A fixtures have only `write_file`.
    - **Why the run still passed:** the gate uses `git diff`, not this count. But the "delegated work but no files written" warning could fire on a run that did change files.
