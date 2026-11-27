@@ -144,7 +144,7 @@ Dependabot auto-merge is down from step 5 until step 7, so steps 5–7 run back 
 
 | Milestone | Status | PRs |
 |---|---|---|
-| M0: spikes ‖ broker | Not started | – |
+| M0: spikes ‖ broker | In progress. Spikes done on 2026-11-28 ([results](spikes/s1-s4-results.md)), and the gate passed within its fallbacks: S1 → C3 `workflow_run` merge, S2 → C6 manual step, S3 confirms the review token, S4 finds the secret empty. Criterion 4 passed early. Broker (1a) in progress (AGY) | #96 (broker, draft) |
 | M1: device scripts ‖ setup | Not started | – |
 | M2: workflows | Not started | – |
 | M3: cutover | Not started | – |
