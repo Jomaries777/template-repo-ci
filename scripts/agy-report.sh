@@ -19,9 +19,10 @@
 #                   current head SHA (the old run is marked neutral/superseded)
 #   failed          final failure run on the PR head + PR comment
 #
-# Token handling: a short-lived bot token is minted by scripts/bot-token.sh on
-# demand into a non-exported variable and passed inline only to the gh/git
-# calls made here. It is never exported to the shell or the agent.
+# Token handling: a short-lived bot token is minted by
+# `scripts/bot-token.sh --agent agy` (through agy-run.sh's helpers) on demand
+# into a non-exported variable and passed inline only to the gh/git calls made
+# here. It is never exported to the shell or the agent.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

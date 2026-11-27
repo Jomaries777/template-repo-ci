@@ -62,6 +62,7 @@ done
 
 out="$("$run" plain "$plan" --repo o/r --dry-run 2>&1)"
 has "plain: agy -p" "$out" 'agy -p'
+has "plain: token minted for the agy App (spec 0003 FR-5)" "$out" 'bot-token\.sh --agent agy o/r'
 hasnt "plain: no /boost prefix" "$out" 'agy -p /boost'
 
 # The headless prompt carries only the plan's Order of work and Proof sections,

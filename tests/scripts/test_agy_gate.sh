@@ -45,9 +45,17 @@ case "$*" in
 esac
 exit 0
 EOF
+# Stub bot-token.sh: records its args and answers like the broker's --json
+# (spec 0003 FR-2); without STUB_BOT_LOGIN it answers like today's broker,
+# which names no bot.
 cat >"$stubs/bot-token.sh" <<'EOF'
 #!/usr/bin/env bash
-echo "stub-token"
+echo "$*" >>"$STUB_DIR/token.args"
+if [[ -n "${STUB_BOT_LOGIN:-}" ]]; then
+  jq -nc --arg t stub-token --arg l "$STUB_BOT_LOGIN" --arg i "${STUB_BOT_ID:-4242}" '{token: $t, login: $l, id: ($i | tonumber? // $i)}'
+else
+  jq -nc --arg t stub-token '{token: $t}'
+fi
 EOF
 chmod +x "$stubs"/*
 export PATH="$stubs:$PATH"
@@ -85,6 +93,31 @@ export STUB_MAKE_RC=0
 
 repo="$tmp/r1"
 new_repo "$repo"
+
+# --- bot_git: the author is the bot the broker named (spec 0003 FR-5) -------
+# author <login or empty> [id]: commit in a scratch repo with a fresh token
+# and print the author line. A subshell, so the token cache starts empty.
+author() {
+  (
+    unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+    _TOK="" BOT_REPO=o/r
+    export STUB_BOT_LOGIN="$1" STUB_BOT_ID="${2:-4242}"
+    d="$(mktemp -d "$tmp/author.XXXXXX")"
+    git init -q "$d"
+    bot_git o/r "$d" commit -q --allow-empty -m x
+    git -C "$d" log -1 --format='%an <%ae>'
+  )
+}
+rm -f "$STUB_DIR/token.args"
+got="$(author 'jomaries777-agy[bot]')"
+contains "bot_git: token asked for the agy App as JSON" "$(cat "$STUB_DIR/token.args")" '^--agent agy --json o/r$'
+contains "bot_git: author is the broker's login and id" "$got" '^jomaries777-agy\[bot\] <4242\+jomaries777-agy\[bot\]@users\.noreply\.github\.com>$'
+got="$(author '')"
+contains "bot_git: today's author while the broker names no bot" "$got" '^jomaries777-agent-bot\[bot\] <123\+jomaries777-agent-bot\[bot\]@users\.noreply\.github\.com>$'
+got="$(author 'Not A Bot')"
+contains "bot_git: a login that isn't a bot login is ignored" "$got" '^jomaries777-agent-bot\[bot\] '
+got="$(author 'jomaries777-agy[bot]' 'x1')"
+contains "bot_git: an id that isn't a number is ignored" "$got" '^jomaries777-agent-bot\[bot\] '
 
 gate() { # -> GATE_REASONS
   ALLOW_PROTECTED="${1:-0}"

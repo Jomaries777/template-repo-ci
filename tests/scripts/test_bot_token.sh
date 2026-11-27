@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Tests for scripts/bot-token.sh key sources (spec 0002 phase 1, FR-2):
-# BOT_APP_KEY_B64 inside a Codespace, else the macOS Keychain. Keys are
-# generated at test time; a fake curl stands in for GitHub and records the
-# JWT, which is verified against the expected public key. Run from the repo
-# root.
+# Tests for scripts/bot-token.sh (spec 0003 FR-5, D6, C5; acceptance
+# criterion 7): --agent is required and the broker is the only token source.
+# A fake curl stands in for the broker and records what it would receive;
+# fake security and gh record any call, so a fallback would show. Run from
+# the repo root.
 set -euo pipefail
 
 src="$PWD"
@@ -16,208 +16,130 @@ fail() {
   echo "not ok - $1"
   failures=$((failures + 1))
 }
-
-if ! command -v openssl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-  echo "ok - skipped (needs openssl and jq)"
+if ! command -v jq >/dev/null 2>&1; then
+  echo "ok - skipped (needs jq)"
   exit 0
 fi
 
-# Two throwaway keys: A for the Codespaces secret, B for the Keychain.
-for k in a b; do
-  openssl genrsa -out "$tmp/$k.pem" 2048 2>/dev/null
-  openssl rsa -in "$tmp/$k.pem" -pubout -out "$tmp/$k.pub" 2>/dev/null
+# A PATH with only the tools bot-token.sh needs, plus the fakes, so a real
+# security (on a Mac), gh or curl is never reached.
+mkdir -p "$tmp/bin"
+for t in bash env jq cat head tr; do
+  ln -s "$(command -v "$t")" "$tmp/bin/$t"
 done
-b64() { base64 <"$1" | tr -d '\n'; }
-key_a="$(b64 "$tmp/a.pem")"
-key_b="$(b64 "$tmp/b.pem")"
-
-# A PATH with only the tools bot-token.sh needs, so a real `security` (on a
-# Mac) or `gh` is never reached. Each case adds its own fakes on top.
-mkdir -p "$tmp/base"
-for t in bash env openssl jq date mktemp chmod rm base64 tr cat head; do
-  ln -s "$(command -v "$t")" "$tmp/base/$t"
-done
-mkdir -p "$tmp/fake"
-cat >"$tmp/fake/curl" <<'EOF'
+cat >"$tmp/bin/curl" <<'CURL'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$CURL_ARGS"
 prev=""
 for a in "$@"; do
-  case "$a" in
-    "Authorization: Bearer "*) printf '%s' "${a#Authorization: Bearer }" >"$CURL_JWT" ;;
-  esac
   # A header read from a file (-H @file): keep what the broker would see.
   if [[ "$prev" == -H && "$a" == @* ]]; then cat "${a#@}" >>"$CURL_HDRS"; fi
+  if [[ "$prev" == --data ]]; then printf '%s\n' "$a" >>"$CURL_BODY"; fi
   prev="$a"
 done
-case "${*: -1}" in
-  https://broker.test/token)
-    printf '%s\n%s' "${FAKE_BROKER_BODY:-{\"token\":\"from-broker\",\"expires_at\":\"x\"}}" "${FAKE_BROKER_CODE:-200}"
-    exit 0 ;;
-  */installation) echo '{"id":42}' ;;
-  */access_tokens) echo '{"token":"ghs_test"}' ;;
-  *) exit 22 ;;
-esac
-EOF
-cat >"$tmp/fake/security" <<EOF
-#!/usr/bin/env bash
-echo "security \$*" >>"$tmp/security.calls"
-printf '%s\n' "$key_b"
-EOF
-chmod +x "$tmp/fake/curl" "$tmp/fake/security"
-mkdir -p "$tmp/nosec"
-ln -s "$tmp/fake/curl" "$tmp/nosec/curl"
+[[ -z "${FAKE_CURL_FAIL:-}" ]] || exit 7
+body='{"token":"from-broker","expires_at":"2026-11-28T12:00:00Z","login":"jomaries777-agy[bot]","id":42}'
+printf '%s\n%s' "${FAKE_BODY:-$body}" "${FAKE_CODE:-200}"
+CURL
+for t in security gh; do
+  # shellcheck disable=SC2016 # $* and $OTHER_CALLS expand in the fake, not here
+  printf '#!/usr/bin/env bash\necho "%s $*" >>"$OTHER_CALLS"\nexit 99\n' "$t" >"$tmp/bin/$t"
+done
+chmod +x "$tmp/bin/curl" "$tmp/bin/security" "$tmp/bin/gh"
 
-# run <path> [env...]: run bot-token.sh; sets out, err and rc.
-run() {
-  local path="$1"
-  shift
-  rm -f "$tmp/jwt" "$tmp/security.calls" "$tmp/curl.args" "$tmp/curl.hdrs"
-  rc=0
-  out="$(env -i PATH="$path" HOME="$tmp" CURL_JWT="$tmp/jwt" CURL_ARGS="$tmp/curl.args" CURL_HDRS="$tmp/curl.hdrs" BOT_APP_ID=4242 "$@" \
-    bash "$src/scripts/bot-token.sh" acme/hello 2>"$tmp/err")" || rc=$?
-  err="$(cat "$tmp/err")"
-}
-# jwt_signed_by <pubkey>: the recorded JWT verifies with this public key.
-jwt_signed_by() {
-  [[ -s "$tmp/jwt" ]] || return 1
-  local h p s
-  IFS=. read -r h p s <"$tmp/jwt"
-  printf '%s.%s' "$h" "$p" >"$tmp/signed"
-  s="$(tr '_-' '/+' <<<"$s")"
-  while ((${#s} % 4)); do s="$s="; done
-  base64 -d <<<"$s" >"$tmp/sig"
-  openssl dgst -sha256 -verify "$1" -signature "$tmp/sig" "$tmp/signed" >/dev/null 2>&1
-}
-jwt_iss() {
-  local p
-  IFS=. read -r _ p _ <"$tmp/jwt"
-  p="$(tr '_-' '/+' <<<"$p")"
-  while ((${#p} % 4)); do p="$p="; done
-  base64 -d <<<"$p" | jq -r .iss
-}
-
-with_sec="$tmp/fake:$tmp/base"
-no_sec="$tmp/nosec:$tmp/base"
-
-# 1. Codespace with the secret: signs with it, never asks the Keychain.
-run "$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a"
-if [[ $rc == 0 && "$out" == "ghs_test" ]]; then pass "codespace: prints the token"; else fail "codespace: prints the token (rc $rc, out [$out], err: $err)"; fi
-if jwt_signed_by "$tmp/a.pub"; then pass "codespace: JWT signed with the Codespaces secret"; else fail "codespace: JWT signed with the Codespaces secret"; fi
-if [[ ! -s "$tmp/security.calls" ]]; then pass "codespace: Keychain not used"; else fail "codespace: Keychain not used ($(cat "$tmp/security.calls"))"; fi
-if [[ "$(jwt_iss)" == "4242" ]]; then pass "JWT iss is BOT_APP_ID"; else fail "JWT iss is BOT_APP_ID (got $(jwt_iss))"; fi
-
-# 2. Outside a Codespace the variable is ignored: the Keychain key signs.
-run "$with_sec" BOT_APP_KEY_B64="$key_a"
-if [[ $rc == 0 ]] && jwt_signed_by "$tmp/b.pub"; then
-  pass "outside a Codespace: BOT_APP_KEY_B64 ignored, Keychain used"
-else
-  fail "outside a Codespace: BOT_APP_KEY_B64 ignored, Keychain used (rc $rc, err: $err)"
-fi
-
-# 3. Codespace without the secret and no Keychain: a clear error, no output.
-run "$no_sec" CODESPACES=true
-if [[ $rc != 0 && -z "$out" ]] && grep -q "BOT_APP_KEY_B64" <<<"$err"; then
-  pass "no key source: fails with the Codespaces hint"
-else
-  fail "no key source: fails with the Codespaces hint (rc $rc, out [$out], err: $err)"
-fi
-
-# 4. A value that isn't a PEM key fails without echoing it.
-junk="$(printf 'not-a-key-%s' "$RANDOM$RANDOM" | base64 | tr -d '\n')"
-run "$with_sec" CODESPACES=true BOT_APP_KEY_B64="$junk"
-if [[ $rc != 0 && -z "$out" ]] && ! grep -qF "$junk" <<<"$err" && ! grep -q "not-a-key" <<<"$err"; then
-  pass "bad key: fails without printing it"
-else
-  fail "bad key: fails without printing it (rc $rc, err: $err)"
-fi
-
-# 5. The broker comes first once this device has signed in (bot-login.sh).
-ident="$(printf '%s-%s' device identity)"
+ident="$(printf 'ident-%s' "$RANDOM$RANDOM")"
 mkdir -p "$tmp/.config/agent-bot"
 printf '%s' "$ident" >"$tmp/.config/agent-bot/identity"
 printf '%s\n' "https://broker.test" >"$tmp/.config/agent-bot/broker_url"
-run "$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a"
-if [[ $rc == 0 && "$out" == "from-broker" ]]; then pass "broker: used before the Codespaces secret"; else fail "broker: used before the Codespaces secret (rc $rc, out [$out], err: $err)"; fi
-if [[ ! -s "$tmp/jwt" ]]; then pass "broker: no local signing"; else fail "broker: no local signing"; fi
-if grep -q '"repo":"acme/hello"' "$tmp/curl.args"; then pass "broker: sends owner/name"; else fail "broker: sends owner/name ($(cat "$tmp/curl.args"))"; fi
-if grep -qF "Authorization: Bearer $ident" "$tmp/curl.hdrs" 2>/dev/null; then pass "broker: sends the identity as a bearer header"; else fail "broker: sends the identity as a bearer header"; fi
-if ! grep -qF "$ident" "$tmp/curl.args"; then pass "broker: identity never on the command line"; else fail "broker: identity never on the command line"; fi
 
-# 6. A refusal names the broker's error and never prints the identity.
-run "$with_sec" FAKE_BROKER_BODY='{"error":"not_owner"}' FAKE_BROKER_CODE=403
-if [[ $rc != 0 && -z "$out" ]] && grep -q "not_owner" <<<"$err" && ! grep -qF "$ident" <<<"$err"; then
-  pass "broker: a refusal shows its error code"
-else
-  fail "broker: a refusal shows its error code (rc $rc, err: $err)"
-fi
+# run [env...] -- [args...]: run bot-token.sh with a clean environment; sets
+# out, err and rc.
+run() {
+  local envs=()
+  while (($#)) && [[ "$1" != -- ]]; do
+    envs+=("$1")
+    shift
+  done
+  shift
+  rm -f "$tmp/args" "$tmp/hdrs" "$tmp/body" "$tmp/other"
+  rc=0
+  out="$(env -i PATH="$tmp/bin" HOME="$tmp" CURL_ARGS="$tmp/args" CURL_HDRS="$tmp/hdrs" CURL_BODY="$tmp/body" \
+    OTHER_CALLS="$tmp/other" ${envs[@]+"${envs[@]}"} bash "$src/scripts/bot-token.sh" "$@" 2>"$tmp/err")" || rc=$?
+  err="$(cat "$tmp/err")"
+}
+check() { # check <name> <condition...>
+  local name="$1"
+  shift
+  if "$@"; then pass "$name"; else fail "$name (rc $rc, out [$out], err [$err])"; fi
+}
+# shellcheck disable=SC2329 # called through check
+nothing_sent() { [[ ! -s "$tmp/args" && ! -s "$tmp/other" ]]; }
 
-# A broker that is down or switched off (5xx, or no answer) falls back to the
-# local key; a refusal (4xx) does not.
-run "$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" FAKE_BROKER_BODY='{"error":"disabled"}' FAKE_BROKER_CODE=503
-if [[ $rc == 0 && "$out" == "ghs_test" ]] && jwt_signed_by "$tmp/a.pub" && grep -q "unavailable (503)" <<<"$err"; then
-  pass "broker: a 503 falls back to the Codespaces secret"
-else
-  fail "broker: a 503 falls back to the Codespaces secret (rc $rc, out [$out], err: $err)"
-fi
-run "$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" FAKE_BROKER_BODY='{"error":"wrong_owner"}' FAKE_BROKER_CODE=400
-if [[ $rc != 0 && -z "$out" ]] && grep -q "wrong_owner" <<<"$err"; then
-  pass "broker: a 4xx refusal does not fall back"
-else
-  fail "broker: a 4xx refusal does not fall back (rc $rc, out [$out])"
-fi
+# --- usage (criterion 7: "no --agent")
+run -- acme/hello
+check "no --agent: usage error" test "$rc" == 64
+check "no --agent: nothing sent" nothing_sent
+check "no --agent: says how to call it" grep -q "usage: scripts/bot-token.sh --agent" <<<"$err"
+for a in ci antigravity "" CLAUDE; do
+  run -- --agent "$a" acme/hello
+  check "--agent [$a]: usage error, nothing sent" test "$rc" == 64 -a ! -s "$tmp/args"
+done
+run -- --agent claude acme/hello extra/repo
+check "two repos: usage error" test "$rc" == 64
 
-# A non-https broker URL never gets the identity.
-run "$with_sec" BOT_BROKER_URL=http://broker.test
-if [[ $rc != 0 && ! -s "$tmp/curl.hdrs" ]] && grep -q "https" <<<"$err"; then
-  pass "broker: refuses a non-https URL before sending anything"
-else
-  fail "broker: refuses a non-https URL before sending anything (rc $rc, err: $err)"
-fi
+# --- a token from the broker
+run -- --agent claude acme/hello
+check "prints the token" test "$rc" == 0 -a "$out" == from-broker
+check "posts to /token" grep -q "https://broker.test/token$" "$tmp/args"
+check "body is {repo, agent}" test "$(cat "$tmp/body")" == '{"repo":"acme/hello","agent":"claude"}'
+check "sends the identity as a bearer header" grep -qxF "Authorization: Bearer $ident" "$tmp/hdrs"
+# shellcheck disable=SC2329 # called through check
+lacks_ident() { ! grep -qF -e "$ident" "$@"; }
+check "identity never on the command line" lacks_ident "$tmp/args"
+check "no other source asked" test ! -s "$tmp/other"
 
-# 7. BOT_BROKER_URL overrides the saved URL; without an identity the broker is skipped.
-run "$with_sec" BOT_BROKER_URL=https://broker.test FAKE_BROKER_BODY='{"token":"via-env"}'
-if [[ "$out" == "via-env" ]]; then pass "broker: BOT_BROKER_URL works"; else fail "broker: BOT_BROKER_URL works (out [$out])"; fi
-rm -f "$tmp/.config/agent-bot/identity"
-run "$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a"
-if [[ $rc == 0 && "$out" == "ghs_test" ]] && jwt_signed_by "$tmp/a.pub"; then
-  pass "no identity: falls back to the Codespaces secret"
-else
-  fail "no identity: falls back to the Codespaces secret (rc $rc, out [$out])"
-fi
+run -- --agent agy acme/hello
+check "--agent agy is sent" test "$(jq -r .agent "$tmp/body")" == agy
 
-# 8. No BOT_APP_ID and the repo variable can't be read (a Codespace's own
-# token gets HTTP 403 on Actions variables): a clear hint, no token.
-mkdir -p "$tmp/gh403"
-cat >"$tmp/gh403/gh" <<'EOF'
-#!/usr/bin/env bash
-echo "failed to get variable BOT_APP_ID: HTTP 403: Resource not accessible by integration" >&2
-exit 1
-EOF
-chmod +x "$tmp/gh403/gh"
-run "$tmp/gh403:$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" BOT_APP_ID=
-if [[ $rc != 0 && -z "$out" ]] && grep -q "Codespaces secret BOT_APP_ID" <<<"$err" && grep -q "HTTP 403" <<<"$err"; then
-  pass "app ID unreadable: fails with the BOT_APP_ID hint"
+run -- --agent agy --json acme/hello
+check "--json: login and id from the broker" test "$(jq -c '[.token, .login, .id]' <<<"$out")" == '["from-broker","jomaries777-agy[bot]",42]'
+run FAKE_BODY='{"token":"old-broker","expires_at":"x"}' -- --agent agy --json acme/hello
+check "--json: a broker from before the cutover gives null login and id" test "$(jq -c '[.token, .login, .id]' <<<"$out")" == '["old-broker",null,null]'
+run FAKE_BODY='{"expires_at":"x"}' -- --agent claude acme/hello
+check "a 200 without a token fails" test "$rc" != 0 -a -z "$out"
+
+run BOT_BROKER_URL=https://env-broker.test -- --agent claude acme/hello
+check "BOT_BROKER_URL overrides the saved URL" grep -q "https://env-broker.test/token$" "$tmp/args"
+
+# --- refusals and outages: no fallback (criterion 7: "broker down, no fallback")
+run FAKE_CODE=403 FAKE_BODY='{"error":"wrong_owner"}' -- --agent claude acme/hello
+check "a refusal shows its error code" test "$rc" != 0 -a -z "$out"
+check "a refusal names the code" grep -q "refused: wrong_owner (HTTP 403)" <<<"$err"
+check "a refusal never prints the identity" lacks_ident <<<"$err"
+
+for case in "503" "fail"; do
+  if [[ "$case" == fail ]]; then run FAKE_CURL_FAIL=1 -- --agent claude acme/hello; else run FAKE_CODE=503 FAKE_BODY='{"error":"disabled"}' -- --agent claude acme/hello; fi
+  check "broker down, no fallback ($case): fails with no output" test "$rc" == 1 -a -z "$out"
+  check "broker down, no fallback ($case): says there is no other source" grep -q "unavailable.*no other token source" <<<"$err"
+  check "broker down, no fallback ($case): curl called exactly once" test "$(wc -l <"$tmp/args" | tr -d ' ')" == 1
+  check "broker down, no fallback ($case): security and gh never called" test ! -s "$tmp/other"
+done
+
+# --- refused before anything is sent
+run BOT_BROKER_URL=http://broker.test -- --agent claude acme/hello
+check "refuses a non-https URL before sending anything" test "$rc" != 0 -a ! -s "$tmp/args"
+run -- --agent claude "not a repo"
+check "refuses a repo that isn't owner/name before sending" test "$rc" != 0 -a ! -s "$tmp/args"
+rm "$tmp/.config/agent-bot/identity"
+run -- --agent claude acme/hello
+check "not signed in: clear error" grep -q "isn't signed in to the broker: run scripts/bot-login.sh" <<<"$err"
+check "not signed in: nothing sent, no other source asked" nothing_sent
+
+# --- criterion 7: no local key source left in the script
+if grep -qE 'Keychain|BOT_APP_KEY_B64|security find-generic-password' "$src/scripts/bot-token.sh"; then
+  fail "no local key source in bot-token.sh (criterion 7 grep)"
 else
-  fail "app ID unreadable: fails with the BOT_APP_ID hint (rc $rc, out [$out], err: $err)"
+  pass "no local key source in bot-token.sh (criterion 7 grep)"
 fi
-# The repo variable is still used when gh can read it.
-cat >"$tmp/gh403/gh" <<'EOF'
-#!/usr/bin/env bash
-echo "A new release of gh is available" >&2
-echo 4343
-EOF
-run "$tmp/gh403:$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" BOT_APP_ID=
-if [[ $rc == 0 && "$(jwt_iss)" == "4343" ]]; then pass "app ID from the repo variable, gh warnings ignored"; else fail "app ID from the repo variable, gh warnings ignored (rc $rc, err: $err)"; fi
-# BOT_APP_ID wins over the repo variable, and gh isn't needed when it's set.
-cat >"$tmp/gh403/gh" <<'EOF2'
-#!/usr/bin/env bash
-exit 1
-EOF2
-run "$tmp/gh403:$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" BOT_APP_ID=1234
-if [[ $rc == 0 && "$(jwt_iss)" == "1234" ]]; then pass "app ID from BOT_APP_ID first"; else fail "app ID from BOT_APP_ID first (rc $rc, err: $err)"; fi
-# A non-numeric ID is refused before anything is signed.
-run "$tmp/gh403:$with_sec" CODESPACES=true BOT_APP_KEY_B64="$key_a" BOT_APP_ID=abc
-if [[ $rc != 0 && -z "$out" && ! -s "$tmp/jwt" ]] && grep -q "must be a number" <<<"$err"; then pass "non-numeric app ID refused"; else fail "non-numeric app ID refused (rc $rc, err: $err)"; fi
 
 exit $((failures > 0))

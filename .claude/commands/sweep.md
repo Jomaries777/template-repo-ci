@@ -3,7 +3,7 @@ description: On a bot- or Claude-opened PR, fix unresolved review comments and f
 argument-hint: "[PR number]"
 ---
 
-Sweep PR $ARGUMENTS (default: the PR for the current branch). Use `GH_TOKEN="$(scripts/bot-token.sh)"` for every push and comment.
+Sweep PR $ARGUMENTS (default: the PR for the current branch). Use `GH_TOKEN="$(scripts/bot-token.sh --agent claude)"` for every push and comment.
 
 Refuse if the PR was not opened by the bot or by Claude.
 
