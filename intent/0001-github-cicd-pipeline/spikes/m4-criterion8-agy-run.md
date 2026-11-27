@@ -50,6 +50,7 @@ The app's own PR monitor (Auto-fix) can't be used for this. The app turns it on 
    - **What happened:** the summary says "files written: 0", although the agent changed `README.md`. `agy-events.sh` counts only `write_file` events, and agy 1.5.9 edited the existing file with `edit_file`. The Spike A fixtures have only `write_file`.
    - **Why the run still passed:** the gate uses `git diff`, not this count. But the "delegated work but no files written" warning could fire on a run that did change files.
    - **To fix:** count `edit_file` too, from a real `edit_file` event. A passed run deletes its `events.ndjson`, so the event shape has to come from the next run's stream, or from a run kept with the work directory.
+   - **Fixed** in #88. `agy-events.sh` counts `edit_file` too (same `Path` parameter), tested against `tests/fixtures/agy/edit.ndjson` from a real agy 1.5.18 run.
 3. **The whole `plan.md` goes into the prompt.**
    - **What happened:** the prompt was about 67,000 characters, nearly all of it `intent/0001-github-cicd-pipeline/plan.md`. A one-line README change used 138,000 tokens and 419 s. Spike A's trivial `/boost` used 26k tokens and 48 s.
    - **What it means:** this is by design (spec §4.8 sends the accepted plan). A long-lived plan makes every run cost more, though. Recorded, with no change proposed.
