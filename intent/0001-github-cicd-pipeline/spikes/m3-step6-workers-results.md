@@ -113,7 +113,7 @@ Spec §8 criterion 11: changing `target` in `deploy.yml` and running `make boots
    - during the Pages leg, both Workers still served `38cbab1`;
    - Pages still serves `e597cb4`.
 
-   `make doctor` checks only the active target, so nothing flags the stale copy. It costs $0 on both free plans, and it is what leg 2's baseline checked. The README says a switch is "No workflow changes", but not that the old host stays live. No fix yet.
+   `make doctor` checks only the active target, so nothing flags the stale copy. It costs $0 on both free plans, and it is what leg 2's baseline checked. The README said a switch is "No workflow changes", but not that the old host stays live. **Documented** in the README by agy PR #76 (2026-11-26, the criterion 8 run).
 8. **The advisory review reports a missing intent folder on sandbox PRs.** The Claude review marked "no `intent/NNNN-*/` folder" as Important on PRs #17, #19 and #20, but not on #16. Bootstrap deletes the template's `intent/` folders, so a new project has none until its first intent. The finding is noise there. No fix yet.
 
 ## Timings
