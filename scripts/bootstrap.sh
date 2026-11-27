@@ -34,6 +34,8 @@
 #                            else Keychain service "github-app-private-key"
 #                            (both base64; spec 0002 phase 1)
 #   BOT_APP_ID               env BOT_APP_ID, else a prompt
+# Prompts go to the terminal named by BOOTSTRAP_TTY (default /dev/tty); the
+# tests point it at nothing, so a test run never prompts whoever runs it.
 # Target settings come from the environment, e.g. for cloud-run:
 #   GCP_PROJECT_ID, BILLING_ACCOUNT, GCP_REGION (default us-central1),
 #   APP_NAME (default: the repo name).
@@ -315,16 +317,19 @@ if ! ((dry_run)); then
   names_dependabot="$(gh secret list --repo "$repo" --app dependabot --json name -q '.[].name' || true)"
 fi
 # ask <var> <prompt> [-s]: read a line from the terminal into <var>. The
-# prompt goes straight to /dev/tty (read -p would print it on stderr, which
-# the failure redirect hides). Fails if there is no terminal.
+# prompt goes straight to the terminal, $BOOTSTRAP_TTY or /dev/tty (read -p
+# would print it on stderr, which the failure redirect hides). Fails if there
+# is no terminal, or if $BOOTSTRAP_TTY isn't a character device: writing to
+# a missing path would create it as a file and read the prompt back.
 ask() {
-  local __var="$1" __prompt="$2" __silent="${3:-}" __v=""
-  { printf '%s' "$__prompt" >/dev/tty; } 2>/dev/null || return 1
+  local __var="$1" __prompt="$2" __silent="${3:-}" __v="" __tty="${BOOTSTRAP_TTY:-/dev/tty}"
+  [[ -c "$__tty" ]] || return 1
+  { printf '%s' "$__prompt" >"$__tty"; } 2>/dev/null || return 1
   if [[ "$__silent" == -s ]]; then
-    IFS= read -r -s __v </dev/tty || return 1
-    printf '\n' >/dev/tty
+    IFS= read -r -s __v <"$__tty" || return 1
+    printf '\n' >"$__tty"
   else
-    IFS= read -r __v </dev/tty || return 1
+    IFS= read -r __v <"$__tty" || return 1
   fi
   printf -v "$__var" '%s' "$__v"
 }
