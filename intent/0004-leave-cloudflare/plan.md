@@ -180,7 +180,7 @@ The tasks start during M3. The bot PR merges only after criterion 13 is recorded
 
 | Milestone | Status | PRs |
 |---|---|---|
-| M0: spikes ‖ server adapter | Not started | – |
+| M0: spikes ‖ server adapter | S1–S3 done 2026-11-28 ([results](spikes/s1-s3-results.md)); gate with the owner (image size, budget). 0a on `agy/0004-leave-cloudflare`, for the M1 PR | – |
 | M1: broker build | Not started | – |
 | M2: cutover, with 0003 M3 | Not started | – |
 | M3: Workers sandbox | Not started | – |
