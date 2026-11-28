@@ -222,8 +222,15 @@ broker_enabled() {
 }
 if ((broker)); then
   expect "bot token broker answers and is enabled" \
-    "check ${broker_url%/}/healthz; the kill switch is BROKER_ENABLED in broker/wrangler.toml (broker/README.md)" \
+    "check ${broker_url%/}/healthz; if the owner turned the kill switch on, they run broker/deploy.sh --enable (broker/README.md)" \
     quiet broker_enabled
+fi
+# FR-9 (spec 0004): devices still signed in to the old Workers broker.
+broker_host="${broker_url#*://}"
+broker_host="${broker_host%%/*}"
+if [[ -n "$broker_url" ]] && grep -qiE '(^|\.)workers\.dev$' <<<"$broker_host"; then
+  warn "broker URL is on workers.dev: $broker_host" \
+    "sign in to the Cloud Run broker: scripts/bot-login.sh --broker https://<service URL> (broker/README.md)"
 fi
 if ((broker)) && [[ -x "$bot_check" ]]; then
   expect "bot App installed (claude: $claude_slug) on $repo" \

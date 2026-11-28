@@ -264,6 +264,19 @@ out="$(BOT_CONFIG_DIR="$tmp/botcfg" PATH="$tmp/bin:/usr/bin:/bin" HEALTH_ENABLED
   DOCTOR_HEALTHZ="$tmp/healthz" DOCTOR_BOT_CHECK="$tmp/bot-check" "$none_proj/scripts/doctor.sh" --repo acme/hello 2>&1)" || rc=$?
 has "broker kill switch on: fails" "FAIL  bot token broker answers and is enabled"
 if [[ "$rc" != 0 ]]; then pass "broker kill switch on: exit non-zero"; else fail "broker kill switch on: exit non-zero"; fi
+has "broker kill switch on: hint names deploy.sh --enable" "broker/deploy.sh --enable"
+
+# FR-9 (spec 0004): a broker URL still on workers.dev gets a warning.
+for u in "https://agent-bot-broker.example.workers.dev" "https://BROKER.example.WORKERS.DEV/"; do
+  rc=0
+  out="$(BOT_CONFIG_DIR="$tmp/botcfg" BOT_BROKER_URL="$u" PATH="$tmp/bin:/usr/bin:/bin" BOT_CHECK_LOG="$tmp/bot-check.log" \
+    DOCTOR_HEALTHZ="$tmp/healthz" DOCTOR_BOT_CHECK="$tmp/bot-check" "$none_proj/scripts/doctor.sh" --repo acme/hello 2>&1)" || rc=$?
+  has "workers.dev broker URL ($u): warns" "WARN  broker URL is on workers.dev"
+done
+rc=0
+out="$(BOT_CONFIG_DIR="$tmp/botcfg" BOT_BROKER_URL="https://agent-bot-broker-123456.us-west1.run.app" PATH="$tmp/bin:/usr/bin:/bin" \
+  BOT_CHECK_LOG="$tmp/bot-check.log" DOCTOR_HEALTHZ="$tmp/healthz" DOCTOR_BOT_CHECK="$tmp/bot-check" "$none_proj/scripts/doctor.sh" --repo acme/hello 2>&1)" || rc=$?
+if grep -q "workers.dev" <<<"$out"; then fail "run.app broker URL: no workers.dev warning"; else pass "run.app broker URL: no workers.dev warning"; fi
 
 rc=0
 out="$(BOT_CONFIG_DIR="$tmp/botcfg" PATH="$tmp/bin:/usr/bin:/bin" BOT_CHECK_FAIL_AGENT=agy BOT_CHECK_LOG="$tmp/bot-check.log" \

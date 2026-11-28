@@ -21,10 +21,14 @@
       "Bash(scripts/deploy.sh revert:*)",
       "Bash(gcloud run services update-traffic*)",
       "Bash(gcloud run services update-traffic:*)",
-      "Bash(wrangler versions deploy*)",
-      "Bash(wrangler versions deploy:*)",
-      "Bash(wrangler rollback*)",
-      "Bash(wrangler rollback:*)"
+      "Bash(gcloud secrets versions access*)",
+      "Bash(gcloud secrets versions access:*)",
+      "Bash(broker/setup.sh*)",
+      "Bash(broker/setup.sh:*)",
+      "Bash(broker/put-secret.sh*)",
+      "Bash(broker/put-secret.sh:*)",
+      "Bash(broker/deploy.sh*)",
+      "Bash(broker/deploy.sh:*)"
     ]
   },
   "hooks": {

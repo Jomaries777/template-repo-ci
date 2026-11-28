@@ -62,6 +62,40 @@ expect "secrets: bash clean command allowed" 0 "$s" \
   '{"tool_name":"Bash","tool_input":{"command":"make lint test"}}' A=1
 expect "secrets: empty allowed" 0 "$s" '{"tool_input":{"file_path":"a"}}' A=1
 
+# no-secrets: the broker project guard (spec 0004 C10, amended at planning).
+# Only Bash commands are checked, and only words in command position.
+bash_cmd() { jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}'; }
+bp="agent-bot-broker-x1y2"
+for c in \
+  "gcloud secrets versions access 3 --secret claude-key --project p" \
+  "echo hi && gcloud secrets versions access latest --secret x" \
+  "broker/put-secret.sh claude-key ~/k.pem" \
+  "./broker/deploy.sh --disable" \
+  "DRY_RUN=1 broker/setup.sh $bp" \
+  "bash broker/deploy.sh" \
+  "cd x; broker/setup.sh" \
+  "gcloud run services describe agent-bot-broker --project $bp --region us-west1" \
+  "gcloud projects describe $bp" \
+  "CLOUDSDK_CORE_PROJECT=$bp gcloud run services list" \
+  "out=\$(gcloud secrets list --project $bp)" \
+  "gsutil ls gs://run-sources-$bp-us-west1" \
+  "bq ls --project_id $bp" \
+  "true | gcloud logging read x --project $bp"; do
+  expect "broker guard: blocks: $c" 2 "$s" "$(bash_cmd "$c")" A=1
+done
+for c in \
+  "make lint FILE=broker/setup.sh" \
+  "git add broker/deploy.sh broker/put-secret.sh" \
+  "shellcheck broker/setup.sh" \
+  "curl -s https://agent-bot-broker-123456.us-west1.run.app/healthz" \
+  "gcloud run services list --project agent-bot-spike-test" \
+  "gcloud secrets list --project other-project" \
+  "tests/scripts/test_broker_deploy.sh"; do
+  expect "broker guard: allows: $c" 0 "$s" "$(bash_cmd "$c")" A=1
+done
+expect "broker guard: Write content naming the project allowed" 0 "$s" \
+  "$(edit broker/setup.sh "gcloud run deploy agent-bot-broker --project \"\$P\"")" A=1
+
 # test-first: real git path (merge-base + rev-list) in a temp repo
 tf_repo="$(mktemp -d)"
 trap 'rm -rf "$tf_repo"' EXIT
