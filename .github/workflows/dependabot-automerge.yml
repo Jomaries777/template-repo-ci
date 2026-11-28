@@ -60,11 +60,14 @@ jobs:
           INTERVAL: 30
         run: |
           # The newest ci-ok run (highest id) decides; a re-run adds a new one.
+          # Only runs from GitHub Actions (app 15368) count, the same source
+          # the main ruleset requires: the agent Apps have `checks` write and
+          # could post a ci-ok of their own.
           # No run yet, or one not completed, counts as pending. An API error
           # counts as pending too, so one bad poll doesn't fail the job.
           for ((i = 1; i <= TRIES; i++)); do
             latest="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?check_name=ci-ok&per_page=100" \
-              --jq '[.check_runs[]] | max_by(.id) // empty | "\(.status) \(.conclusion)"')" || latest=""
+              --jq '[.check_runs[] | select(.app.id == 15368)] | max_by(.id) // empty | "\(.status) \(.conclusion)"')" || latest=""
             read -r status conclusion <<<"$latest" || true
             if [[ "${status:-}" == completed ]]; then
               echo "conclusion=$conclusion" >>"$GITHUB_OUTPUT"

@@ -272,6 +272,14 @@ jobs:
           # its comments count; a marker from anyone else is ignored.
           BOT_LOGIN: ${{ vars.CLAUDE_APP_SLUG }}[bot]
         run: |
+          # Without the slug the count below would match nothing and the cap
+          # would never trip, so skip the review and say why.
+          if [[ "$BOT_LOGIN" == "[bot]" ]]; then
+            echo "::error title=claude-review::CLAUDE_APP_SLUG is not set; run make bootstrap"
+            echo "run=false" >>"$GITHUB_OUTPUT"
+            echo "reason=no-slug" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
           # Each automatic review comment starts with the hidden marker
           # <!-- claude-review -->. Skip notices use a different marker.
           count="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
@@ -342,13 +350,13 @@ jobs:
             --allowedTools "Read,Grep,Glob,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
       # Not AI: stays github-actions[bot] (spec 0003 C8).
       - name: Explain a skipped review
-        if: steps.app.outcome == 'failure' || steps.claude.outcome == 'failure'
+        if: steps.quota.outputs.reason == 'no-slug' || steps.app.outcome == 'failure' || steps.claude.outcome == 'failure'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           body="<!-- claude-review-skipped -->
-          Claude review didn't run. The reason is in the [claude-review job log]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) (for example the Claude Pro limit, an expired \`CLAUDE_CODE_OAUTH_TOKEN\`, a missing Claude App key \`CLAUDE_APP_PRIVATE_KEY\`, or an actor the action refuses). Comment \`@claude review\` to try again."
+          Claude review didn't run. The reason is in the [claude-review job log]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) (for example the Claude Pro limit, an expired \`CLAUDE_CODE_OAUTH_TOKEN\`, a missing Claude App key \`CLAUDE_APP_PRIVATE_KEY\` or variable \`CLAUDE_APP_SLUG\`, or an actor the action refuses). Comment \`@claude review\` to try again."
           gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
 
   # The only required status check. Skipped jobs pass; failed or cancelled fail.
