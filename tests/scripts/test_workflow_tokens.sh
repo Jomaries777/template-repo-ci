@@ -814,6 +814,7 @@ mkdir -p "$tmp/fakebin"
 cat >"$tmp/fakebin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'call\n' >>"${CAP_GH_CALLS_LOG:-/dev/null}"
 [[ "${1:-}" == "api" ]] || { echo "fake gh: unsupported subcommand: ${1:-}" >&2; exit 2; }
 shift
 jq_expr=""
@@ -864,8 +865,12 @@ run_cap_step() {
   local script_file="$tmp/cap_step.sh"
   local out_file="$tmp/cap_github_output"
   local sum_file="$tmp/cap_github_summary"
+  local calls_file="$tmp/cap_gh_calls.log"
+  CAP_OUT_FILE="$tmp/cap_stdout"
   : >"$out_file"
   : >"$sum_file"
+  : >"$calls_file"
+  : >"$CAP_OUT_FILE"
 
   local env_file="$tmp/cap_env.sh"
   local env_kv_file="$tmp/cap_env.kv"
@@ -918,22 +923,95 @@ run_cap_step() {
     export GITHUB_OUTPUT="$out_file"
     export GITHUB_STEP_SUMMARY="$sum_file"
     export FIXTURE_COMMENTS_JSON="$fixture"
+    export CAP_GH_CALLS_LOG="$calls_file"
     # shellcheck disable=SC1090
     source "$env_file"
     # GitHub Actions Linux `run:` steps use `bash -eo pipefail` (not `-u`).
-    bash -eo pipefail "$script_file" </dev/null >/dev/null 2>"$tmp/cap_err"
+    bash -eo pipefail "$script_file" </dev/null >"$CAP_OUT_FILE" 2>"$tmp/cap_err"
   ) || CAP_RC=$?
   CAP_RUN_VAL="$(awk -F= '$1 == "run" { val = $2 } END { print val }' "$out_file")"
+  CAP_REASON_VAL="$(awk -F= '$1 == "reason" { val = $2 } END { print val }' "$out_file")"
+  CAP_GH_CALLS="$(wc -l <"$calls_file" | tr -d '[:space:]')"
+}
+
+# top_level_or_alternatives <gha_expr>: prints each top-level `||` alternative on
+# its own line (quotes and parentheses respected), `${{ }}` wrapper removed,
+# whitespace collapsed, and fully-wrapping outer parentheses stripped.
+top_level_or_alternatives() {
+  awk '
+    function wrapped(t,   i, n, c, d, q) {
+      n = length(t)
+      if (substr(t, 1, 1) != "(" || substr(t, n, 1) != ")") return 0
+      d = 0; q = ""
+      for (i = 1; i <= n; i++) {
+        c = substr(t, i, 1)
+        if (q != "") { if (c == q) q = ""; continue }
+        if (c == "\047" || c == "\"") { q = c; continue }
+        if (c == "(") d++
+        else if (c == ")") { d--; if (d == 0 && i < n) return 0 }
+      }
+      return 1
+    }
+    function emit(t) {
+      gsub(/[ \t]+/, " ", t)
+      sub(/^ /, "", t)
+      sub(/ $/, "", t)
+      while (wrapped(t)) {
+        t = substr(t, 2, length(t) - 2)
+        sub(/^ /, "", t)
+        sub(/ $/, "", t)
+      }
+      print t
+    }
+    {
+      s = $0
+      sub(/^[ \t]*\$[{][{][ \t]*/, "", s)
+      sub(/[ \t]*[}][}][ \t]*$/, "", s)
+      in_sq = 0; in_dq = 0; depth = 0; seg = ""
+      n = length(s)
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (c == "\047" && !in_dq) in_sq = !in_sq
+        else if (c == "\"" && !in_sq) in_dq = !in_dq
+        else if (!in_sq && !in_dq) {
+          if (c == "(") depth++
+          else if (c == ")" && depth > 0) depth--
+          else if (depth == 0 && c == "|" && i < n && substr(s, i + 1, 1) == "|") {
+            emit(seg); seg = ""; i++; continue
+          }
+        }
+        seg = seg c
+      }
+      emit(seg)
+    }
+  ' <<<"$1"
+}
+
+# is_top_level_or_alternative <gha_expr> <alternative>: true if <alternative>
+# (whitespace-normalised, exact) is one of the expression top-level `||` alternatives.
+is_top_level_or_alternative() {
+  local expr="$1" want alt
+  want="$(tr -s ' \t' ' ' <<<"$2")"
+  while IFS= read -r alt; do
+    [[ "$alt" == "$want" ]] && return 0
+  done < <(top_level_or_alternatives "$expr")
+  return 1
 }
 
 check_review_cap() {
   local c_only="cap counts only CLAUDE_APP_SLUG"
   local c_others="marker from others ignored"
+  local c_noslug="cap step with empty CLAUDE_APP_SLUG writes run=false reason=no-slug, calls gh zero times and reports ::error naming CLAUDE_APP_SLUG"
+  local c_slug_ok="cap step with a non-empty CLAUDE_APP_SLUG does not write reason=no-slug"
+  local c_skip_if="skip-notice step if has steps.quota.outputs.reason == 'no-slug' as a top-level || alternative"
   local file="$workflows/pr.yml"
 
   if [[ ! -f "$file" ]]; then
     fail "$c_only (missing file: $file)"
     fail "$c_others (missing file: $file)"
+    fail "$c_noslug (missing file: $file)"
+    fail "$c_slug_ok (missing file: $file)"
+    fail "$c_skip_if (missing file: $file)"
     return
   fi
 
@@ -942,26 +1020,47 @@ check_review_cap() {
   if [[ -z "$job_block" ]]; then
     fail "$c_only (missing job: claude-review)"
     fail "$c_others (missing job: claude-review)"
+    fail "$c_noslug (missing job: claude-review)"
+    fail "$c_slug_ok (missing job: claude-review)"
+    fail "$c_skip_if (missing job: claude-review)"
     return
   fi
 
   local steps_dir="$tmp/steps_cap"
-  local nsteps i step_text step_id step_run cap_step="" cap_run=""
+  local nsteps i step_text step_id step_run cap_step="" cap_run="" skip_step=""
   nsteps="$(split_job_steps "$job_block" "$steps_dir")"
   for ((i = 1; i <= nsteps; i++)); do
     step_text="$(cat "$steps_dir/$i")"
     step_id="$(extract_scalar_or_block_field "$step_text" id)"
     step_run="$(extract_run_body "$step_text")"
+    if [[ -z "$skip_step" ]] && grep -qF "<!-- claude-review-skipped -->" <<<"$step_run"; then
+      skip_step="$step_text"
+    fi
+    [[ -z "$cap_step" ]] || continue
     if [[ -n "$step_run" ]] && { grep -qF "<!-- claude-review -->" <<<"$step_text" || [[ "$step_id" == "quota" ]]; }; then
       cap_step="$step_text"
       cap_run="$step_run"
-      break
     fi
   done
+
+  # A3 (static): skip-notice step runs when the quota step reports no-slug.
+  if [[ -z "$skip_step" ]]; then
+    fail "$c_skip_if (no step with <!-- claude-review-skipped --> in its run body)"
+  else
+    local skip_if
+    skip_if="$(extract_scalar_or_block_field "$skip_step" if)"
+    if is_top_level_or_alternative "$skip_if" "steps.quota.outputs.reason == 'no-slug'"; then
+      pass "$c_skip_if"
+    else
+      fail "$c_skip_if (got if: ${skip_if:-<unset>})"
+    fi
+  fi
 
   if [[ -z "$cap_step" || -z "$cap_run" ]]; then
     fail "$c_only (no review-cap step found in claude-review)"
     fail "$c_others (no review-cap step found in claude-review)"
+    fail "$c_noslug (no review-cap step found in claude-review)"
+    fail "$c_slug_ok (no review-cap step found in claude-review)"
     return
   fi
 
@@ -1061,6 +1160,26 @@ EOF
     pass "$c_others"
   else
     fail "$c_others (uses_slug=$uses_slug rc=$CAP_RC run=$CAP_RUN_VAL [want 1/0/true]; err=$(cat "$tmp/cap_err" 2>/dev/null || true))"
+  fi
+
+  # A2: with a non-empty slug the no-slug reason is never written.
+  run_cap_step "$combined_env" "$step_env" "$cap_run" "$test_slug" "$tmp/fix_others.json"
+  if [[ "$CAP_RC" -eq 0 && "$CAP_REASON_VAL" != "no-slug" ]]; then
+    pass "$c_slug_ok"
+  else
+    fail "$c_slug_ok (rc=$CAP_RC reason=$CAP_REASON_VAL [want 0/not no-slug]; err=$(cat "$tmp/cap_err" 2>/dev/null || true))"
+  fi
+
+  # A1: empty slug -> run=false reason=no-slug, gh never called, ::error naming CLAUDE_APP_SLUG.
+  printf '[]\n' >"$tmp/fix_empty.json"
+  run_cap_step "$combined_env" "$step_env" "$cap_run" "" "$tmp/fix_empty.json"
+  local ns_msgs
+  ns_msgs="$(cat "$CAP_OUT_FILE" "$tmp/cap_err" 2>/dev/null || true)"
+  if [[ "$CAP_RC" -eq 0 && "$CAP_RUN_VAL" == "false" && "$CAP_REASON_VAL" == "no-slug" && "$CAP_GH_CALLS" -eq 0 ]] \
+    && grep -qF '::error' <<<"$ns_msgs" && grep -qF 'CLAUDE_APP_SLUG' <<<"$ns_msgs"; then
+    pass "$c_noslug"
+  else
+    fail "$c_noslug (rc=$CAP_RC run=$CAP_RUN_VAL reason=$CAP_REASON_VAL gh_calls=$CAP_GH_CALLS [want 0/false/no-slug/0]; output=$(tr '\n' ' ' <<<"$ns_msgs"))"
   fi
 }
 
@@ -1607,6 +1726,9 @@ check_dependabot_automerge() {
   local c_wait_d="dependabot-automerge wait step: empty check_runs on every poll writes conclusion=timeout after 3 polls and exits 0"
   local c_wait_e="dependabot-automerge wait step: highest check-run id wins (id 1 success, id 2 failure -> conclusion=failure)"
   local c_wait_f="dependabot-automerge wait step: gh call names stub head SHA and check_name=ci-ok with github.token"
+  local c_wait_g="dependabot-automerge wait step: ci-ok run from another app is ignored even when newer (github-actions failure id 2, acme-claude success id 3 -> conclusion=failure)"
+  local c_wait_h="dependabot-automerge wait step: only a ci-ok run from another app on every poll writes conclusion=timeout after 3 polls and exits 0"
+  local c_wait_id="dependabot-automerge wait step: run body contains the ci-ok integration_id from .github/rulesets/main.json"
   local c_mint="dependabot-automerge: mints CI App token with pinned action, CI_APP_*, permissions and ci_ok gate"
   local c_merge="dependabot-automerge: merges after ci_ok with --squash, --match-head-commit, CI token and never --auto"
 
@@ -1623,6 +1745,9 @@ check_dependabot_automerge() {
     fail "$c_wait_d (missing file: $file)"
     fail "$c_wait_e (missing file: $file)"
     fail "$c_wait_f (missing file: $file)"
+    fail "$c_wait_g (missing file: $file)"
+    fail "$c_wait_h (missing file: $file)"
+    fail "$c_wait_id (missing file: $file)"
     fail "$c_mint (missing file: $file)"
     fail "$c_merge (missing file: $file)"
     return
@@ -1657,6 +1782,9 @@ check_dependabot_automerge() {
     fail "$c_wait_d (no job found in $file)"
     fail "$c_wait_e (no job found in $file)"
     fail "$c_wait_f (no job found in $file)"
+    fail "$c_wait_g (no job found in $file)"
+    fail "$c_wait_h (no job found in $file)"
+    fail "$c_wait_id (no job found in $file)"
     fail "$c_mint (no job found in $file)"
     fail "$c_merge (no job found in $file)"
     return
@@ -1848,12 +1976,15 @@ check_dependabot_automerge() {
     fail "$c_wait_d (no ci_ok wait step)"
     fail "$c_wait_e (no ci_ok wait step)"
     fail "$c_wait_f (no ci_ok wait step)"
+    fail "$c_wait_g (no ci_ok wait step)"
+    fail "$c_wait_h (no ci_ok wait step)"
+    fail "$c_wait_id (no ci_ok wait step)"
   else
     # Case a: first poll: one ci-ok run, completed/success -> conclusion=success, gh called once, no sleep.
     local dir_a="$tmp/wait_fix_a"
     mkdir -p "$dir_a"
     cat >"$dir_a/1.json" <<'EOF'
-{"total_count":1,"check_runs":[{"id":101,"name":"ci-ok","status":"completed","conclusion":"success"}]}
+{"total_count":1,"check_runs":[{"id":101,"name":"ci-ok","status":"completed","conclusion":"success","app":{"id":15368,"slug":"github-actions"}}]}
 EOF
     run_wait_step "$wf_env" "$job_env" "$wait_env" "$wait_run" "$dir_a"
     if [[ "$WAIT_RC" -eq 0 && "$WAIT_CONCLUSION" == "success" && "$WAIT_GH_CALLS" -eq 1 && "$WAIT_SLEEP_CALLS" -eq 0 ]]; then
@@ -1866,7 +1997,7 @@ EOF
     local dir_b="$tmp/wait_fix_b"
     mkdir -p "$dir_b"
     cat >"$dir_b/1.json" <<'EOF'
-{"total_count":1,"check_runs":[{"id":102,"name":"ci-ok","status":"completed","conclusion":"failure"}]}
+{"total_count":1,"check_runs":[{"id":102,"name":"ci-ok","status":"completed","conclusion":"failure","app":{"id":15368,"slug":"github-actions"}}]}
 EOF
     run_wait_step "$wf_env" "$job_env" "$wait_env" "$wait_run" "$dir_b"
     if [[ "$WAIT_RC" -eq 0 && "$WAIT_CONCLUSION" == "failure" && "$WAIT_GH_CALLS" -eq 1 && "$WAIT_SLEEP_CALLS" -eq 0 ]]; then
@@ -1879,10 +2010,10 @@ EOF
     local dir_c="$tmp/wait_fix_c"
     mkdir -p "$dir_c"
     cat >"$dir_c/1.json" <<'EOF'
-{"total_count":1,"check_runs":[{"id":103,"name":"ci-ok","status":"in_progress","conclusion":null}]}
+{"total_count":1,"check_runs":[{"id":103,"name":"ci-ok","status":"in_progress","conclusion":null,"app":{"id":15368,"slug":"github-actions"}}]}
 EOF
     cat >"$dir_c/2.json" <<'EOF'
-{"total_count":1,"check_runs":[{"id":103,"name":"ci-ok","status":"completed","conclusion":"success"}]}
+{"total_count":1,"check_runs":[{"id":103,"name":"ci-ok","status":"completed","conclusion":"success","app":{"id":15368,"slug":"github-actions"}}]}
 EOF
     run_wait_step "$wf_env" "$job_env" "$wait_env" "$wait_run" "$dir_c"
     if [[ "$WAIT_RC" -eq 0 && "$WAIT_CONCLUSION" == "success" && "$WAIT_GH_CALLS" -eq 2 && "$WAIT_SLEEP_CALLS" -eq 1 ]]; then
@@ -1909,10 +2040,10 @@ EOF
     local dir_e1="$tmp/wait_fix_e1" dir_e2="$tmp/wait_fix_e2"
     mkdir -p "$dir_e1" "$dir_e2"
     cat >"$dir_e1/1.json" <<'EOF'
-{"total_count":2,"check_runs":[{"id":1,"name":"ci-ok","status":"completed","conclusion":"success"},{"id":2,"name":"ci-ok","status":"completed","conclusion":"failure"}]}
+{"total_count":2,"check_runs":[{"id":1,"name":"ci-ok","status":"completed","conclusion":"success","app":{"id":15368,"slug":"github-actions"}},{"id":2,"name":"ci-ok","status":"completed","conclusion":"failure","app":{"id":15368,"slug":"github-actions"}}]}
 EOF
     cat >"$dir_e2/1.json" <<'EOF'
-{"total_count":2,"check_runs":[{"id":2,"name":"ci-ok","status":"completed","conclusion":"failure"},{"id":1,"name":"ci-ok","status":"completed","conclusion":"success"}]}
+{"total_count":2,"check_runs":[{"id":2,"name":"ci-ok","status":"completed","conclusion":"failure","app":{"id":15368,"slug":"github-actions"}},{"id":1,"name":"ci-ok","status":"completed","conclusion":"success","app":{"id":15368,"slug":"github-actions"}}]}
 EOF
     run_wait_step "$wf_env" "$job_env" "$wait_env" "$wait_run" "$dir_e1"
     local e1_rc="$WAIT_RC" e1_concl="$WAIT_CONCLUSION" e1_gh="$WAIT_GH_CALLS" e1_sl="$WAIT_SLEEP_CALLS"
@@ -1949,6 +2080,45 @@ EOF
       pass "$c_wait_f"
     else
       fail "$c_wait_f ($f_errs)"
+    fi
+
+    # Case g: a newer ci-ok run from another app is ignored; the github-actions run decides.
+    local dir_g="$tmp/wait_fix_g"
+    mkdir -p "$dir_g"
+    cat >"$dir_g/1.json" <<'EOF'
+{"total_count":2,"check_runs":[{"id":2,"name":"ci-ok","status":"completed","conclusion":"failure","app":{"id":15368,"slug":"github-actions"}},{"id":3,"name":"ci-ok","status":"completed","conclusion":"success","app":{"id":99,"slug":"acme-claude"}}]}
+EOF
+    run_wait_step "$wf_env" "$job_env" "$wait_env" "$wait_run" "$dir_g"
+    if [[ "$WAIT_RC" -eq 0 && "$WAIT_CONCLUSION" == "failure" ]]; then
+      pass "$c_wait_g"
+    else
+      fail "$c_wait_g (rc=$WAIT_RC conclusion=$WAIT_CONCLUSION gh_calls=$WAIT_GH_CALLS [want 0/failure]; err=$(cat "$WAIT_ERR_FILE" 2>/dev/null || true))"
+    fi
+
+    # Case h: only another app's ci-ok run on every poll -> conclusion=timeout after 3 polls.
+    local dir_h="$tmp/wait_fix_h"
+    mkdir -p "$dir_h"
+    cat >"$dir_h/1.json" <<'EOF'
+{"total_count":1,"check_runs":[{"id":5,"name":"ci-ok","status":"completed","conclusion":"success","app":{"id":99,"slug":"acme-claude"}}]}
+EOF
+    run_wait_step "$wf_env" "$job_env" "$wait_env" "$wait_run" "$dir_h"
+    if [[ "$WAIT_RC" -eq 0 && "$WAIT_CONCLUSION" == "timeout" && "$WAIT_GH_CALLS" -eq 3 ]]; then
+      pass "$c_wait_h"
+    else
+      fail "$c_wait_h (rc=$WAIT_RC conclusion=$WAIT_CONCLUSION gh_calls=$WAIT_GH_CALLS [want 0/timeout/3]; err=$(cat "$WAIT_ERR_FILE" 2>/dev/null || true))"
+    fi
+
+    # Static: the run body names the integration id the ruleset requires for ci-ok.
+    local ruleset="$root/.github/rulesets/main.json" integ_id=""
+    if [[ -f "$ruleset" ]]; then
+      integ_id="$(jq -r '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[] | select(.context=="ci-ok") | .integration_id][0] // empty' "$ruleset" 2>/dev/null || true)"
+    fi
+    if [[ ! "$integ_id" =~ ^[0-9]+$ ]]; then
+      fail "$c_wait_id (cannot read ci-ok integration_id from $ruleset)"
+    elif grep -Eq "(^|[^A-Za-z0-9_])${integ_id}([^A-Za-z0-9_]|$)" <<<"$wait_run"; then
+      pass "$c_wait_id"
+    else
+      fail "$c_wait_id (run body does not contain integration id $integ_id)"
     fi
   fi
 
