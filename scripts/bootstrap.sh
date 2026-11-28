@@ -7,10 +7,9 @@
 #                             [--skip-bot-key]
 #   --dry-run       print the file changes and every remote call; change nothing
 #   --local-only    change the files only: no git, GitHub or cloud calls
-#   --skip-bot-key  don't set the bot App key secrets (for a machine with no
-#                   key source: no Mac Keychain, and a Codespace without the
-#                   BOT_APP_KEY_B64 secret); add them later with the commands
-#                   bootstrap prints. Only Dependabot auto-merge needs them.
+#   --skip-bot-key  don't set the App key secrets (for a machine not signed in
+#                   to the broker); add them later with the commands bootstrap
+#                   prints.
 #
 # Run it from the new project's clone, logged in with `gh` as the owner.
 #
@@ -25,15 +24,15 @@
 #    protection (a brand-new repo, run by its owner: the one exception to
 #    "never push to main"), otherwise push a branch and open a PR. The push
 #    starts the first deploy, so it waits until 3 and 4 are done.
-# 6. GitHub: scripts/gh-settings.sh (repo settings and the ruleset).
+# 6. GitHub: scripts/gh-settings.sh (repo settings and rulesets).
 #
 # Secrets are read from the macOS Keychain or a hidden prompt and piped to
 # `gh secret set`; they are never written to disk or printed.
 #   CLAUDE_CODE_OAUTH_TOKEN  Keychain service "claude-code-oauth-token"
-#   BOT_APP_PRIVATE_KEY      in a Codespace, the Codespaces secret BOT_APP_KEY_B64;
-#                            else Keychain service "github-app-private-key"
-#                            (both base64; spec 0002 phase 1)
-#   BOT_APP_ID               env BOT_APP_ID, else a prompt
+#   CLAUDE_APP_PRIVATE_KEY   set via scripts/bot-secrets.sh --key claude
+#   CI_APP_PRIVATE_KEY       set via scripts/bot-secrets.sh --key ci
+#   CLAUDE_APP_ID, CI_APP_ID env first, else repo variable, else a prompt
+#   CLAUDE_APP_SLUG          computed via scripts/app-manifest.sh --name
 # Prompts go to the terminal named by BOOTSTRAP_TTY (default /dev/tty); the
 # tests point it at nothing, so a test run never prompts whoever runs it.
 # Target settings come from the environment, e.g. for cloud-run:
@@ -49,13 +48,22 @@ local_only=0
 skip_bot_key=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --stack) stack="${2:-}"; shift 2 ;;
-    --target) target="${2:-}"; shift 2 ;;
-    --repo) repo="${2:-}"; shift 2 ;;
+    --stack)
+      [[ $# -ge 2 ]] || { echo "bootstrap: missing argument for $1" >&2; exit 64; }
+      stack="$2"; shift 2
+      ;;
+    --target)
+      [[ $# -ge 2 ]] || { echo "bootstrap: missing argument for $1" >&2; exit 64; }
+      target="$2"; shift 2
+      ;;
+    --repo)
+      [[ $# -ge 2 ]] || { echo "bootstrap: missing argument for $1" >&2; exit 64; }
+      repo="$2"; shift 2
+      ;;
     --dry-run) dry_run=1; shift ;;
     --local-only) local_only=1; shift ;;
     --skip-bot-key) skip_bot_key=1; shift ;;
-    -h | --help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,40p' "$0"; exit 0 ;;
     *) echo "bootstrap: unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -113,7 +121,7 @@ else
   owner="${repo%%/*}"
 fi
 [[ -z "$repo" || "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || usage_error "invalid --repo: $repo"
-[[ "$owner" =~ ^[A-Za-z0-9-]+$ ]] || usage_error "invalid owner: $owner"
+[[ "$owner" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || usage_error "invalid owner: $owner"
 name="${repo#*/}"
 name="${name:-$(basename "$root")}"
 
@@ -374,76 +382,64 @@ claude_token() {
   fi
   printf '%s' "${v//[[:space:]]/}"
 }
-# bot_key: the decoded App key. BOT_APP_KEY_B64 counts only in a Codespace,
-# so the key isn't encouraged into ordinary env files (same rule as
-# bot-token.sh). The value is checked but never printed.
-bot_key() {
-  local v pem
-  if [[ "${CODESPACES:-}" == "true" && -n "${BOT_APP_KEY_B64:-}" ]]; then
-    v="$BOT_APP_KEY_B64"
-  else
-    v="$(keychain github-app-private-key)"
-  fi
-  [[ -n "$v" ]] || die "bot App key not found. In a Codespace: add the Codespaces secret BOT_APP_KEY_B64 (github.com/settings/codespaces) and restart it. On a Mac: store it in the Keychain (service github-app-private-key). Or rerun with --skip-bot-key"
-  pem="$(base64 -d <<<"$v" 2>/dev/null)" || die "the bot App key isn't valid base64"
-  [[ "$pem" == -----BEGIN* ]] || die "the bot App key isn't a PEM private key"
-  printf '%s' "$pem"
-}
+# App keys come only from the broker via scripts/bot-secrets.sh (spec 0003
+# FR-9, D6); no local key files, Keychain entries or Codespaces env vars.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+claude_app_slug="$("$script_dir/app-manifest.sh" --name "$owner" claude)"
+agy_app_slug="$("$script_dir/app-manifest.sh" --name "$owner" agy)"
+ci_app_slug="$("$script_dir/app-manifest.sh" --name "$owner" ci)"
+
 set_secret CLAUDE_CODE_OAUTH_TOKEN actions claude_token
 # Record when the token was set, for the renewal check in sdlc-metrics.sh
 # (spec §4.12). Only when it was written: a rerun keeps the original date.
 if ((secret_written)); then
   run gh variable set CLAUDE_CODE_OAUTH_TOKEN_SET_AT --repo "$repo" --body "$(date -u +%Y-%m-%d)"
 fi
-# broker_signed_in: this device signed in with scripts/bot-login.sh (spec 0002
-# phase 2). Then the broker sets the bot key secrets and the key never comes
-# here; a broker refusal stops bootstrap rather than fall back to a phase-1 key.
-broker_signed_in() {
-  local cfg="${BOT_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-bot}"
-  [[ -s "$cfg/identity" ]] && [[ -n "${BOT_BROKER_URL:-}" || -s "$cfg/broker_url" ]]
-}
 if ((skip_bot_key)); then
-  echo "    BOT_APP_PRIVATE_KEY: skipped (--skip-bot-key); add it later from a device signed in to the broker with:"
-  echo "      scripts/bot-secrets.sh $repo"
-  echo "    or from a Mac with:"
-  for app in actions dependabot; do
-    echo "      security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo $repo --app $app"
-  done
-  echo "    or from a Codespace with the BOT_APP_KEY_B64 secret:"
-  for app in actions dependabot; do
-    # shellcheck disable=SC2016 # printed for the user to run, not expanded here
-    echo '      printf %s "$BOT_APP_KEY_B64" | base64 -d | gh secret set BOT_APP_PRIVATE_KEY'" --repo $repo --app $app"
-  done
-elif broker_signed_in; then
-  missing=()
-  grep -qx BOT_APP_PRIVATE_KEY <<<"$names_actions" && echo "    BOT_APP_PRIVATE_KEY (actions): already set" || missing+=(actions)
-  grep -qx BOT_APP_PRIVATE_KEY <<<"$names_dependabot" && echo "    BOT_APP_PRIVATE_KEY (dependabot): already set" || missing+=(dependabot)
-  if ((${#missing[@]})); then
-    apps="$(IFS=,; echo "${missing[*]}")"
-    if ((dry_run)); then
-      echo "DRY-RUN: scripts/bot-secrets.sh --apps $apps $repo (the broker seals and sets BOT_APP_PRIVATE_KEY)"
-    else
-      "$(dirname "${BASH_SOURCE[0]}")/bot-secrets.sh" --apps "$apps" "$repo" || die "the broker didn't set BOT_APP_PRIVATE_KEY (see above)"
+  echo "    CLAUDE_APP_PRIVATE_KEY, CI_APP_PRIVATE_KEY: skipped (--skip-bot-key); add them later from a device signed in to the broker with:"
+  echo "      scripts/bot-secrets.sh --key claude $repo"
+  echo "      scripts/bot-secrets.sh --key ci $repo"
+else
+  if grep -qx CLAUDE_APP_PRIVATE_KEY <<<"$names_actions"; then
+    echo "    CLAUDE_APP_PRIVATE_KEY (actions): already set"
+  elif ((dry_run)); then
+    echo "DRY-RUN: scripts/bot-secrets.sh --key claude $repo"
+  else
+    "$script_dir/bot-secrets.sh" --key claude "$repo" ||
+      die "the broker didn't set CLAUDE_APP_PRIVATE_KEY (see above; or rerun with --skip-bot-key)"
+  fi
+  if grep -qx CI_APP_PRIVATE_KEY <<<"$names_dependabot"; then
+    echo "    CI_APP_PRIVATE_KEY (dependabot): already set"
+  elif ((dry_run)); then
+    echo "DRY-RUN: scripts/bot-secrets.sh --key ci $repo"
+  else
+    "$script_dir/bot-secrets.sh" --key ci "$repo" ||
+      die "the broker didn't set CI_APP_PRIVATE_KEY (see above; or rerun with --skip-bot-key)"
+  fi
+fi
+resolve_app_id() {
+  local var_name="$1" out_var="$2" val="$3" prompt="$4"
+  if [[ -z "$val" ]] && ! ((dry_run)); then
+    val="$(gh variable get "$var_name" --repo "$repo" 2>/dev/null || true)"
+    if [[ -z "$val" ]]; then
+      ask val "$prompt" ||
+        die "no terminal to prompt for $var_name; set $var_name"
     fi
   fi
-else
-  set_secret BOT_APP_PRIVATE_KEY actions bot_key
-  set_secret BOT_APP_PRIVATE_KEY dependabot bot_key
-fi
-app_id="${BOT_APP_ID:-}"
-if [[ -z "$app_id" ]] && ! ((dry_run)); then
-  app_id="$(gh variable get BOT_APP_ID --repo "$repo" 2>/dev/null || true)"
-  if [[ -z "$app_id" ]]; then
-    ask app_id "Bot App ID (github.com/settings/apps): " ||
-      die "no terminal to prompt for the bot App ID; set BOT_APP_ID"
+  if ((dry_run)); then
+    [[ -z "$val" || "$val" =~ ^[1-9][0-9]*$ ]] || usage_error "$var_name must be a number"
+  else
+    [[ "$val" =~ ^[1-9][0-9]*$ ]] || usage_error "$var_name must be a number, got: ${val:-<empty>}"
   fi
-fi
-if ((dry_run)); then
-  [[ -z "$app_id" || "$app_id" =~ ^[0-9]+$ ]] || usage_error "BOT_APP_ID must be a number"
-else
-  [[ "$app_id" =~ ^[0-9]+$ ]] || usage_error "BOT_APP_ID must be a number, got: ${app_id:-<empty>}"
-fi
-run gh variable set BOT_APP_ID --repo "$repo" --body "${app_id:-<id>}"
+  printf -v "$out_var" '%s' "$val"
+}
+claude_app_id=""
+ci_app_id=""
+resolve_app_id CLAUDE_APP_ID claude_app_id "${CLAUDE_APP_ID:-}" "Claude App ID ($claude_app_slug, github.com/settings/apps): "
+resolve_app_id CI_APP_ID ci_app_id "${CI_APP_ID:-}" "CI App ID ($ci_app_slug, github.com/settings/apps): "
+run gh variable set CLAUDE_APP_ID --repo "$repo" --body "${claude_app_id:-<id>}"
+run gh variable set CLAUDE_APP_SLUG --repo "$repo" --body "$claude_app_slug"
+run gh variable set CI_APP_ID --repo "$repo" --body "${ci_app_id:-<id>}"
 
 # --- 4. target: the same script that switches targets later (criterion 11).
 # bootstrap-target.sh prints the "==> Target:" header itself. BOOTSTRAP_FIRST
@@ -493,12 +489,12 @@ else
   echo "    already pushed"
 fi
 
-# --- 6. GitHub: protect main. After the push: the ruleset blocks direct
+# --- 6. GitHub: protect main. After the push: the rulesets block direct
 # pushes to main.
-step "GitHub: repo settings and ruleset"
+step "GitHub: repo settings and rulesets"
 settings_args=(--repo "$repo")
 ((dry_run)) && settings_args+=(--dry-run)
 # gh-settings.sh prints its own DRY-RUN lines, so it is called directly.
-"$root/scripts/gh-settings.sh" "${settings_args[@]}"
+CI_APP_ID="$ci_app_id" "$root/scripts/gh-settings.sh" "${settings_args[@]}"
 
-step "Done. Next: install the bot App on $repo, then run make doctor."
+step "Done. Next: add $repo to the installations of $claude_app_slug, $agy_app_slug and $ci_app_slug at https://github.com/settings/installations, then run make doctor."
