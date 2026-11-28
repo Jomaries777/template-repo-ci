@@ -10,7 +10,7 @@
 
 ## Context
 
-The broker's Cloudflare account was lost during 0003 M3 step 2, and a replacement account can't be validated ([cutover record](../0003-per-agent-identity/spikes/cutover.md)). The old Worker still serves tokens for `jomaries777-agent-bot`, but nobody can change it. This plan moves the broker to Cloud Run in its own GCP project, finishes 0003 M3 on it, retires the Workers sandbox, and removes the `cloudflare-workers` target.
+The broker's Cloudflare account was lost during 0003 M3 step 2, and a replacement account can't be validated (recorded in `intent/0003-per-agent-identity/spikes/cutover.md`, which lands with the 0003 cutover PR at M2 step 0). The old Worker still serves tokens for `jomaries777-agent-bot`, but nobody can change it. This plan moves the broker to Cloud Run in its own GCP project, finishes 0003 M3 on it, retires the Workers sandbox, and removes the `cloudflare-workers` target.
 
 Facts found while planning (2026-11-28):
 
