@@ -6,7 +6,7 @@
 | Plan | [plan.md](../plan.md) M0, CC row |
 | Sandbox | [`Jomaries777/sandbox-agent-apps`](https://github.com/Jomaries777/sandbox-agent-apps), from the template at `ba55802` |
 | Throwaway Apps | `jomaries777-tclaude` (5955014), `jomaries777-tagy` (5955173), `jomaries777-tci` (5955211), each installed on the sandbox only |
-| Gate | **Passed within the decided fallbacks**: S1 → C3 `workflow_run` merge, S2 → C6 manual step, S3 confirms the review token |
+| Gate | **Passed within the decided fallbacks**: S1 → C3 direct merge after `ci-ok` (originally `workflow_run`; amended, see S1), S2 → C6 manual step, S3 confirms the review token |
 
 ## Setup
 
@@ -62,6 +62,7 @@ PR #8 was opened by `tagy` and then closed, with its branch deleted.
 - So the plan's "stays open when `ci-ok` fails" question wasn't tested with `--auto`, since `--auto` doesn't merge even when `ci-ok` passes. It was tested on the C3 path instead: direct merges by `tci`, shown in the table above.
 
 - `dependabot-automerge.yml` merges directly (`gh pr merge --squash`, no `--auto`) from a `workflow_run` trigger on `pr` that checks `ci-ok` succeeded for the PR's head SHA.
+  - **Superseded 2026-11-28, during M2 planning:** a `workflow_run` run gets Actions secrets, not the Dependabot secret that holds the `-ci` key (C2), and `fetch-metadata` needs a `pull_request` payload. The merge stays in the Dependabot-started `pull_request` run, which waits for `ci-ok` on the head commit and then merges with `--match-head-commit` (spec C3 as amended; plan Deviations).
 - The gate doesn't depend on the trigger's timing. `-tci` isn't a bypass actor in `main`, and GitHub refused its merge both while `ci-ok` was pending and after it failed.
 
 ## S2: does the installation API accept the `gh` token?
