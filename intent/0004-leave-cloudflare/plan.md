@@ -52,6 +52,7 @@ Facts found while planning (2026-11-28):
 | `broker/.gcloudignore` | New | Keeps tests, `node_modules` and dotfiles out of the build |
 | `broker/Dockerfile` | New | `node:22-alpine` image in place of buildpacks (M0 gate, Deviations) |
 | `broker/setup.sh`, `broker/put-secret.sh`, `broker/deploy.sh` | New | Owner scripts (FR-6) |
+| `broker/lib.sh` | New | Helpers the three owner scripts share (Deviations) |
 | `broker/README.md` | Modified | Rewritten for Cloud Run (FR-13). Points to the cutover record without naming the old host |
 | `tests/broker/helpers.mjs` | Modified | Fake Firestore REST and metadata server, in place of the D1 stub |
 | `tests/broker/handler.test.mjs`, `relay.test.mjs`, `secrets.test.mjs` | Modified | Use the fake store; IP and prune cases |
@@ -182,7 +183,7 @@ The tasks start during M3. The bot PR merges only after criterion 13 is recorded
 | Milestone | Status | PRs |
 |---|---|---|
 | M0: spikes ‖ server adapter | S1–S3 done 2026-11-28 ([results](spikes/s1-s3-results.md)); gate with the owner (image size, budget). 0a on `agy/0004-leave-cloudflare`, for the M1 PR | – |
-| M1: broker build | Not started | – |
+| M1: broker build | In progress: 1b and 1c on `feat/0004-broker-build`; 1a with AGY (teamwork, owner-driven); 0a on #111 | – |
 | M2: cutover, with 0003 M3 | Not started | – |
 | M3: Workers sandbox | Not started | – |
 | M4: remove the target | Not started | – |
@@ -221,3 +222,8 @@ The tasks start during M3. The bot PR merges only after criterion 13 is recorded
 | 2026-11-28 | **At planning: the step-1 `-claude` and `-agy` keys are deleted at M2 step 4**, not at 0003 M3 step 11 | Nothing in this plan uses them, and the stray Worker in `x7k2-apps` holds them. The rollback is the old broker URL, which uses only the old bot key | Owner, with this plan |
 | 2026-11-28 | **At the M0 gate: the broker builds from a `node:22-alpine` `Dockerfile`**, not buildpacks. `broker/Dockerfile` is added (owned by 1a), and `deploy.sh` passes `--clear-base-image` | S3: the buildpacks image of a trivial server is 139 MiB, so the 2 kept images would hold about 278 MiB of the 0.5 GiB Artifact Registry tier, which the whole billing account shares (NFR-1). A buildpacks deploy also sets a managed base image, and the first Dockerfile deploy refuses to run without `--clear-base-image` | Owner, 2026-11-28 |
 | 2026-11-28 | **At the M0 gate: a cold start of 1.86–1.96 s is accepted** | At the edge of Decision 7's ~2 s; every script's timeout is 10 s or more | Owner, 2026-11-28 |
+| 2026-11-28 | **In M1: `broker/lib.sh`** holds the helpers the three owner scripts share (`run`, dry-run fixtures, the label and clean-project checks) | One copy of the checks FR-6 asks of every script, modelled on `deploy/targets/cloud-run/lib.sh` | CC, with this PR |
+| 2026-11-28 | **In M1: `setup.sh` sets no Firebase security rules** | A Firestore database made with `gcloud` answers unauthenticated clients `403 PERMISSION_DENIED` (checked 2026-11-28 in the spike project), so "rules deny every client" holds without the Firebase Rules API, which isn't in the spec's API list | CC, with this PR |
+| 2026-11-28 | **In M1: `deploy.sh` pins the newest enabled version of each secret** | The spec's "reads the live secret versions first" and "a new version from put-secret.sh" are the same rule: the newest enabled version is the live one until `put-secret.sh` adds another. A rollback before `--prune` disables the new version and deploys | CC, with this PR |
+| 2026-11-28 | **In M1: CC fixed `broker/src/server.js` (task 0a)** after AGY's boost run didn't exit: cancelling the body destroyed the socket, so an oversized request got `ECONNRESET` instead of `413 too_large` | AGY owns the file, but its run hung for an hour; the fix is small and has a test | CC, recorded in the 0a commit |
+| 2026-11-28 | **In M1: files outside `intent/` refer to the 0004 folder as `intent/0004-*/`** | Criterion 12's grep for `cloudflare` matches the folder's own name, so a path to it would fail the check. Applies to M4's docs too | CC, with this PR |
