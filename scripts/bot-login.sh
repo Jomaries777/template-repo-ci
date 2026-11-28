@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sign this device in once for the bot token broker (spec 0002, phase 2, C2).
 #
-# Usage: scripts/bot-login.sh [--broker https://…workers.dev] [--logout]
+# Usage: scripts/bot-login.sh [--broker https://agent-bot-broker-<number>.us-west1.run.app] [--logout]
 #
 # Runs GitHub's device flow for the login-only GitHub App (no permissions):
 # open github.com/login/device, enter the code shown here, and approve. The

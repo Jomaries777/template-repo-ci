@@ -1,15 +1,18 @@
 # Bot token broker
 
-A Cloudflare Worker that gives a device a **1-hour agent App token for one repo** once the owner proves who they are. The three GitHub Apps' private keys live here as Worker secrets (spec 0002 [`intent/0002-bot-identity-any-device/spec.md`](../intent/0002-bot-identity-any-device/spec.md) and spec 0003 [`intent/0003-per-agent-identity/spec.md`](../intent/0003-per-agent-identity/spec.md)). This is the template's own infrastructure: one broker serves every project, so bootstrap leaves this folder out of new projects.
+A Cloud Run service that gives a device a **1-hour agent App token for one repo** once the owner proves who they are. The three GitHub Apps' private keys live in Secret Manager in the broker's own GCP project (spec 0002 [`intent/0002-bot-identity-any-device/spec.md`](../intent/0002-bot-identity-any-device/spec.md), spec 0003 [`intent/0003-per-agent-identity/spec.md`](../intent/0003-per-agent-identity/spec.md), and spec 0004 in `intent/0004-*/`, which moved it to Cloud Run). This is the template's own infrastructure: one broker serves every project, so bootstrap leaves this folder out of new projects.
 
 ```text
-device: scripts/bot-login.sh (once)  → ~/.config/agent-bot/identity
-device: scripts/bot-token.sh --agent claude owner/repo
-          → POST /token {"repo": "owner/repo", "agent": "claude"}  (Authorization: Bearer <identity>)
-broker:   "Check a token" with the login App's client credentials:
-          issued by that App, and its user == OWNER_ID?  → mint a token for that agent App & repo only
-          → look up <slug>[bot]'s numeric user id  → return {token, expires_at, login, id}
-          → one audit row in D1 with agent set for identified callers (never a token or key)
+device:  scripts/bot-login.sh (once)  → ~/.config/agent-bot/identity
+device:  scripts/bot-token.sh --agent claude owner/repo
+           → POST https://agent-bot-broker-<number>.us-west1.run.app/token
+             {"repo": "owner/repo", "agent": "claude"}  (Authorization: Bearer <identity>)
+Cloud Run (project agent-bot-broker-<suffix>, service account broker@)
+  src/server.js  Node 22 HTTP server → Request → handle() → Response
+  env:   config.yaml + BROKER_ENABLED + 4 secrets from Secret Manager (pinned versions)
+  audit: Firestore (default) / audit, over REST, token from the metadata server
+GitHub:  "Check a token" (login App) → App JWT → installation token for that agent App and repo only
+         → {token, expires_at, login, id}; one audit document per identified call (never a token or key)
 ```
 
 | Endpoint | Answer |
@@ -19,149 +22,104 @@ broker:   "Check a token" with the login App's client credentials:
 | `POST /secrets` | Takes `{repo, key}` where `key` is `"claude"` or `"ci"`, with the caller's GitHub token in `X-GitHub-Token` (the Apps have no secrets permission): `200 {key, app, secret}`. Each key has one fixed target that the caller cannot override: `"claude"` writes only the Actions secret `CLAUDE_APP_PRIVATE_KEY` (`CLAUDE_KEY_PKCS8`), and `"ci"` writes only the Dependabot secret `CI_APP_PRIVATE_KEY` (`CI_KEY_PKCS8`). Only `broker/src/secrets.js` reads `CI_KEY_PKCS8`. The GitHub token must be the owner's (`403 github_token_not_owner`); the broker reads the repo public key itself and seals the key there, so the key and token are never stored or returned. Refusals: `400 bad_key` / `bad_repo` / `wrong_owner` / `no_github_token`, `401 bad_github_token`, `403 github_denied`, `404 not_found`, `429 rate_limited` (10 an hour), `500 missing_key`, `502 github_error`, plus the identity errors. Not reachable from cloud sessions (their secret is limited to `/relay`). Use it with `scripts/bot-secrets.sh owner/repo` |
 | `GET /healthz` | `{ok, enabled}` |
 
-The identity comes from the login-only GitHub App `jomaries777-agent-login`, which has **no permissions**. Its token can only say who you are. The broker accepts only tokens that this App issued: it checks each one with GitHub's [Check a token](https://docs.github.com/en/rest/apps/oauth-applications#check-a-token) endpoint, so a `gh` CLI token, a PAT or another app's token of yours gets `401 bad_token`. Because the broker turns the identity into agent tokens, treat it like a bot credential: the file is mode `0600`, and every use is audited with its `agent` (`claude` or `agy` for `/token` and `/relay`; `claude` or `ci` for `/secrets`). Requests without a valid identity, and throttled requests, are refused without writing to the database, and another GitHub user who signs in to the login App gets one audited refusal an hour, so nobody can fill it. If the audit database is missing or can't be read (or hasn't had migration `0003_agent.sql` applied), the broker refuses everything with `503 audit_unavailable` rather than issue tokens without a log or a rate limit. The App's **"Expire user authorization tokens" must stay off**; otherwise identities stop working after 8 hours.
+The identity comes from the login-only GitHub App `jomaries777-agent-login`, which has **no permissions**. Its token can only say who you are. The broker accepts only tokens that this App issued: it checks each one with GitHub's [Check a token](https://docs.github.com/en/rest/apps/oauth-applications#check-a-token) endpoint, so a `gh` CLI token, a PAT or another app's token of yours gets `401 bad_token`. Because the broker turns the identity into agent tokens, treat it like a bot credential: the file is mode `0600`, and every use is audited with its `agent` (`claude` or `agy` for `/token` and `/relay`; `claude` or `ci` for `/secrets`). Requests without a valid identity, and throttled requests, are refused without writing to the database, and another GitHub user who signs in to the login App gets one audited refusal an hour, so nobody can fill it. If Firestore can't be reached, or the audit index is missing, the broker refuses everything with `503 audit_unavailable` rather than issue tokens without a log or a rate limit. The App's **"Expire user authorization tokens" must stay off**; otherwise identities stop working after 8 hours.
 
-## Configuration (vars and secrets)
+The service is public (`allUsers` may invoke it), because callers prove who they are with the login App's token, not a Google one (spec 0004 C1). The caller IP in the audit is the **last** `X-Forwarded-For` entry, the one Google's front end adds; earlier entries are written by the client and ignored (spike S1, in `intent/0004-*/spikes/s1-s3-results.md`).
 
-`broker/wrangler.toml` holds non-secret `[vars]`:
+## Who runs what
+
+Only the owner runs the three scripts below, with their own `gcloud` login, in their own terminal. They are never run from CI or by an agent: `scripts/hooks/no-secrets.sh` blocks Claude from running them, from `gcloud secrets versions access`, and from any `gcloud`, `gsutil` or `bq` command that names `agent-bot-broker`. An agent that needs a broker-project fact asks the owner to run the command and paste the output. Every script passes `--project` on every `gcloud` call, refuses a project without the label `purpose=agent-bot-broker`, and has a `DRY_RUN=1` mode that prints its commands without running them.
+
+| Script | Does |
+|---|---|
+| `broker/setup.sh` | One-time, idempotent project setup (below). Refuses a project with a workload identity pool, user-managed service account keys or another Cloud Run service |
+| `broker/put-secret.sh <secret> <file>` | Converts a key to PKCS#8, refuses empty or non-PEM input, adds a secret version on stdin, deletes the file, prints the version number. `--prune <secret>` destroys every version but the deployed one |
+| `broker/deploy.sh` | Builds from `broker/` (the `Dockerfile`, `node:22-alpine`) as `builder@` and deploys, pinning the newest enabled version of each secret and keeping the live `BROKER_ENABLED`. `--disable` / `--enable` flip the kill switch without a rebuild. Ends by checking `/healthz` and that there are no traffic tags |
+
+`BROKER_PROJECT` names the project, and `BROKER_REGION` overrides the default region `us-west1`. In the examples, `export BROKER_PROJECT=agent-bot-broker-<suffix>` first.
+
+## Configuration
+
+`broker/config.yaml` holds the non-secret values, passed to the service as environment variables:
 
 - `OWNER_LOGIN`, `OWNER_ID`: the single GitHub owner the broker serves.
 - `CLAUDE_APP_ID`, `CLAUDE_APP_SLUG`: the Claude App (`jomaries777-claude`). Used by `/token` (`agent: "claude"`) and `/relay`.
 - `AGY_APP_ID`, `AGY_APP_SLUG`: the Antigravity App (`jomaries777-agy`). Used by `/token` (`agent: "agy"`).
 - `CI_APP_ID`, `CI_APP_SLUG`: the CI App (`jomaries777-ci`), used for Dependabot auto-merge only.
 - `LOGIN_CLIENT_ID`: the login-only App (`jomaries777-agent-login`).
-- `BROKER_ENABLED`: `"true"` or `"false"` (kill switch).
 
-App IDs in `broker/wrangler.toml` stay `"0"` until the M3 cutover creates the agent Apps.
+`BROKER_ENABLED` (`"true"` or `"false"`, the kill switch) isn't in the file: it lives on the service, and `deploy.sh` keeps the live value.
 
-Worker secrets (set with `wrangler secret put`, never in `wrangler.toml`):
+Secrets, in Secret Manager, each readable only by `broker@`, and each reaching the service at a pinned version number (never `latest`):
 
-- `CLAUDE_KEY_PKCS8`: PKCS#8 PEM private key of `<login>-claude` (used by `/token`, `/relay`, `/secrets`).
-- `AGY_KEY_PKCS8`: PKCS#8 PEM private key of `<login>-agy` (used by `/token` only).
-- `CI_KEY_PKCS8`: PKCS#8 PEM private key of `<login>-ci` (read only by `broker/src/secrets.js`; never reachable from `/token` or `/relay`).
-- `LOGIN_CLIENT_SECRET`: client secret of the login-only App (`jomaries777-agent-login`).
+| Secret | Variable | Holds |
+|---|---|---|
+| `claude-key` | `CLAUDE_KEY_PKCS8` | PKCS#8 PEM private key of `jomaries777-claude` (`/token`, `/relay`, `/secrets`) |
+| `agy-key` | `AGY_KEY_PKCS8` | PKCS#8 PEM private key of `jomaries777-agy` (`/token` only) |
+| `ci-key` | `CI_KEY_PKCS8` | PKCS#8 PEM private key of `jomaries777-ci` (read only by `broker/src/secrets.js`) |
+| `login-client-secret` | `LOGIN_CLIENT_SECRET` | Client secret of `jomaries777-agent-login` |
 
-## Deploy a fresh broker (by hand)
+## Set up a broker project
 
-It costs $0 on the Workers Free plan; no card is needed.
+The broker needs a GCP billing account (spec 0004 C7). An idle broker costs $0: it scales to zero, and it stays inside the free tiers, which are per billing account, so other projects on the same account count too (plan Context). A $1 budget on the project alerts at 50%, 90% and 100%.
 
-1. **Create a Cloudflare API token:** <https://dash.cloudflare.com/profile/api-tokens> → **Create Token** → template **Edit Cloudflare Workers** → add the permission **Account · D1 · Edit** → **Account Resources:** your account only → create it, and copy it.
-2. **Load the token without echoing it:**
-
-   ```bash
-   cd broker
-   read -rs CLOUDFLARE_API_TOKEN && export CLOUDFLARE_API_TOKEN   # paste, then Enter
-   W="npx -y wrangler@4.163.0"
-   ```
-
-3. **Create the audit database:** run `$W d1 create agent-bot-audit` and copy the printed `database_id` into `wrangler.toml` (the template's own broker already has one; a new owner replaces it). Keep `preview_urls = false`: per-version preview URLs would let an old version answer after the kill switch. If wrangler offers to add the binding itself, answer no: `wrangler.toml` already has it as `AUDIT`. Then create the table with `$W d1 execute agent-bot-audit --remote --file schema.sql`. Because `schema.sql` already includes `0002_relay.sql` and `0003_agent.sql`, initialize `d1_migrations` and mark them applied so future `d1 migrations apply` runs don't retry them:
+1. **Second step on the Google account.** It must be a passkey or an authenticator app, not email codes, with the backup codes kept offline (NFR-3).
+2. **Check the billing account's free tiers.** List its projects with their active Secret Manager versions and Artifact Registry storage. With the broker added, the total must stay at most 6 active versions and well under 0.5 GiB.
+3. **Create the project** with the label, and link billing. Never reuse a project that a deploy target uses (any repo's `GCP_PROJECT_ID`):
 
    ```bash
-   $W d1 migrations list agent-bot-audit --remote
-   $W d1 execute agent-bot-audit --remote --command "INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0002_relay.sql'), ('0003_agent.sql')"
+   gcloud projects create "$BROKER_PROJECT" --labels purpose=agent-bot-broker
+   gcloud billing projects link "$BROKER_PROJECT" --billing-account <id> --project "$BROKER_PROJECT"
    ```
-4. **Store the three App keys as Worker secrets.** WebCrypto needs PKCS#8, so convert each downloaded `.pem` on the way and delete the local file immediately:
+
+4. **Run setup**, first as a dry run to read what it will do:
 
    ```bash
-   openssl pkcs8 -topk8 -nocrypt -in ~/claude.pem | $W secret put CLAUDE_KEY_PKCS8 && rm -f ~/claude.pem
-   openssl pkcs8 -topk8 -nocrypt -in ~/agy.pem    | $W secret put AGY_KEY_PKCS8    && rm -f ~/agy.pem
-   openssl pkcs8 -topk8 -nocrypt -in ~/ci.pem     | $W secret put CI_KEY_PKCS8     && rm -f ~/ci.pem
+   DRY_RUN=1 broker/setup.sh
+   broker/setup.sh
    ```
 
-5. **Store the login App's client secret.** It's used only to check identities, and it can't be used to sign in as you. At <https://github.com/settings/apps/jomaries777-agent-login> → **Credentials** (or **General**) → **Client secrets** → **Generate a new client secret**, copy it, then run this and paste it at the prompt:
+   It enables the APIs; creates `broker@` (runtime) and `builder@` (builds, `roles/run.builder` only); removes Editor from the default compute account (C2); creates the four secrets empty and gives `broker@` `secretAccessor` on each, not on the project; gives `broker@` `roles/datastore.user`; creates the `(default)` Firestore database (Native, `us-west1`) and its index on `audit` (`caller_id`, `endpoint`, `ts`); creates the `cloud-run-source-deploy` repository with a policy that keeps the 2 newest images; turns on data-access logs for Secret Manager; and creates the budget. There's no TTL policy (TTL deletes have no free quota): the broker deletes expired audit documents itself. A database made with `gcloud` refuses unauthenticated clients by default, so there are no Firebase rules to set.
+
+## Load the keys and deploy
+
+1. **Keys.** On each App's settings page → **Private keys** → **Generate a private key**. Then load each one; the file is deleted once it's stored:
 
    ```bash
-   $W secret put LOGIN_CLIENT_SECRET
+   broker/put-secret.sh claude-key ~/Downloads/jomaries777-claude.<date>.private-key.pem
+   broker/put-secret.sh agy-key    ~/Downloads/jomaries777-agy.<date>.private-key.pem
+   broker/put-secret.sh ci-key     ~/Downloads/jomaries777-ci.<date>.private-key.pem
    ```
 
-6. **Fill in the App IDs and slugs** in `wrangler.toml` (`CLAUDE_APP_ID`, `AGY_APP_ID`, `CI_APP_ID`, and their slugs) and **deploy:** `npm ci --ignore-scripts && $W deploy` (wrangler bundles `tweetnacl` and `@noble/hashes`). It prints the URL, `https://agent-bot-broker.<your-subdomain>.workers.dev`. Check it with `curl -s <url>/healthz`, which should give `{"ok":true,"enabled":true}`. The subdomain comes from your Cloudflare account and can be changed under **Workers & Pages → Account details → Subdomain**; the URL is not kept in the repo, since each device saves it when it signs in.
-
-## Migrate from one App to three (spec 0003, M3 order)
-
-Run this in one sitting, serially, after the M1 device scripts are on `main`. This follows the `plan.md` M3 order rather than spec FR-11's order so that today's key (`APP_KEY_PKCS8`) stays usable until step 3 proves the new broker, keeping a clean rollback open. Dependabot auto-merge is down from step 5 until step 7, so run steps 5–7 back to back.
-
-```bash
-cd broker
-read -rs CLOUDFLARE_API_TOKEN && export CLOUDFLARE_API_TOKEN   # paste, then Enter
-W="npx -y wrangler@4.163.0"
-```
-
-1. **Create the two agent Apps.** Create `jomaries777-claude` and `jomaries777-agy` from `scripts/app-manifest.sh`, generate a private key for each, and install both on `template-repo-ci`. Note their numeric App IDs.
-2. **Load the three keys, apply migration `0003_agent.sql`, and deploy.** `CI_KEY_PKCS8` holds today's `jomaries777-agent-bot` key for now (so `APP_KEY_PKCS8` stays intact for rollback). Apply the migration **before** deploying so the schema check never fails closed:
+2. **Login client secret.** At <https://github.com/settings/apps/jomaries777-agent-login> → **Client secrets** → **Generate a new client secret**. Save it to a file without echoing it, then load it:
 
    ```bash
-   openssl pkcs8 -topk8 -nocrypt -in ~/claude.pem | $W secret put CLAUDE_KEY_PKCS8 && rm -f ~/claude.pem
-   openssl pkcs8 -topk8 -nocrypt -in ~/agy.pem    | $W secret put AGY_KEY_PKCS8    && rm -f ~/agy.pem
-   # Load today's jomaries777-agent-bot key into CI_KEY_PKCS8 for now (use the
-   # command for your machine; convert first so an error never uploads an empty secret):
-   # On macOS (Keychain; the item holds the PEM base64-encoded, as scripts/bot-token.sh reads it):
-   pem="$(security find-generic-password -s github-app-private-key -w | base64 -d | openssl pkcs8 -topk8 -nocrypt)" && test -n "$pem" && printf '%s\n' "$pem" | $W secret put CI_KEY_PKCS8; unset pem
-   # Or in a Codespace (BOT_APP_KEY_B64):
-   pem="$(test -n "$BOT_APP_KEY_B64" && printf %s "$BOT_APP_KEY_B64" | base64 -d | openssl pkcs8 -topk8 -nocrypt)" && test -n "$pem" && printf '%s\n' "$pem" | $W secret put CI_KEY_PKCS8; unset pem
+   (umask 077; pbpaste | tr -d '[:space:]' > ~/login-secret.txt)
+   broker/put-secret.sh login-client-secret ~/login-secret.txt
    ```
 
-   Check pending migrations first. On the existing database, `0002_relay.sql` was previously run with `d1 execute` (not `d1 migrations apply`), so if `d1 migrations list` shows `0002_relay.sql` as pending, mark it applied in `d1_migrations` before running `d1 migrations apply` so `0002_relay.sql` doesn't fail with `duplicate column name: branch`:
+3. **Deploy**, and check it:
 
    ```bash
-   $W d1 migrations list agent-bot-audit --remote
-   # Only if 0002_relay.sql is listed as pending (its columns already exist):
-   $W d1 execute agent-bot-audit --remote --command "INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0002_relay.sql')"
-   $W d1 migrations apply agent-bot-audit --remote
-   # Verify migration 0003_agent.sql is listed as applied (no pending migrations):
-   $W d1 migrations list agent-bot-audit --remote
+   broker/deploy.sh                      # prints the URL; /healthz must give {"ok":true,"enabled":true}
+   curl -s https://agent-bot-broker-<number>.us-west1.run.app/healthz
    ```
 
-   On a local branch, replace the `"0"` placeholder IDs in `broker/wrangler.toml` with the real `CLAUDE_APP_ID`, `AGY_APP_ID`, and `CI_APP_ID` (`5766032`), then deploy:
+   The first deploy takes a few minutes (Cloud Build). A first request after the service has been idle takes about 2 s (spike S1); the scripts' timeouts are 10 s or more.
 
-   ```bash
-   npm ci --ignore-scripts && $W deploy
-   ```
+## Cutover (0004 M2, with 0003 M3)
 
-3. **Prove the new broker (checkpoint).** Open that local branch as a PR through the new broker (`GH_TOKEN="$(scripts/bot-token.sh --agent claude Jomaries777/template-repo-ci)" ...`). Confirm its author is `app/jomaries777-claude`.
-   - **Rollback (if step 3 fails):** deploy the pre-0003 broker from `b065bb8`, which still has `APP_ID`/`APP_SLUG` and reads `APP_KEY_PKCS8`:
-
-     ```bash
-     git worktree add /tmp/broker-old b065bb8
-     (cd /tmp/broker-old/broker && npm ci --ignore-scripts && $W deploy)
-     git worktree remove /tmp/broker-old
-     ```
-
-4. **Rename the old App to `-ci` and cut its permissions.** In GitHub App settings, rename `jomaries777-agent-bot` to `jomaries777-ci` and reduce its repository permissions to `contents: write`, `pull_requests: write`, and `metadata: read`.
-5. **Rotate the `-ci` key.** Generate a new private key on `jomaries777-ci`, load it into `CI_KEY_PKCS8`, and delete the old private key on GitHub:
-
-   ```bash
-   openssl pkcs8 -topk8 -nocrypt -in ~/ci-new.pem | $W secret put CI_KEY_PKCS8 && rm -f ~/ci-new.pem
-   ```
-
-6. **Push the repo secrets and variables.** Run `scripts/bot-secrets.sh --key claude Jomaries777/template-repo-ci` (writes the Actions secret `CLAUDE_APP_PRIVATE_KEY`) and `scripts/bot-secrets.sh --key ci Jomaries777/template-repo-ci` (writes the Dependabot secret `CI_APP_PRIVATE_KEY`), and set the repo variables `CLAUDE_APP_ID`, `CLAUDE_APP_SLUG`, and `CI_APP_ID`.
-7. **Merge the M2 workflows PR** so CI and Dependabot auto-merge switch to `CLAUDE_APP_*` and `CI_APP_*`.
-8. **Apply the split rulesets:** run `scripts/gh-settings.sh` to apply `main` and `main-review`.
-9. **Delete old copies and retire sandboxes.** Delete `BOT_APP_ID` and `BOT_APP_PRIVATE_KEY` on `template-repo-ci`, delete the Mac Keychain entry `github-app-private-key`, and delete the Codespaces secret `BOT_APP_KEY_B64`. On retired sandboxes, delete their `BOT_APP_*` secrets/variables and remove them from the `-ci` App installation.
-10. **Verify:** run `make doctor` in `template-repo-ci` and confirm it passes.
-11. **Delete the old Worker secret:** once step 5 has deleted the old key on GitHub, `APP_KEY_PKCS8` can no longer serve as a rollback, so remove it:
-
-    ```bash
-    $W secret delete APP_KEY_PKCS8
-    ```
-
-## Upgrade an existing broker
-
-When a release adds audit columns, run its migration **before** deploying. If you deploy first, the broker answers every request with `503 audit_unavailable` until the migration has run, rather than answering without an audit row:
-
-```bash
-cd broker
-$W d1 migrations apply agent-bot-audit --remote   # applies any pending migration, e.g. 0003_agent.sql
-npm ci --ignore-scripts                           # sealing libraries
-$W deploy
-```
+The move from the old broker follows plan 0004 M2 (`intent/0004-*/plan.md`), in one sitting, serially, and is recorded in `intent/0003-per-agent-identity/spikes/cutover.md`. In short: project and setup; new keys for `-claude` and `-agy` and a new login client secret (the step-1 keys are deleted on GitHub then); `ci-key` is today's bot key; deploy; a checkpoint PR through the new URL whose author must be `app/jomaries777-claude`; the kill-switch check; then every device signs in again (below) and 0003 M3's remaining steps run. Until the checkpoint passes, a device can unset `BOT_BROKER_URL` and keep using its old URL.
 
 ## Use it from any device
 
 ```bash
-scripts/bot-login.sh --broker https://agent-bot-broker.<your-subdomain>.workers.dev
+scripts/bot-login.sh --broker https://agent-bot-broker-<number>.us-west1.run.app
 # open github.com/login/device, enter the code, approve jomaries777-agent-login
 GH_TOKEN="$(scripts/bot-token.sh --agent claude Jomaries777/template-repo-ci)" gh pr create ...
 ```
+
+`make doctor` warns if a device's broker URL is still on the old host.
 
 ## Use it from a cloud session (relay)
 
@@ -175,24 +133,38 @@ Anyone who can start a session on that environment can act as the Claude App thr
 
 ## Operate
 
-- **Kill switch:** set `BROKER_ENABLED = "false"` in `wrangler.toml` and run `$W deploy`. Every request then gets `503 disabled`, and tokens already issued expire within an hour. Devices hold no local App keys (spec 0003 D6), so agents cannot mint tokens while the switch is on.
-- **If someone floods it:** requests with junk tokens write nothing, but each one still costs a Worker request and a "Check a token" call to GitHub. Only devices you sign in know the URL; if it leaks and the request count in **Metrics** jumps, turn the kill switch on, then redeploy under a new Worker `name` to get a new URL.
-- **Sign every device out:** <https://github.com/settings/apps/authorizations> → `jomaries777-agent-login` → **Revoke**. To sign out one device, run `scripts/bot-login.sh --logout` on it.
-- **Audit log:**
+- **Kill switch:** `broker/deploy.sh --disable`. It makes a new revision with `BROKER_ENABLED=false`, without a rebuild, and every request then gets `503 disabled`; tokens already issued expire within an hour. Devices hold no local App keys (spec 0003 D6), so agents cannot mint tokens while the switch is on. `broker/deploy.sh --enable` turns it off. A plain `deploy.sh` never turns a disabled broker back on.
+- **Emergency stop:** remove `allUsers` from the service's invoker role, and Google refuses every request before it reaches the broker. Refused requests aren't billed:
 
   ```bash
-  $W d1 execute agent-bot-audit --remote --command "select datetime(ts/1000,'unixepoch') t, caller_id, endpoint, agent, repo, outcome, reason from audit order by ts desc limit 20"
+  gcloud run services remove-iam-policy-binding agent-bot-broker --member allUsers --role roles/run.invoker \
+    --region us-west1 --project "$BROKER_PROJECT"
   ```
 
-  Rows older than 90 days are deleted automatically.
-- **CPU time (C7):** dashboard → **Workers & Pages** → `agent-bot-broker` → **Metrics** → CPU time. It must stay under the free plan's 10 ms per request.
-- **Rotate an App key.** From a signed-in device (`scripts/bot-login.sh`) with the Cloudflare token loaded:
-  1. In that App's settings → **Private keys** → **Generate a private key**. A `.pem` file downloads to your device as `~/new.pem`.
-  2. Put it in the broker under its secret (`CLAUDE_KEY_PKCS8`, `AGY_KEY_PKCS8`, or `CI_KEY_PKCS8`), then delete the file: `openssl pkcs8 -topk8 -nocrypt -in ~/new.pem | $W secret put <SECRET_NAME> && rm -f ~/new.pem`.
+- **If someone floods it:** requests with junk tokens write nothing, but each one costs a request and a "Check a token" call to GitHub. The service has at most 1 instance, which caps the cost; the budget alert warns. Turn the kill switch on, or use the emergency stop.
+- **Sign every device out:** <https://github.com/settings/apps/authorizations> → `jomaries777-agent-login` → **Revoke**. To sign out one device, run `scripts/bot-login.sh --logout` on it.
+- **Audit log:** in the console, **Firestore → Data → `audit`**, ordered by `ts` descending. Each document has `ts`, `caller_id`, `endpoint`, `agent`, `repo`, `outcome`, `reason`, `expires_at`, `ip`, `branch`, `files`, `paths` and `expire_at` (`ts` + 90 days). On about 1 write in 50, the broker deletes up to 50 documents whose `expire_at` has passed. From a terminal, a count of the last hour's calls:
+
+  ```bash
+  curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" -H 'Content-Type: application/json' \
+    "https://firestore.googleapis.com/v1/projects/$BROKER_PROJECT/databases/(default)/documents:runQuery" \
+    -d "{\"structuredQuery\":{\"from\":[{\"collectionId\":\"audit\"}],\"where\":{\"fieldFilter\":{\"field\":{\"fieldPath\":\"ts\"},\"op\":\"GREATER_THAN\",\"value\":{\"integerValue\":\"$((($(date +%s) - 3600) * 1000))\"}}},\"limit\":20}}"
+  ```
+
+- **Key reads:** every read of a secret is logged with who read it, and the only reader should be `broker@`:
+
+  ```bash
+  gcloud logging read 'protoPayload.methodName:"AccessSecretVersion"' --project "$BROKER_PROJECT" --limit 20
+  ```
+
+- **Rotate an App key.**
+  1. In that App's settings → **Private keys** → **Generate a private key**.
+  2. `broker/put-secret.sh <secret> <file>`, then `broker/deploy.sh`, which pins the new version. Until the next step, the previous version is the rollback: `gcloud secrets versions disable <new> --secret <secret> --project "$BROKER_PROJECT"`, then `broker/deploy.sh`.
   3. If rotating `claude` or `ci`, update every repo's secret through the broker: `scripts/bot-secrets.sh --key claude Jomaries777/template-repo-ci` or `scripts/bot-secrets.sh --key ci Jomaries777/template-repo-ci` (`agy` has no repo secret). In a Codespace, its own `GITHUB_TOKEN` can't manage secrets (`github_denied`): sign `gh` in as yourself just for this with `env -u GITHUB_TOKEN gh auth login -h github.com -p https -w`, run `env -u GITHUB_TOKEN scripts/bot-secrets.sh …`, then `env -u GITHUB_TOKEN gh auth logout -h github.com`.
   4. Check: for `claude` or `agy`, `scripts/bot-token.sh --agent <agent> Jomaries777/template-repo-ci >/dev/null && echo OK`; for `ci`, rerun a Dependabot automerge job.
-  5. In the App settings, **delete the old private key**.
+  5. `broker/put-secret.sh --prune <secret>`, so one version stays active (free tier), and in the App settings **delete the old private key**.
+- **Rotate the login client secret:** generate a new one, `broker/put-secret.sh login-client-secret <file>`, `broker/deploy.sh`, then delete the old secret on GitHub and prune.
 
 ## Tests
 
-`make test` runs `node --test tests/broker/*.test.mjs` offline: GitHub is a fake `fetch`, D1 is an in-memory stub, and the three App keys are generated at run time.
+`make test` runs `node --test tests/broker/*.test.mjs` offline: GitHub, Firestore and the metadata server are fakes, and the three App keys are generated at run time. `tests/scripts/test_broker_setup.sh`, `test_broker_put_secret.sh` and `test_broker_deploy.sh` run the owner scripts with `DRY_RUN=1` against failing `gcloud` and `curl` stubs.

@@ -185,9 +185,13 @@ else
   # Tests the template-to-project step itself, which only the template has.
   fs rm -f tests/scripts/test_bootstrap.sh
   # One bot token broker serves every project (spec 0002). It stays in the
-  # template, so new projects don't carry its code or tests.
+  # template, so new projects don't carry its code or tests, including the
+  # owner-script tests (spec 0004 FR-6).
   for d in broker tests/broker; do
     if [[ -d "$d" ]]; then fs rm -r "$d"; fi
+  done
+  for f in tests/scripts/test_broker_*.sh; do
+    if [[ -f "$f" ]]; then fs rm -f "$f"; fi
   done
 
   deploy_yml="target: $target

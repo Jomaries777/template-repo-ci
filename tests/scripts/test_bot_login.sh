@@ -52,14 +52,14 @@ run() {
 
 printf '%s\n' '{"error":"authorization_pending"}' '{"error":"slow_down"}' \
   "{\"access_token\":\"$cred\",\"token_type\":\"bearer\"}" >"$tmp/ok.replies"
-run "$tmp/ok.replies" --broker https://agent-bot-broker.example.workers.dev/
+run "$tmp/ok.replies" --broker https://agent-bot-broker-123456.us-west1.run.app/
 if [[ $rc == 0 ]]; then pass "device flow: signs in after pending and slow_down"; else fail "device flow: signs in (rc $rc, err: $err)"; fi
 if [[ "$(cat "$tmp/cfg/identity" 2>/dev/null)" == "$cred" ]]; then pass "identity saved"; else fail "identity saved"; fi
 mode="$(stat -c %a "$tmp/cfg/identity" 2>/dev/null || stat -f %Lp "$tmp/cfg/identity")"
 if [[ "$mode" == 600 ]]; then pass "identity file is mode 600"; else fail "identity file is mode 600 (got $mode)"; fi
 if [[ -z "$out" ]] && ! grep -qF "$cred" <<<"$err"; then pass "identity never printed"; else fail "identity never printed"; fi
 if grep -q "ABCD-1234" <<<"$err" && grep -q "github.com/login/device" <<<"$err"; then pass "shows the code and the URL"; else fail "shows the code and the URL ($err)"; fi
-if [[ "$(cat "$tmp/cfg/broker_url" 2>/dev/null)" == "https://agent-bot-broker.example.workers.dev" ]]; then
+if [[ "$(cat "$tmp/cfg/broker_url" 2>/dev/null)" == "https://agent-bot-broker-123456.us-west1.run.app" ]]; then
   pass "broker URL saved without a trailing slash"
 else
   fail "broker URL saved without a trailing slash"
@@ -67,7 +67,7 @@ fi
 if grep -q "client_id=Iv23liFOZk5YaGC6CJc9" "$tmp/curl.args"; then pass "uses the login App's client ID"; else fail "uses the login App's client ID"; fi
 
 printf '%s\n' '{"error":"authorization_pending"}' '{"error":"access_denied"}' >"$tmp/denied.replies"
-run "$tmp/denied.replies" --broker https://agent-bot-broker.example.workers.dev
+run "$tmp/denied.replies" --broker https://agent-bot-broker-123456.us-west1.run.app
 if [[ $rc != 0 && ! -e "$tmp/cfg/identity" && ! -e "$tmp/cfg/broker_url" ]] && grep -q "cancelled" <<<"$err"; then
   pass "denied: fails and saves nothing, not even the broker URL"
 else
