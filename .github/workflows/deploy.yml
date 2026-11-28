@@ -220,15 +220,28 @@ jobs:
           number="${url##*/}"
           [[ "$number" =~ ^[0-9]+$ ]] || { echo "::error::unexpected issue URL: $url"; exit 1; }
           echo "number=$number" >>"$GITHUB_OUTPUT"
-      # Advisory, read-only triage (spec §4.10). Never decides anything.
-      - name: Claude triage
+      # Advisory, read-only triage (spec §4.10). Never decides anything. It
+      # comments as the Claude App (spec 0003 FR-6); the issue above stays
+      # github-actions[bot] because no AI opens it (C8).
+      - name: Mint the Claude App token
+        id: app
         if: steps.issue.outputs.number != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.CLAUDE_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: write
+          permission-actions: read
+      - name: Claude triage
+        if: steps.issue.outputs.number != '' && steps.app.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 6
         uses: anthropics/claude-code-action@c84e279f859e2591391e95bd309286eb111c345f # v1.0.284
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ github.token }}
+          github_token: ${{ steps.app.outputs.token }}
           show_full_output: false
           prompt: |
             A deploy of ${{ github.sha }} in ${{ github.repository }} failed (workflow run ${{ github.run_id }}).

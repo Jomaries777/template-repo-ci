@@ -1,15 +1,23 @@
-# Auto-merge for Dependabot patch updates (spec §4.7, C1).
+# Auto-merge for Dependabot patch updates (spec §4.7, C1; amended by 0003
+# FR-8, C2, C3).
 #
-# The bot App gives a real approval and enables auto-merge; GitHub merges only
-# after `ci-ok` passes under the main ruleset. No ruleset bypass is used.
-# Minor and major updates, security ones included, are left open for the
-# owner: the bot App can't read Dependabot alerts (see plan.md Deviations).
-# A Dependabot rebase dismisses the approval (the ruleset requires approval
-# of the last push); the `synchronize` run approves again.
+# This run waits for `ci-ok` on the PR's head commit, then merges directly as
+# the `-ci` App (<owner>-ci[bot]), which bypasses only the `main-review`
+# ruleset. `ci-ok` sits in the `main` ruleset, which `-ci` can't bypass, and
+# the merge names the head commit, so a newer push can't slip in unchecked.
+# Never `--auto`: an auto-merge enabled by a bypass actor doesn't wait for
+# `ci-ok` (spike S1, C3 amended 2026-11-28).
 #
-# Needs: repo variable BOT_APP_ID, and the App private key as a *Dependabot*
-# secret BOT_APP_PRIVATE_KEY (Dependabot-triggered runs cannot read normal
-# Actions secrets).
+# Why it waits here and not in a `workflow_run`: only this Dependabot-started
+# run gets Dependabot secrets, and the `-ci` key lives only there (C2).
+# Minor and major updates, security ones included, are left for the owner.
+# A Dependabot rebase cancels a waiting run; the new run starts over.
+#
+# Cost: the runner waits while CI runs, up to 30 minutes per patch PR. Free on
+# a public repo; Actions minutes on a private one.
+#
+# Needs: repo variable CI_APP_ID, and the `-ci` App private key as a
+# *Dependabot* secret CI_APP_PRIVATE_KEY (scripts/bot-secrets.sh --key ci).
 name: dependabot-automerge
 
 on:
@@ -28,7 +36,12 @@ jobs:
   automerge:
     if: github.actor == 'dependabot[bot]' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 35
+    # GITHUB_TOKEN only reads. The approval and the merge use the `-ci` token.
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
     steps:
       - name: Read Dependabot metadata
         id: meta
@@ -36,26 +49,66 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Mint bot App token
+      - name: Wait for ci-ok on the head commit (patch only)
+        id: ci_ok
         if: steps.meta.outputs.update-type == 'version-update:semver-patch'
-        id: bot
+        timeout-minutes: 32
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TRIES: 60
+          INTERVAL: 30
+        run: |
+          # The newest ci-ok run (highest id) decides; a re-run adds a new one.
+          # Only runs from GitHub Actions (app 15368) count, the same source
+          # the main ruleset requires: the agent Apps have `checks` write and
+          # could post a ci-ok of their own.
+          # No run yet, or one not completed, counts as pending. An API error
+          # counts as pending too, so one bad poll doesn't fail the job.
+          for ((i = 1; i <= TRIES; i++)); do
+            latest="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?check_name=ci-ok&per_page=100" \
+              --jq '[.check_runs[] | select(.app.id == 15368)] | max_by(.id) // empty | "\(.status) \(.conclusion)"')" || latest=""
+            read -r status conclusion <<<"$latest" || true
+            if [[ "${status:-}" == completed ]]; then
+              echo "conclusion=$conclusion" >>"$GITHUB_OUTPUT"
+              echo "ci-ok on ${HEAD_SHA:0:7}: **$conclusion**" >>"$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            if ((i < TRIES)); then sleep "$INTERVAL"; fi
+          done
+          echo "conclusion=timeout" >>"$GITHUB_OUTPUT"
+          echo "ci-ok on ${HEAD_SHA:0:7} didn't finish in time; the owner reviews this one." >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Mint the -ci App token
+        if: steps.ci_ok.outputs.conclusion == 'success'
+        id: ci
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
-          app-id: ${{ vars.BOT_APP_ID }}
-          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
 
-      - name: Approve and enable auto-merge (patch only)
-        if: steps.meta.outputs.update-type == 'version-update:semver-patch'
+      - name: Approve and merge (patch only, ci-ok passed)
+        if: steps.ci_ok.outputs.conclusion == 'success'
         env:
-          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          GH_TOKEN: ${{ steps.ci.outputs.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           DEPS: ${{ steps.meta.outputs.dependency-names }}
         run: |
-          gh pr review "$PR_URL" --approve --body "Patch update ($DEPS): approved by the agent bot. Merges automatically once ci-ok passes."
-          gh pr merge "$PR_URL" --auto --squash
+          # The approval is a record; `-ci` merges through its bypass of main-review.
+          gh pr review "$PR_URL" --approve --body "Patch update ($DEPS): ci-ok passed on ${HEAD_SHA:0:7}. Merged by the -ci App."
+          gh pr merge "$PR_URL" --squash --match-head-commit "$HEAD_SHA"
 
       - name: Leave for the owner
-        if: steps.meta.outputs.update-type != 'version-update:semver-patch'
+        if: steps.ci_ok.outputs.conclusion != 'success'
         env:
           UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
-        run: echo "Not a patch update ($UPDATE_TYPE); the owner reviews this one."
+          CI_OK: ${{ steps.ci_ok.outputs.conclusion }}
+        run: |
+          if [[ "$UPDATE_TYPE" != version-update:semver-patch ]]; then
+            echo "Not a patch update ($UPDATE_TYPE); the owner reviews this one."
+          else
+            echo "Patch update, but ci-ok is ${CI_OK:-unknown}; the owner reviews this one."
+          fi

@@ -261,17 +261,29 @@ jobs:
       issues: write
       id-token: write
     env:
-      GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       MAX_AUTO_REVIEWS: 3
     steps:
       - name: Count earlier automatic reviews
         id: quota
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Reviews are posted by the Claude App (spec 0003 FR-6, C7), so only
+          # its comments count; a marker from anyone else is ignored.
+          BOT_LOGIN: ${{ vars.CLAUDE_APP_SLUG }}[bot]
         run: |
+          # Without the slug the count below would match nothing and the cap
+          # would never trip, so skip the review and say why.
+          if [[ "$BOT_LOGIN" == "[bot]" ]]; then
+            echo "::error title=claude-review::CLAUDE_APP_SLUG is not set; run make bootstrap"
+            echo "run=false" >>"$GITHUB_OUTPUT"
+            echo "reason=no-slug" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
           # Each automatic review comment starts with the hidden marker
           # <!-- claude-review -->. Skip notices use a different marker.
           count="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- claude-review -->"))) | .id' | wc -l)"
+            --jq '.[] | select(.user.login == env.BOT_LOGIN and (.body | contains("<!-- claude-review -->"))) | .id' | wc -l)"
           count="${count//[[:space:]]/}"
           echo "Automatic reviews so far: $count of $MAX_AUTO_REVIEWS"
           if [[ "$count" -lt "$MAX_AUTO_REVIEWS" ]]; then
@@ -284,15 +296,29 @@ jobs:
         if: steps.quota.outputs.run == 'true'
         with:
           fetch-depth: 1
+          persist-credentials: false
+      # The review is posted as the Claude App. contents: read, so it can
+      # comment but never push (token table; spec 0003 open question 3).
+      - name: Mint the Claude App token
+        id: app
+        if: steps.quota.outputs.run == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.CLAUDE_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+          permission-issues: write
       - name: Claude review
         id: claude
-        if: steps.quota.outputs.run == 'true'
+        if: steps.quota.outputs.run == 'true' && steps.app.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 8
         uses: anthropics/claude-code-action@c84e279f859e2591391e95bd309286eb111c345f # v1.0.284
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ github.token }}
+          github_token: ${{ steps.app.outputs.token }}
           # Agent PRs come from the bot App, and the action refuses runs a bot
           # started unless it is listed. Allow only the actor of this run, and
           # only when it pushed a branch of this repository (write access:
@@ -322,12 +348,15 @@ jobs:
             --model claude-sonnet-5-5
             --max-turns 12
             --allowedTools "Read,Grep,Glob,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
+      # Not AI: stays github-actions[bot] (spec 0003 C8).
       - name: Explain a skipped review
-        if: steps.claude.outcome == 'failure'
+        if: steps.quota.outputs.reason == 'no-slug' || steps.app.outcome == 'failure' || steps.claude.outcome == 'failure'
         continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           body="<!-- claude-review-skipped -->
-          Claude review didn't run. The reason is in the [claude-review job log]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) (for example the Claude Pro limit, an expired \`CLAUDE_CODE_OAUTH_TOKEN\`, or an actor the action refuses). Comment \`@claude review\` to try again."
+          Claude review didn't run. The reason is in the [claude-review job log]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) (for example the Claude Pro limit, an expired \`CLAUDE_CODE_OAUTH_TOKEN\`, a missing Claude App key \`CLAUDE_APP_PRIVATE_KEY\` or variable \`CLAUDE_APP_SLUG\`, or an actor the action refuses). Comment \`@claude review\` to try again."
           gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
 
   # The only required status check. Skipped jobs pass; failed or cancelled fail.
