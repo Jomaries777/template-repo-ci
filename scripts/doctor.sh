@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Read-only check that a project matches the spec (FR-15, spec §4.9). No AI;
-# changes no settings, secrets or resources. The bot App check mints a
-# short-lived installation token (a POST to GitHub) because only the App's own
-# token can see its installation. Prints PASS / FAIL / SKIP per check, with a
-# fix hint for every FAIL, and exits 1 if anything failed.
+# Read-only check that a project matches the spec (FR-15, spec §4.9; spec 0003
+# FR-10). No AI; changes no settings, secrets or resources. The claude and agy
+# App checks mint short-lived installation tokens via the broker (a POST to
+# GitHub) because only each App's token can see its installation; the -ci App
+# installation is checked via GET /user/installations. Prints PASS / FAIL /
+# WARN / SKIP per check, with a fix hint for every FAIL, and exits 1 if
+# anything failed.
 #
 # Usage: scripts/doctor.sh [--repo owner/name]
 set -euo pipefail
@@ -11,9 +13,22 @@ set -euo pipefail
 repo=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --repo) repo="${2:-}"; shift 2 ;;
-    -h | --help) sed -n '2,6p' "$0"; exit 0 ;;
-    *) echo "doctor: unknown argument: $1" >&2; exit 64 ;;
+    --repo)
+      [[ $# -ge 2 ]] || {
+        echo "doctor: missing argument for --repo" >&2
+        exit 64
+      }
+      repo="$2"
+      shift 2
+      ;;
+    -h | --help)
+      sed -n '2,10p' "$0"
+      exit 0
+      ;;
+    *)
+      echo "doctor: unknown argument: $1" >&2
+      exit 64
+      ;;
   esac
 done
 
@@ -38,10 +53,12 @@ quiet() { "$@" >/dev/null 2>&1; }
 # remember the path, so the summary reports the read error itself instead of
 # a misleading settings FAIL.
 # api() runs inside $(...), a subshell, so failures go to a file, not an array.
-api_errors="$(mktemp)"
-trap 'rm -f "$api_errors"' EXIT
+tmp_dir="$(mktemp -d)"
+api_errors="$tmp_dir/api_errors"
+: >"$api_errors"
+trap 'rm -rf "$tmp_dir"' EXIT
 api() {
-  gh api "$1" 2>/dev/null || {
+  gh api "$@" 2>/dev/null || {
     echo "$1" >>"$api_errors"
     true
   }
@@ -61,10 +78,15 @@ expect "gh is logged in" "gh auth login" quiet gh auth status
 if [[ -z "$repo" ]]; then
   repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
 fi
-[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+[[ "$repo" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]+$ ]] || {
   fail "repository" "run inside the project's clone, or pass --repo owner/name"
   exit 1
 }
+owner="${repo%%/*}"
+claude_slug="$("$root/scripts/app-manifest.sh" --name "$owner" claude)"
+agy_slug="$("$root/scripts/app-manifest.sh" --name "$owner" agy)"
+ci_slug="$("$root/scripts/app-manifest.sh" --name "$owner" ci)"
+
 echo "doctor: $repo"
 settings="scripts/gh-settings.sh --repo $repo"
 
@@ -77,16 +99,46 @@ expect "merge: auto-merge allowed" "$settings" jqt "$r" '.allow_auto_merge'
 expect "security: secret scanning + push protection" "$settings" \
   jqt "$r" '.security_and_analysis.secret_scanning.status == "enabled" and .security_and_analysis.secret_scanning_push_protection.status == "enabled"'
 
-# --- ruleset
-rs_id="$(jq -r '.[]? | select(.name == "main") | .id' <<<"$(api "repos/$repo/rulesets")" 2>/dev/null || true)"
-if [[ -n "$rs_id" ]]; then
-  rs="$(api "repos/$repo/rulesets/$rs_id")"
-  expect "ruleset main: active" "$settings" jqt "$rs" '.enforcement == "active"'
+# Fetch variables early so main-review can verify its -ci Integration actor_id
+# against CI_APP_ID. 30 is the API's maximum page size for variables.
+variables="$(api "repos/$repo/actions/variables?per_page=30")"
+ci_app_id="$(jq -r '[.variables[]? | select(.name == "CI_APP_ID") | .value] | first // empty' <<<"$variables" 2>/dev/null || true)"
+
+# --- rulesets (spec 0003 FR-7)
+rulesets="$(api "repos/$repo/rulesets")"
+rs_main_id="$(jq -r '[.[]? | select(.name == "main") | .id] | first // empty' <<<"$rulesets" 2>/dev/null || true)"
+if [[ -n "$rs_main_id" ]]; then
+  rs_main="$(api "repos/$repo/rulesets/$rs_main_id")"
+  expect "ruleset main: active" "$settings" jqt "$rs_main" '.enforcement == "active"'
   expect "ruleset main: requires ci-ok" "$settings" \
-    jqt "$rs" '[.rules[]? | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | index("ci-ok") != null'
-  expect "ruleset main: requires a pull request" "$settings" jqt "$rs" '[.rules[]?.type] | index("pull_request") != null'
+    jqt "$rs_main" '[.rules[]? | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | index("ci-ok") != null'
+  expect "ruleset main: no Integration bypass" "$settings" \
+    jqt "$rs_main" '[.bypass_actors[]? | select(.actor_type == "Integration")] | length == 0'
 else
   fail "ruleset main" "$settings"
+fi
+
+rs_rev_id="$(jq -r '[.[]? | select(.name == "main-review") | .id] | first // empty' <<<"$rulesets" 2>/dev/null || true)"
+if [[ -n "$rs_rev_id" ]]; then
+  rs_rev="$(api "repos/$repo/rulesets/$rs_rev_id")"
+  expect "ruleset main-review: active" "$settings" jqt "$rs_rev" '.enforcement == "active"'
+  expect "ruleset main-review: requires a pull request with code owner review" "$settings" \
+    jqt "$rs_rev" '[.rules[]? | select(.type == "pull_request" and .parameters.require_code_owner_review == true)] | length > 0'
+  has_ci_bypass() {
+    [[ -n "$rs_rev" ]] || return 1
+    if [[ "$ci_app_id" =~ ^[1-9][0-9]*$ ]]; then
+      jq -e --argjson id "$ci_app_id" \
+        '[.bypass_actors[]? | select(.actor_type == "Integration" and .actor_id == $id and .bypass_mode == "pull_request")] | length > 0' \
+        >/dev/null 2>&1 <<<"$rs_rev"
+    else
+      jq -e \
+        '[.bypass_actors[]? | select(.actor_type == "Integration" and (.actor_id | type == "number") and .bypass_mode == "pull_request")] | length > 0' \
+        >/dev/null 2>&1 <<<"$rs_rev"
+    fi
+  }
+  expect "ruleset main-review: -ci Integration bypass" "$settings" has_ci_bypass
+else
+  fail "ruleset main-review" "$settings"
 fi
 
 # --- environments
@@ -109,38 +161,57 @@ expect "environment: production branch policy is main" "make bootstrap" \
 # --- secrets and variables (names only; values are never readable)
 secrets="$(api "repos/$repo/actions/secrets?per_page=100")"
 dependabot="$(api "repos/$repo/dependabot/secrets?per_page=100")"
-# 30 is the API's maximum page size for variables.
-variables="$(api "repos/$repo/actions/variables?per_page=30")"
 has_name() { jqt "$1" "[.$2[]?.name] | index(\"$3\") != null"; }
+lacks_name() { jqt "$1" "[.$2[]?.name] | index(\"$3\") == null"; }
+has_num_var() { jqt "$1" "[.variables[]? | select(.name == \"$2\" and (.value | strings | test(\"^[1-9][0-9]*$\")))] | length > 0"; }
+
 expect "secret: CLAUDE_CODE_OAUTH_TOKEN" "make bootstrap (or: claude setup-token | gh secret set CLAUDE_CODE_OAUTH_TOKEN)" \
   has_name "$secrets" secrets CLAUDE_CODE_OAUTH_TOKEN
-# The bot key comes from a Mac Keychain or, in a Codespace, the Codespaces
-# secret BOT_APP_KEY_B64 (spec 0002 phase 1); bootstrap --skip-bot-key leaves
-# it out. bot_key_fix <app>: both ways to set it.
-bot_key_fix() {
-  # shellcheck disable=SC2016 # a command for the user to run, not expanded here
-  printf '%s' "on a Mac: security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo $repo --app $1" \
-    '; in a Codespace with the BOT_APP_KEY_B64 secret: printf %s "$BOT_APP_KEY_B64" | base64 -d | gh secret set BOT_APP_PRIVATE_KEY'" --repo $repo --app $1"
-}
-expect "secret: BOT_APP_PRIVATE_KEY" "$(bot_key_fix actions)" has_name "$secrets" secrets BOT_APP_PRIVATE_KEY
-expect "Dependabot secret: BOT_APP_PRIVATE_KEY" "$(bot_key_fix dependabot)" has_name "$dependabot" secrets BOT_APP_PRIVATE_KEY
-expect "variable: BOT_APP_ID" "make bootstrap" has_name "$variables" variables BOT_APP_ID
+expect "secret: CLAUDE_APP_PRIVATE_KEY" "scripts/bot-secrets.sh --key claude $repo" \
+  has_name "$secrets" secrets CLAUDE_APP_PRIVATE_KEY
+expect "Dependabot secret: CI_APP_PRIVATE_KEY" "scripts/bot-secrets.sh --key ci $repo" \
+  has_name "$dependabot" secrets CI_APP_PRIVATE_KEY
 
-# --- bot App installation: only the App's own token can see it. Minting one
-# (bot-token.sh) is a POST to GitHub but changes no repo state.
-# DOCTOR_BOT_CHECK overrides the command (tests point it at nothing).
-bot_check="${DOCTOR_BOT_CHECK:-$root/scripts/bot-token.sh}"
+expect "variable: CLAUDE_APP_ID" "make bootstrap" has_num_var "$variables" CLAUDE_APP_ID
+expect "variable: CLAUDE_APP_SLUG" "make bootstrap" has_name "$variables" variables CLAUDE_APP_SLUG
+expect "variable: CI_APP_ID" "make bootstrap" has_num_var "$variables" CI_APP_ID
+
+# Wrong-scope secrets must never exist (FR-10, C2, C12).
+expect "no Actions secret: CI_APP_PRIVATE_KEY" \
+  "gh secret delete CI_APP_PRIVATE_KEY --repo $repo --app actions" \
+  lacks_name "$secrets" secrets CI_APP_PRIVATE_KEY
+expect "no Dependabot secret: CLAUDE_APP_PRIVATE_KEY" \
+  "gh secret delete CLAUDE_APP_PRIVATE_KEY --repo $repo --app dependabot" \
+  lacks_name "$dependabot" secrets CLAUDE_APP_PRIVATE_KEY
+
+# Leftovers from before intent 0003 (FR-10).
+if has_name "$variables" variables BOT_APP_ID; then
+  warn "leftover variable: BOT_APP_ID" "gh variable delete BOT_APP_ID --repo $repo"
+fi
+if has_name "$secrets" secrets BOT_APP_PRIVATE_KEY; then
+  warn "leftover Actions secret: BOT_APP_PRIVATE_KEY" "gh secret delete BOT_APP_PRIVATE_KEY --repo $repo --app actions"
+fi
+if has_name "$dependabot" secrets BOT_APP_PRIVATE_KEY; then
+  warn "leftover Dependabot secret: BOT_APP_PRIVATE_KEY" "gh secret delete BOT_APP_PRIVATE_KEY --repo $repo --app dependabot"
+fi
 in_codespace=0
 [[ "${CODESPACES:-}" == "true" ]] && in_codespace=1
-have_key=0 broker=0
+if ((in_codespace)) && [[ -n "${BOT_APP_KEY_B64:-}" ]]; then
+  warn "leftover Codespaces secret: BOT_APP_KEY_B64" "delete BOT_APP_KEY_B64 at https://github.com/settings/codespaces"
+fi
+# Check Keychain metadata only (no -w), so the key value is never read.
+if quiet command -v security && quiet security find-generic-password -s github-app-private-key; then
+  warn "leftover Keychain item: github-app-private-key" "security delete-generic-password -s github-app-private-key"
+fi
+
+# --- bot Apps and broker (FR-10, D6)
+# DOCTOR_BOT_CHECK overrides scripts/bot-token.sh in tests.
+bot_check="${DOCTOR_BOT_CHECK:-$root/scripts/bot-token.sh}"
+broker=0
 bot_cfg="${BOT_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-bot}"
 broker_url="${BOT_BROKER_URL:-$(cat "$bot_cfg/broker_url" 2>/dev/null || true)}"
 if [[ -s "$bot_cfg/identity" && -n "$broker_url" ]]; then
-  have_key=1 broker=1 # the broker (bot-login.sh), spec 0002 phase 2
-elif ((in_codespace)) && [[ -n "${BOT_APP_KEY_B64:-}" ]]; then
-  have_key=1
-elif quiet command -v security; then
-  have_key=1
+  broker=1
 fi
 # FR-9: the broker answers and its kill switch is off. DOCTOR_HEALTHZ
 # overrides the command that prints /healthz (tests).
@@ -150,20 +221,53 @@ broker_enabled() {
   jq -e '.enabled == true' <<<"$out" >/dev/null
 }
 if ((broker)); then
-  expect "bot token broker answers and is enabled" "check ${broker_url%/}/healthz; the kill switch is BROKER_ENABLED in broker/wrangler.toml (broker/README.md)" \
+  expect "bot token broker answers and is enabled" \
+    "check ${broker_url%/}/healthz; the kill switch is BROKER_ENABLED in broker/wrangler.toml (broker/README.md)" \
     quiet broker_enabled
-  # Phase 1 is retired once the broker is live (spec 0002 C5).
-  if ((in_codespace)) && [[ -n "${BOT_APP_KEY_B64:-}" ]]; then
-    warn "phase 1 bot key still in this Codespace" "delete the Codespaces secret BOT_APP_KEY_B64 at github.com/settings/codespaces and rotate the App key (broker/README.md)"
-  fi
-elif ((in_codespace)) && [[ -z "${BOT_APP_KEY_B64:-}" ]]; then
-  skip "bot key in this Codespace" "sign in to the broker with scripts/bot-login.sh, or add the Codespaces secret BOT_APP_KEY_B64 at github.com/settings/codespaces with access to $repo, then restart the Codespace"
 fi
-if [[ -x "$bot_check" ]] && ((have_key)); then
-  expect "bot App installed on $repo" "install the bot App on $repo (github.com/settings/apps)" \
-    quiet "$bot_check"
+if ((broker)) && [[ -x "$bot_check" ]]; then
+  expect "bot App installed (claude: $claude_slug) on $repo" \
+    "add $repo to $claude_slug at https://github.com/settings/installations" \
+    quiet "$bot_check" --agent claude "$repo"
+  expect "bot App installed (agy: $agy_slug) on $repo" \
+    "add $repo to $agy_slug at https://github.com/settings/installations" \
+    quiet "$bot_check" --agent agy "$repo"
 else
-  skip "bot App installed" "needs scripts/bot-login.sh, the Mac Keychain key, or BOT_APP_KEY_B64 in a Codespace; check github.com/settings/installations"
+  skip "bot Apps installed (claude, agy)" \
+    "sign in to the broker with scripts/bot-login.sh, or check https://github.com/settings/installations"
+fi
+
+# -ci installation check via owner's gh (GET only, paginated).
+jq_has_repo() {
+  [[ -n "$1" ]] && jq -se --arg repo "$2" \
+    '[.[].repositories[]?.full_name | strings | ascii_downcase] | index($repo | ascii_downcase) != null' \
+    >/dev/null 2>&1 <<<"$1"
+}
+inst_err="$tmp_dir/inst_err"
+inst_rc=0
+inst_json="$(gh api "user/installations?per_page=100" --paginate 2>"$inst_err")" || inst_rc=$?
+if [[ "$inst_rc" -ne 0 ]]; then
+  if grep -qi 'authorized to a GitHub App' "$inst_err" || grep -qi 'authorized to a GitHub App' <<<"$inst_json"; then
+    skip "bot App installed (ci: $ci_slug) on $repo" \
+      "gh login cannot read /user/installations (403); verify $repo is in $ci_slug at https://github.com/settings/installations"
+  else
+    echo "user/installations?per_page=100" >>"$api_errors"
+    fail "bot App installed (ci: $ci_slug) on $repo" \
+      "add $repo to $ci_slug at https://github.com/settings/installations"
+  fi
+else
+  ci_inst_id="$(jq -sr --arg slug "$ci_slug" \
+    '[.[].installations[]? | select((.app_slug // "" | ascii_downcase) == ($slug | ascii_downcase)) | .id] | first // empty' \
+    <<<"$inst_json" 2>/dev/null || true)"
+  if [[ -n "$ci_inst_id" && "$ci_inst_id" =~ ^[0-9]+$ ]]; then
+    ci_repos="$(api "user/installations/$ci_inst_id/repositories?per_page=100" --paginate)"
+    expect "bot App installed (ci: $ci_slug) on $repo" \
+      "add $repo to $ci_slug at https://github.com/settings/installations" \
+      jq_has_repo "$ci_repos" "$repo"
+  else
+    fail "bot App installed (ci: $ci_slug) on $repo" \
+      "install $ci_slug and add $repo at https://github.com/settings/installations"
+  fi
 fi
 
 # --- deploy target

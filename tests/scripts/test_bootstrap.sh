@@ -24,7 +24,7 @@ export PATH="$tmp/bin:$PATH"
 # ~/.config/agent-bot never sends bootstrap down the broker path (the broker
 # cases set their own), and no BOT_BROKER_URL (cloud sessions export one).
 mkdir -p "$tmp/no-botcfg"
-unset BOT_BROKER_URL
+unset BOT_BROKER_URL CLAUDE_APP_ID CI_APP_ID CODESPACES BOT_APP_KEY_B64
 export BOT_CONFIG_DIR="$tmp/no-botcfg"
 # No terminal: bootstrap prompts $BOOTSTRAP_TTY, so point it at nothing. A run
 # under an agent's pty or make test in Terminal then never prompts, and never
@@ -199,7 +199,7 @@ c="$tmp/c"
 copy "$c"
 list_before="$(cd "$c" && find . | sort)"
 rc=0
-out="$(BOT_APP_ID=123 GCP_PROJECT_ID=hello-proj-1 BILLING_ACCOUNT=0A1B2C-3D4E5F-6A7B8C \
+out="$(CLAUDE_APP_ID=111 CI_APP_ID=222 GCP_PROJECT_ID=hello-proj-1 BILLING_ACCOUNT=0A1B2C-3D4E5F-6A7B8C \
   "$c/scripts/bootstrap.sh" --stack node --target cloud-run --repo acme/hello --dry-run 2>&1)" || rc=$?
 list_after="$(cd "$c" && find . | sort)"
 check "dry run: exits 0" '[[ $rc == 0 ]] || { echo "$out" | tail -5; false; }'
@@ -214,24 +214,31 @@ has "dry run: production with a required reviewer" "DRY-RUN: gh api -X PUT repos
 has "dry run: production limited to main" "deployment-branch-policies --silent -f name=main -f type=branch"
 has "dry run: Claude token secret" "gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme/hello --app actions"
 has "dry run: records when the Claude token was set" "gh variable set CLAUDE_CODE_OAUTH_TOKEN_SET_AT --repo acme/hello --body $(date -u +%Y-%m-%d)"
-has "dry run: bot key mirrored to Dependabot" "gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app dependabot"
-has "dry run: BOT_APP_ID variable" "DRY-RUN: gh variable set BOT_APP_ID --repo acme/hello --body 123"
+has "dry run: sets Claude App key via bot-secrets.sh --key claude" "DRY-RUN: scripts/bot-secrets.sh --key claude acme/hello"
+has "dry run: sets CI App key via bot-secrets.sh --key ci" "DRY-RUN: scripts/bot-secrets.sh --key ci acme/hello"
+has "dry run: CLAUDE_APP_ID variable" "DRY-RUN: gh variable set CLAUDE_APP_ID --repo acme/hello --body 111"
+has "dry run: CLAUDE_APP_SLUG variable" "DRY-RUN: gh variable set CLAUDE_APP_SLUG --repo acme/hello --body acme-claude"
+has "dry run: CI_APP_ID variable" "DRY-RUN: gh variable set CI_APP_ID --repo acme/hello --body 222"
+check "dry run: never sets BOT_APP_ID or BOT_APP_PRIVATE_KEY" '! grep -qE "BOT_APP_ID|BOT_APP_PRIVATE_KEY" <<<"$out"'
+has "dry run: main-review ruleset gets CI_APP_ID" "Ruleset 'main-review' from .github/rulesets/main-review.json (CI_APP_ID=222)"
+has "dry run: prints manual installation step for all three Apps" "add acme/hello to the installations of acme-claude, acme-agy and acme-ci at https://github.com/settings/installations"
 has "dry run: adds the stack's CodeQL language" "DRY-RUN: add codeql language javascript-typescript (build-mode none) to .github/workflows/pr.yml"
 has "dry run: appends the stack's Dependabot updates" "DRY-RUN: append stacks/node/dependabot-updates.yml to .github/dependabot.yml"
 has "dry run: runs the adapter bootstrap" "DRY-RUN: gh variable set APP_NAME --repo acme/hello --body hello"
 has "dry run: adapter uses the repo for WIF" "assertion.repository==\\'acme/hello\\'"
 # The push to main starts the first deploy, so everything that deploy needs
 # (Environments, secrets, the target's resources and variables) comes first;
-# the ruleset comes after, since it blocks direct pushes to main.
+# the rulesets come after, since they block direct pushes to main.
 line_of() { grep -nF -- "$1" <<<"$out" | head -1 | cut -d: -f1; }
 o_env="$(line_of "environments/production")"
 o_secret="$(line_of "gh secret set CLAUDE_CODE_OAUTH_TOKEN")"
+o_ci_var="$(line_of "gh variable set CI_APP_ID")"
 o_target="$(line_of "gh variable set APP_NAME")"
 o_push="$(line_of "DRY-RUN: git push origin HEAD:main")"
 o_rules="$(line_of "DRY-RUN: gh repo edit acme/hello")"
-check "dry run: Environments, secrets and target come before the push" \
-  '[[ -n "$o_push" && "$o_env" -lt "$o_push" && "$o_secret" -lt "$o_push" && "$o_target" -lt "$o_push" ]]'
-check "dry run: repo settings and ruleset come after the push" '[[ -n "$o_rules" && "$o_push" -lt "$o_rules" ]]'
+check "dry run: Environments, secrets, variables and target come before the push" \
+  '[[ -n "$o_push" && "$o_env" -lt "$o_push" && "$o_secret" -lt "$o_push" && "$o_ci_var" -lt "$o_push" && "$o_target" -lt "$o_push" ]]'
+check "dry run: repo settings and rulesets come after the push" '[[ -n "$o_rules" && "$o_push" -lt "$o_rules" ]]'
 if [[ -s "$tmp/calls" ]]; then
   fail "no real gh or Keychain call (called: $(tr '\n' ';' <"$tmp/calls"))"
 else
@@ -242,6 +249,28 @@ fi
 check "dry run: prints the Target header once" '[[ "$(grep -c "^==> Target:" <<<"$out")" == 1 ]]'
 check "dry run: no switch-target hint on a first bootstrap" '! grep -q "Commit deploy.yml" <<<"$out"'
 
+# C9 long login (>27 chars): bootstrap uses app-manifest.sh --name so App names
+# share the truncated prefix and fit GitHub's 34-character limit.
+out_long="$(CLAUDE_APP_ID=111 CI_APP_ID=222 \
+  "$c/scripts/bootstrap.sh" --stack node --target none --repo abcdefghijklmnopqrstuvwxyz1234/hello --dry-run 2>&1)"
+check "dry run: C9 truncation applied to CLAUDE_APP_SLUG" 'grep -qF "gh variable set CLAUDE_APP_SLUG --repo abcdefghijklmnopqrstuvwxyz1234/hello --body abcdefghijklmnopqrstuvwxyz1-claude" <<<"$out_long"'
+check "dry run: C9 truncation applied to manual installation step" 'grep -qF "installations of abcdefghijklmnopqrstuvwxyz1-claude, abcdefghijklmnopqrstuvwxyz1-agy and abcdefghijklmnopqrstuvwxyz1-ci at https://github.com/settings/installations" <<<"$out_long"'
+
+# Mixed-case owner is lowercased by app-manifest.sh --name, and --dry-run works
+# even without CLAUDE_APP_ID / CI_APP_ID set in env.
+rc=0
+out_unset="$(env -u CLAUDE_APP_ID -u CI_APP_ID \
+  "$c/scripts/bootstrap.sh" --stack node --target none --repo Jomaries777/hello --dry-run 2>&1)" || rc=$?
+check "dry run without App IDs: exits 0" '[[ $rc == 0 ]]'
+check "dry run without App IDs: prints <id> placeholders and <CI_APP_ID> for main-review" \
+  'grep -qF "gh variable set CLAUDE_APP_ID --repo Jomaries777/hello --body \<id\>" <<<"$out_unset" && grep -qF "gh variable set CI_APP_ID --repo Jomaries777/hello --body \<id\>" <<<"$out_unset" && grep -qF "(CI_APP_ID=<CI_APP_ID>)" <<<"$out_unset"'
+check "dry run mixed-case owner: App slugs are lowercased" \
+  'grep -qF "gh variable set CLAUDE_APP_SLUG --repo Jomaries777/hello --body jomaries777-claude" <<<"$out_unset" && grep -qF "installations of jomaries777-claude, jomaries777-agy and jomaries777-ci at https://github.com/settings/installations" <<<"$out_unset"'
+check "bootstrap --help includes secrets and variables list" '"$c/scripts/bootstrap.sh" --help | grep -q "CLAUDE_APP_SLUG"'
+rc=0
+"$c/scripts/bootstrap.sh" --repo >/dev/null 2>&1 || rc=$?
+check "bootstrap missing --repo value exits 64" '[[ $rc == 64 ]]'
+
 # --- refuses to run against the template repo itself, before any change
 g="$tmp/g"
 copy "$g"
@@ -250,7 +279,7 @@ for args in "--repo Jomaries777/template-repo-ci --dry-run" "--repo jomaries777/
   : >"$tmp/calls"
   rc=0
   # shellcheck disable=SC2086 # split the arguments on purpose
-  out="$(BOT_APP_ID=123 "$g/scripts/bootstrap.sh" --stack node --target none $args 2>&1)" || rc=$?
+  out="$(CLAUDE_APP_ID=111 CI_APP_ID=222 "$g/scripts/bootstrap.sh" --stack node --target none $args 2>&1)" || rc=$?
   check "template guard: '$args' is refused with 64" '[[ $rc == 64 ]] && grep -q "is the template itself" <<<"$out"'
   check "template guard: '$args' calls no gh" '[[ ! -s "$tmp/calls" ]]'
 done
@@ -270,17 +299,18 @@ for url in https://github.com/Jomaries777/template-repo-ci.git git@github.com:jo
   check "template guard, local-only, origin $url: refused with 64, no file changed" '[[ $rc == 64 && "$list_before" == "$list_after" ]] && grep -q "is the template itself" <<<"$out"'
 done
 
-# --- --skip-bot-key: everything else still happens; the key is left for later
+# --- --skip-bot-key: everything else still happens; both App keys left for later
 k="$tmp/k"
 copy "$k"
 rc=0
-out="$(BOT_APP_ID=123 "$k/scripts/bootstrap.sh" --stack node --target none --repo acme/hello --dry-run --skip-bot-key 2>&1)" || rc=$?
+out="$(CLAUDE_APP_ID=111 CI_APP_ID=222 "$k/scripts/bootstrap.sh" --stack node --target none --repo acme/hello --dry-run --skip-bot-key 2>&1)" || rc=$?
 check "skip-bot-key: exits 0" '[[ $rc == 0 ]]'
-# set_secret's dry-run line is the only way the key would be set.
-check "skip-bot-key: never sets the bot key" '! grep -q "DRY-RUN: <BOT_APP_PRIVATE_KEY" <<<"$out" && grep -q "BOT_APP_PRIVATE_KEY: skipped" <<<"$out"'
-check "skip-bot-key: prints the Mac commands for later" 'grep -q "security find-generic-password -s github-app-private-key -w | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app dependabot" <<<"$out"'
-check "skip-bot-key: prints the Codespace commands too" 'grep -qF "printf %s \"\$BOT_APP_KEY_B64\" | base64 -d | gh secret set BOT_APP_PRIVATE_KEY --repo acme/hello --app actions" <<<"$out"'
-check "skip-bot-key: still sets the Claude token and BOT_APP_ID" 'grep -q "gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme/hello" <<<"$out" && grep -q "gh variable set BOT_APP_ID --repo acme/hello --body 123" <<<"$out"'
+check "skip-bot-key: never calls bot-secrets.sh" '! grep -q "DRY-RUN: scripts/bot-secrets.sh" <<<"$out" && grep -q "CLAUDE_APP_PRIVATE_KEY, CI_APP_PRIVATE_KEY: skipped" <<<"$out"'
+check "skip-bot-key: prints both bot-secrets.sh commands for later" \
+  'grep -qF "scripts/bot-secrets.sh --key claude acme/hello" <<<"$out" && grep -qF "scripts/bot-secrets.sh --key ci acme/hello" <<<"$out"'
+check "skip-bot-key: no local key commands printed" '! grep -qE "github-app-private-key|BOT_APP_KEY_B64" <<<"$out"'
+check "skip-bot-key: still sets the Claude token and App variables" \
+  'grep -q "gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo acme/hello" <<<"$out" && grep -q "gh variable set CLAUDE_APP_ID --repo acme/hello --body 111" <<<"$out" && grep -q "gh variable set CI_APP_ID --repo acme/hello --body 222" <<<"$out"'
 check "skip-bot-key: still creates production with a reviewer" 'grep -q "environments/production" <<<"$out"'
 
 # --- fail closed: if the rulesets can't be read, bootstrap must not push
@@ -304,7 +334,7 @@ chmod +x "$tmp/bind/gh" "$tmp/bind/security"
 dpath="$tmp/bind:$PATH"
 : >"$tmp/callsd"
 rc=0
-out="$(cd "$d" && PATH="$dpath" BOT_APP_ID=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+out="$(cd "$d" && PATH="$dpath" CLAUDE_APP_ID=111 CI_APP_ID=222 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
   "$d/scripts/bootstrap.sh" --stack node --target none --repo acme/hello --skip-bot-key </dev/null 2>&1)" || rc=$?
 check "unreadable rulesets: stops with an error" '[[ $rc == 1 ]] && grep -q "not pushing" <<<"$out" || { echo "$out" | tail -3; false; }'
 # The copy has no remote, so any git push would print "fatal: ... origin".
@@ -313,7 +343,7 @@ check "unreadable rulesets: no ruleset applied" '! grep -q "gh repo edit" "$tmp/
 check "unreadable rulesets: the commit stays local" '[[ "$(cd "$d" && git log --oneline | wc -l)" -eq 2 ]]'
 # A rerun must retry the push, not stop at "nothing to commit".
 rc=0
-out="$(cd "$d" && PATH="$dpath" BOT_APP_ID=1 "$d/scripts/bootstrap.sh" --stack node --target none --repo acme/hello --skip-bot-key </dev/null 2>&1)" || rc=$?
+out="$(cd "$d" && PATH="$dpath" CLAUDE_APP_ID=111 CI_APP_ID=222 "$d/scripts/bootstrap.sh" --stack node --target none --repo acme/hello --skip-bot-key </dev/null 2>&1)" || rc=$?
 check "rerun after a failed push: tries to push again" '[[ $rc == 1 ]] && grep -q "not pushing" <<<"$out"'
 check "rerun after a failed push: no second commit" '[[ "$(cd "$d" && git log --oneline | wc -l)" -eq 2 ]]'
 
@@ -331,7 +361,7 @@ check "dirty tree: nothing changed" '[[ "$(cd "$e" && git status --porcelain)" =
 f="$tmp/f"
 copy "$f"
 rc=0
-out="$(BOT_APP_ID=1 GCP_PROJECT_ID=hello-proj-1 BILLING_ACCOUNT=0A1B2C-3D4E5F-6A7B8C \
+out="$(CLAUDE_APP_ID=111 CI_APP_ID=222 GCP_PROJECT_ID=hello-proj-1 BILLING_ACCOUNT=0A1B2C-3D4E5F-6A7B8C \
   "$f/scripts/bootstrap.sh" --stack node --target cloud-run --repo acme/9lives --dry-run 2>&1)" || rc=$?
 check "digit-leading repo: APP_NAME gets app- prefix" 'grep -q "gh variable set APP_NAME --repo acme/9lives --body app-9lives" <<<"$out"'
 : >"$tmp/calls"
@@ -364,11 +394,13 @@ check "real mode: no Keychain and no terminal stops bootstrap" '[[ $rc == 1 ]] &
 check "real mode: a failed setup step pushes nothing (no early deploy)" '[[ "$(git -C "$tmp/origin.git" log --oneline main | wc -l)" -eq 1 ]]'
 check "real mode: an empty secret is never set" '! grep -q "gh secret set" "$tmp/calls3"'
 
-# --- real mode in a Codespace (spec 0002 phase 1): the bot key comes from the
-# BOT_APP_KEY_B64 Codespaces secret, never from the Keychain, and reaches gh
-# on stdin for both Actions and Dependabot.
+# --- real mode complete run via the broker (spec 0003 FR-9, D6, C6):
+# bot-secrets.sh sets both keys, variables are set before gh-settings.sh,
+# main-review gets CI_APP_ID, and no PUT /user/installations API is called.
 h="$tmp/h"
 copy "$h"
+printf '#!/usr/bin/env bash\necho "bot-secrets $*" >>%q\nexit 0\n' "$tmp/calls4" >"$h/scripts/bot-secrets.sh"
+chmod +x "$h/scripts/bot-secrets.sh"
 git init -q --bare "$tmp/origin4.git"
 (cd "$h" && git init -q -b main && git add -A && git -c user.email=t@t -c user.name=t commit -qm init &&
   git remote add origin "$tmp/origin4.git" && git push -q origin main)
@@ -376,15 +408,32 @@ mkdir -p "$tmp/bin4" "$tmp/sec4"
 cat >"$tmp/bin4/gh" <<EOF4
 #!/usr/bin/env bash
 echo "gh \$*" >>"$tmp/calls4"
-case "\$1 \$2" in
+case "\$*" in
+  "secret list --repo acme/hello --json name -q .[].name")
+    printf '%s\n' \${FAKE_ACTIONS_SECRETS:-}
+    ;;
+  "secret list --repo acme/hello --app dependabot --json name -q .[].name")
+    printf '%s\n' \${FAKE_DEPENDABOT_SECRETS:-}
+    ;;
+  "variable get CLAUDE_APP_ID --repo acme/hello")
+    [[ -n "\${FAKE_VAR_CLAUDE_APP_ID:-}" ]] && echo "\$FAKE_VAR_CLAUDE_APP_ID" && exit 0
+    exit 1
+    ;;
+  "variable get CI_APP_ID --repo acme/hello")
+    [[ -n "\${FAKE_VAR_CI_APP_ID:-}" ]] && echo "\$FAKE_VAR_CI_APP_ID" && exit 0
+    exit 1
+    ;;
   "api repos/acme/hello/rulesets?includes_parents=true") echo '[]' ;;
+  "api repos/acme/hello/rulesets") echo '[]' ;;
   "api repos/acme/hello/branches/main") echo '{"protected":false}' ;;
   "api users/acme") echo '{"type":"User","id":1}' ;;
-  "secret set") cat >"$tmp/sec4/\$3_\${7:-actions}" ;;
+  "secret set"*) cat >"$tmp/sec4/\$3_\${7:-actions}" ;;
+  *"repos/acme/hello/rulesets"*"--input -"*) cat >"$tmp/review4.json" ;;
+  *"--input -"*) cat >/dev/null ;;
 esac
 exit 0
 EOF4
-# The Keychain holds only the Claude token; asking it for the bot key is logged.
+# The Keychain holds only the Claude OAuth token; asking for anything else is logged.
 cat >"$tmp/bin4/security" <<EOF4
 #!/usr/bin/env bash
 echo "security \$*" >>"$tmp/calls4"
@@ -394,64 +443,98 @@ case "\$*" in
 esac
 EOF4
 chmod +x "$tmp/bin4/gh" "$tmp/bin4/security"
-pem="-----BEGIN TEST KEY-----
-abc
------END TEST KEY-----"
 : >"$tmp/calls4"
+rm -f "$tmp/review4.json"
 rc=0
-out="$(cd "$h" && PATH="$tmp/bin4:$PATH" CODESPACES=true BOT_APP_KEY_B64="$(printf '%s' "$pem" | base64 | tr -d '\n')" BOT_APP_ID=1 \
+out="$(cd "$h" && PATH="$tmp/bin4:$PATH" CLAUDE_APP_ID=111 CI_APP_ID=222 \
   GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
   "$h/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
-check "codespace: bot key set for Actions from BOT_APP_KEY_B64" '[[ "$(cat "$tmp/sec4/BOT_APP_PRIVATE_KEY_actions" 2>/dev/null)" == "$pem" ]]'
-check "codespace: bot key set for Dependabot from BOT_APP_KEY_B64" '[[ "$(cat "$tmp/sec4/BOT_APP_PRIVATE_KEY_dependabot" 2>/dev/null)" == "$pem" ]]'
-check "codespace: Keychain never asked for the bot key" '! grep -q "github-app-private-key" "$tmp/calls4"'
-check "codespace: the key is never printed" '! grep -q "TEST KEY" <<<"$out"'
-check "real mode: a complete run pushes to main" '[[ $rc == 0 && "$(git -C "$tmp/origin4.git" log --oneline main | wc -l)" -eq 2 ]] || { echo "$out" | tail -3; false; }'
-check "real mode: the ruleset is applied after the push" '[[ "$(grep -n "gh repo edit" "$tmp/calls4" | head -1 | cut -d: -f1)" -gt "$(grep -n "rulesets?includes_parents" "$tmp/calls4" | head -1 | cut -d: -f1)" ]]'
+check "real mode: a complete run exits 0 and pushes to main" '[[ $rc == 0 && "$(git -C "$tmp/origin4.git" log --oneline main | wc -l)" -eq 2 ]] || { echo "$out" | tail -5; false; }'
+check "real mode: calls bot-secrets.sh --key claude and --key ci" \
+  'grep -qx "bot-secrets --key claude acme/hello" "$tmp/calls4" && grep -qx "bot-secrets --key ci acme/hello" "$tmp/calls4"'
+check "real mode: Keychain never asked for github-app-private-key" '! grep -q "github-app-private-key" "$tmp/calls4"'
+check "real mode: sets CLAUDE_APP_ID, CLAUDE_APP_SLUG and CI_APP_ID" \
+  'grep -qx "gh variable set CLAUDE_APP_ID --repo acme/hello --body 111" "$tmp/calls4" && grep -qx "gh variable set CLAUDE_APP_SLUG --repo acme/hello --body acme-claude" "$tmp/calls4" && grep -qx "gh variable set CI_APP_ID --repo acme/hello --body 222" "$tmp/calls4"'
+check "real mode: never sets BOT_APP_ID" '! grep -q "BOT_APP_ID" "$tmp/calls4"'
+check "real mode: never calls PUT /user/installations (S2)" '! grep -q "user/installations" "$tmp/calls4"'
+check "real mode: the rulesets are applied after the push" '[[ "$(grep -n "gh repo edit" "$tmp/calls4" | head -1 | cut -d: -f1)" -gt "$(grep -n "rulesets?includes_parents" "$tmp/calls4" | head -1 | cut -d: -f1)" ]]'
+check "real mode: main-review ruleset gets CI_APP_ID as a number" 'jq -e "[.bypass_actors[] | select(.actor_type == \"Integration\" and .actor_id == 222)] | length == 1" "$tmp/review4.json" >/dev/null'
+check "real mode: prints manual installation step" 'grep -qF "add acme/hello to the installations of acme-claude, acme-agy and acme-ci at https://github.com/settings/installations" <<<"$out"'
 
-# A Codespaces secret that isn't a PEM key stops bootstrap before gh sees it.
-h2="$tmp/h2"
-copy "$h2"
-git init -q --bare "$tmp/origin5.git"
-(cd "$h2" && git init -q -b main && git add -A && git -c user.email=t@t -c user.name=t commit -qm init &&
-  git remote add origin "$tmp/origin5.git" && git push -q origin main)
-rm -f "$tmp/sec4"/*
+# Skipping a secret that is already set: if CLAUDE_APP_PRIVATE_KEY is already
+# set in Actions, only --key ci is called; if both are set, neither is called.
 : >"$tmp/calls4"
 rc=0
-out="$(cd "$h2" && PATH="$tmp/bin4:$PATH" CODESPACES=true BOT_APP_KEY_B64="$(printf 'junk-value' | base64)" BOT_APP_ID=1 \
-  GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-  "$h2/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
-check "codespace: a non-PEM secret stops bootstrap" '[[ $rc != 0 ]] && grep -q "PEM" <<<"$out"'
-check "codespace: a non-PEM secret is never stored" '[[ ! -e "$tmp/sec4/BOT_APP_PRIVATE_KEY_actions" ]] && ! grep -q "junk-value" <<<"$out"'
+out="$(cd "$h" && PATH="$tmp/bin4:$PATH" FAKE_ACTIONS_SECRETS="CLAUDE_CODE_OAUTH_TOKEN CLAUDE_APP_PRIVATE_KEY" \
+  CLAUDE_APP_ID=111 CI_APP_ID=222 \
+  "$h/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
+check "already set: skips --key claude and still calls --key ci" \
+  '[[ $rc == 0 ]] && ! grep -q "bot-secrets --key claude" "$tmp/calls4" && grep -qx "bot-secrets --key ci acme/hello" "$tmp/calls4"'
 
-# --- signed in to the broker (spec 0002 phase 2): the broker sets the bot key;
-# the key never comes to this device, and a refusal stops bootstrap instead of
-# falling back to a phase 1 key.
-mkdir -p "$tmp/botcfg"
-printf 'x' >"$tmp/botcfg/identity"
-printf 'https://broker.test\n' >"$tmp/botcfg/broker_url"
-b="$tmp/b"
-copy "$b"
+: >"$tmp/calls4"
 rc=0
-out="$(BOT_APP_ID=123 BOT_CONFIG_DIR="$tmp/botcfg" "$b/scripts/bootstrap.sh" --stack node --target none --repo acme/hello --dry-run 2>&1)" || rc=$?
-check "broker: dry run exits 0" '[[ $rc == 0 ]]'
-check "broker: dry run uses bot-secrets.sh for both apps" 'grep -qF "DRY-RUN: scripts/bot-secrets.sh --apps actions,dependabot acme/hello" <<<"$out"'
-check "broker: no local key source is asked" '! grep -q "DRY-RUN: <BOT_APP_PRIVATE_KEY" <<<"$out"'
+out="$(cd "$h" && PATH="$tmp/bin4:$PATH" FAKE_ACTIONS_SECRETS="CLAUDE_CODE_OAUTH_TOKEN CLAUDE_APP_PRIVATE_KEY" \
+  FAKE_DEPENDABOT_SECRETS="CI_APP_PRIVATE_KEY" CLAUDE_APP_ID=111 CI_APP_ID=222 \
+  "$h/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
+check "already set: skips both keys when both are already set" \
+  '[[ $rc == 0 ]] && ! grep -q "bot-secrets" "$tmp/calls4"'
+
+# Reading existing CLAUDE_APP_ID and CI_APP_ID from repo variables when env is unset.
+: >"$tmp/calls4"
+rm -f "$tmp/review4.json"
+rc=0
+out="$(cd "$h" && env -u CLAUDE_APP_ID -u CI_APP_ID PATH="$tmp/bin4:$PATH" \
+  FAKE_ACTIONS_SECRETS="CLAUDE_CODE_OAUTH_TOKEN CLAUDE_APP_PRIVATE_KEY" \
+  FAKE_DEPENDABOT_SECRETS="CI_APP_PRIVATE_KEY" \
+  FAKE_VAR_CLAUDE_APP_ID=333 FAKE_VAR_CI_APP_ID=444 \
+  "$h/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
+check "existing repo variables: reads CLAUDE_APP_ID and CI_APP_ID without env" \
+  '[[ $rc == 0 ]] && grep -qx "gh variable get CLAUDE_APP_ID --repo acme/hello" "$tmp/calls4" && grep -qx "gh variable get CI_APP_ID --repo acme/hello" "$tmp/calls4"'
+check "existing repo variables: passes CI_APP_ID to main-review ruleset" \
+  'jq -e "[.bypass_actors[] | select(.actor_type == \"Integration\" and .actor_id == 444)] | length == 1" "$tmp/review4.json" >/dev/null'
+
+# Missing or non-numeric CLAUDE_APP_ID / CI_APP_ID fails cleanly.
+rc=0
+out="$(cd "$h" && env -u CLAUDE_APP_ID -u CI_APP_ID PATH="$tmp/bin4:$PATH" FAKE_ACTIONS_SECRETS="CLAUDE_CODE_OAUTH_TOKEN CLAUDE_APP_PRIVATE_KEY" \
+  FAKE_DEPENDABOT_SECRETS="CI_APP_PRIVATE_KEY" CLAUDE_APP_ID=111 \
+  "$h/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
+check "missing CI_APP_ID without tty: stops with clear error" '[[ $rc == 1 ]] && grep -q "CI_APP_ID" <<<"$out"'
+rc=0
+out="$(cd "$h" && env -u CLAUDE_APP_ID -u CI_APP_ID PATH="$tmp/bin4:$PATH" FAKE_ACTIONS_SECRETS="CLAUDE_CODE_OAUTH_TOKEN CLAUDE_APP_PRIVATE_KEY" \
+  FAKE_DEPENDABOT_SECRETS="CI_APP_PRIVATE_KEY" CI_APP_ID=222 \
+  "$h/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
+check "missing CLAUDE_APP_ID without tty: stops with clear error" '[[ $rc == 1 ]] && grep -q "CLAUDE_APP_ID" <<<"$out"'
+rc=0
+out="$(CLAUDE_APP_ID=abc CI_APP_ID=222 "$c/scripts/bootstrap.sh" --stack node --target none --repo acme/hello --dry-run 2>&1)" || rc=$?
+check "non-numeric CLAUDE_APP_ID: rejected with 64" '[[ $rc == 64 ]] && grep -q "CLAUDE_APP_ID must be a number" <<<"$out"'
+rc=0
+out="$(CLAUDE_APP_ID=111 CI_APP_ID=0 "$c/scripts/bootstrap.sh" --stack node --target none --repo acme/hello --dry-run 2>&1)" || rc=$?
+check "zero CI_APP_ID: rejected with 64" '[[ $rc == 64 ]] && grep -q "CI_APP_ID must be a number" <<<"$out"'
+
+# Broker refusal stops bootstrap, with no fallback to local keys even when
+# CODESPACES and BOT_APP_KEY_B64 are set (D6).
 h3="$tmp/h3"
 copy "$h3"
 printf '#!/usr/bin/env bash\necho "bot-secrets $*" >>%q\necho "bot-secrets: the broker refused acme/hello: github_denied (HTTP 403)" >&2\nexit 1\n' "$tmp/calls4" >"$h3/scripts/bot-secrets.sh"
+chmod +x "$h3/scripts/bot-secrets.sh"
 git init -q --bare "$tmp/origin6.git"
 (cd "$h3" && git init -q -b main && git add -A && git -c user.email=t@t -c user.name=t commit -qm init &&
   git remote add origin "$tmp/origin6.git" && git push -q origin main)
 rm -f "$tmp/sec4"/*
 : >"$tmp/calls4"
+pem="-----BEGIN TEST KEY-----
+abc
+-----END TEST KEY-----"
 rc=0
-out="$(cd "$h3" && PATH="$tmp/bin4:$PATH" CODESPACES=true BOT_APP_KEY_B64="$(printf '%s' "$pem" | base64 | tr -d '\n')" BOT_APP_ID=1 BOT_CONFIG_DIR="$tmp/botcfg" \
+out="$(cd "$h3" && PATH="$tmp/bin4:$PATH" CODESPACES=true BOT_APP_KEY_B64="$(printf '%s' "$pem" | base64 | tr -d '\n')" CLAUDE_APP_ID=111 CI_APP_ID=222 \
   GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
   "$h3/scripts/bootstrap.sh" --stack node --target none --repo acme/hello </dev/null 2>&1)" || rc=$?
-check "broker: bot-secrets.sh called for both apps" 'grep -q "bot-secrets --apps actions,dependabot acme/hello" "$tmp/calls4"'
+check "broker: bot-secrets.sh --key claude called" 'grep -qx "bot-secrets --key claude acme/hello" "$tmp/calls4"'
 check "broker: a refusal stops bootstrap" '[[ $rc != 0 ]] && grep -q "github_denied" <<<"$out"'
-check "broker: no fallback to the phase 1 key" '[[ ! -e "$tmp/sec4/BOT_APP_PRIVATE_KEY_actions" ]]'
+check "broker: no fallback to local keys" '! grep -q "github-app-private-key" "$tmp/calls4" && [[ ! -e "$tmp/sec4/CLAUDE_APP_PRIVATE_KEY_actions" && ! -e "$tmp/sec4/BOT_APP_PRIVATE_KEY_actions" ]]'
+
+# No local App key paths remain in bootstrap.sh (D6).
+check "bootstrap.sh has no local App key paths" '! grep -qE "BOT_APP_ID|BOT_APP_PRIVATE_KEY|BOT_APP_KEY_B64|github-app-private-key" "$src/scripts/bootstrap.sh"'
 
 # --- ask() uses only a terminal (review of #99). A BOOTSTRAP_TTY that isn't
 # one must fail: `>` would create a missing path as a file, and a prompt that
