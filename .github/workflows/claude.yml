@@ -40,16 +40,15 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Write access so Claude can push a branch and open a PR when asked.
-    # GITHUB_TOKEN never has the `workflows` permission, so it cannot change CI.
+    # Claude acts as the Claude App (<owner>-claude[bot], spec 0003 FR-6): it
+    # pushes a branch, opens a PR and replies with the App token minted below.
+    # That token is limited by its permission-* inputs (token table) and, like
+    # every App token here, has no `workflows` permission, so it cannot change
+    # CI. GITHUB_TOKEN only checks out the code and gets Claude's OIDC token.
     permissions:
-      contents: write
-      pull-requests: write
-      issues: write
+      contents: read
       id-token: write
-      actions: read
     env:
-      GH_TOKEN: ${{ github.token }}
       # Only one of these is set for any given event.
       REQUEST: ${{ github.event.comment.body || github.event.review.body || github.event.issue.body }}
     steps:
@@ -61,13 +60,26 @@ jobs:
           else
             echo "model=claude-sonnet-5-5" >>"$GITHUB_OUTPUT"
           fi
+      - name: Mint the Claude App token
+        id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.CLAUDE_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+          permission-actions: read
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          # The action sets up git with the App token; a saved GITHUB_TOKEN
+          # header would push as github-actions[bot] instead.
+          persist-credentials: false
       - uses: anthropics/claude-code-action@c84e279f859e2591391e95bd309286eb111c345f # v1.0.284
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ github.token }}
+          github_token: ${{ steps.app.outputs.token }}
           trigger_phrase: "@claude"
           # Off on purpose: this repo is public and tool output could expose data.
           show_full_output: false
