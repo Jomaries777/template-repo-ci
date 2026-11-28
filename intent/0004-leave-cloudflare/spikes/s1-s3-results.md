@@ -14,18 +14,18 @@
 |---|---|---|
 | S1 IP rule | Google's front end **appends** the client address as the **last** `X-Forwarded-For` entry. Entries the client sends come before it, unchanged | `handler.js` takes the last comma-separated entry, trimmed |
 | S1 headers | `Authorization: Bearer <non-Google token>` and `X-GitHub-Token` reach the container unchanged on a public (`allUsers`) service | No change to the HTTP contract (FR-2) |
-| S1 cold start | 1.86 s, 1.93 s and 1.96 s on the first request after idle (warm: 0.21 s) | At the edge of Decision 7's ~2 s (owner, item 3). Well under the shortest `--max-time` (10 s, `doctor.sh`) |
+| S1 cold start | 1.86 s, 1.93 s and 1.96 s on the first request after idle (warm: 0.21 s) | Accepted by the owner on 2026-11-28 (item 3). Well under the shortest `--max-time` (10 s, `doctor.sh`) |
 | S2 error | A query whose index is missing answers **HTTP 400** with `"status": "FAILED_PRECONDITION"`, inside a JSON array | The store throws on any non-2xx answer, and on any array entry with `error`; `identify` gives `503 audit_unavailable` |
 | S2 count | Right count; **1 read** | `countLastHour` as specified |
 | S2 prune | `expire_at < now`, `limit 50`, then one `commit` of deletes removed exactly the expired documents; 1 read per document returned | `prune` as specified |
 | S3 build | `--build-service-account builder@` with only `roles/run.builder` builds and deploys, with Editor removed from the default compute account | `setup.sh` and `deploy.sh` as specified (C2) |
-| S3 free tier | Default pool, no machine type set (so the default `e2-standard-2`); 23 s build; source bucket in `US-WEST1`; container scanning off | Build minutes and the upload bucket are free. **Image size is a concern**, below |
+| S3 free tier | Default pool, no machine type set (so the default `e2-standard-2`); 23 s build; source bucket in `US-WEST1`; container scanning off | Build minutes and the upload bucket are free. Image size: a `node:22-alpine` `Dockerfile` (owner, item 1) |
 
 **For the owner:**
 
-1. **Image size.** The buildpacks image of a trivial Node server is 145,871,130 bytes (139 MiB). Keeping the 2 newest images (NFR-1) holds about 278 MiB of the 0.5 GiB Artifact Registry free tier, which is shared by every project on the billing account (M2 step 2 measures the others). The broker's image will be about the same, since its dependencies are small. Options: keep 1 image; or build from a small `Dockerfile` (for example `node:22-alpine`, about 50 MiB) instead of buildpacks. Owner decision before M1 1b.
+1. **Image size.** The buildpacks image of a trivial Node server is 145,871,130 bytes (139 MiB). Keeping the 2 newest images (NFR-1) holds about 278 MiB of the 0.5 GiB Artifact Registry free tier, which is shared by every project on the billing account (M2 step 2 measures the others). The broker's image will be about the same, since its dependencies are small. **Decided by the owner on 2026-11-28: a `node:22-alpine` `Dockerfile`.** Measured below (S3, "Dockerfile build"): 58.5 MiB, so 2 kept images hold about 117 MiB.
 2. **Budget.** No budget is scoped to `agent-bot-spike-test`; only the account-wide "Free Tier Alert" ($1) covers it. M0 asked for a $1 budget on the spike project. The spike was short and its cost is recorded below.
-3. **Cold start at the edge.** 1.86–1.96 s for a trivial server, and the broker loads a little more. Every script's timeout is 10 s or more, so nothing fails. The plan's gate sends anything over about 2 s back to the owner, so this is the owner's call: accept it, or look for a faster start. Startup CPU boost is already on, so a smaller image (item 1) is the remaining lever.
+3. **Cold start at the edge.** 1.86–1.96 s for a trivial server, and the broker loads a little more. Every script's timeout is 10 s or more, so nothing fails. The plan's gate sends anything over about 2 s back to the owner, so it went to the owner. **Accepted by the owner on 2026-11-28.**
 
 ## S1: headers, caller IP and cold start
 
@@ -92,6 +92,24 @@ The single-field query on `expire_at` uses Firestore's automatic single-field in
 | Source bucket | `run-sources-agent-bot-spike-test-us-west1`, location `US-WEST1` |
 | Artifact Registry | `cloud-run-source-deploy` in `us-west1`; the image is 145,871,130 bytes |
 | `containerscanning.googleapis.com` | Not enabled |
+
+### Dockerfile build (after the gate decision)
+
+The echo service was rebuilt from this `Dockerfile`, with the same `builder@` and `runtime@`:
+
+```dockerfile
+FROM node:22-alpine
+WORKDIR /app
+COPY package.json server.js ./
+USER node
+CMD ["node", "server.js"]
+```
+
+| Check | Result |
+|---|---|
+| First deploy without `--clear-base-image` | Refused: `Missing required argument [--clear-base-image]: Base image is not supported for services built from Dockerfile`. The buildpacks deploy had set a managed base image on the service. `deploy.sh` passes `--clear-base-image` (harmless on a service that has none) |
+| Deploy with `--clear-base-image` | `echo-00002-ggg`, revision ready in 7.6 s, built as `builder@` |
+| Image size | 61,376,109 bytes (58.5 MiB), against 145,871,130 (139 MiB) from buildpacks |
 
 The legacy Cloud Build account `305792762631@cloudbuild.gserviceaccount.com` keeps `roles/cloudbuild.builds.builder` in a new project. It didn't run this build. `setup.sh` should check that it can't read the secrets: secrets grant access per secret, so it can't unless someone grants it.
 
