@@ -19,7 +19,7 @@ GitHub template for AI-native projects. Keep this under one page; when Claude ma
 - Artifact loop: `intent/<id>-<slug>/intent.md` -> `spec.md` -> `plan.md` -> PR. Each folder is committed; later artifacts are written only after the earlier one is accepted.
 - Start every change in plan mode, reading the accepted `spec.md` and `plan.md`.
 - Conventional commits (`feat:`, `fix:`, `docs:`, `chore:`, `test:`, `ci:`). Branches: `feat/*`, `fix/*`, `docs/*`.
-- Push only as the bot: on a signed-in device `GH_TOKEN="$(scripts/bot-token.sh)" git push ...` / `gh pr create ...`; in a cloud session (environment "Template projects (bot relay)") `scripts/bot-relay.sh --pr "title"`. Bot secrets for a repo: `scripts/bot-secrets.sh owner/repo`.
+- Push only as the bot: on a signed-in device `GH_TOKEN="$(scripts/bot-token.sh --agent claude)" git push ...` / `gh pr create ...`; in a cloud session (environment "Template projects (bot relay)") `scripts/bot-relay.sh --pr "title"`. Bot secrets for a repo: `scripts/bot-secrets.sh --key claude owner/repo`, then `--key ci`.
 - Never push to `main`. Agent output always arrives as a PR; only the owner approves.
 - Never edit `.github/workflows/` as the bot (the App has no `workflows` permission).
 - Must-hold rules are backed by the ruleset and CI; hooks are an early guard on Edit/Write (secrets also on Bash), not a sandbox; skills are advisory. Hooks need `jq` and block every edit without it. The `permissions.deny` list is a convenience; the ruleset is the real guard on `main`.
