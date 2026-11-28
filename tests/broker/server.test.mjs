@@ -19,7 +19,10 @@ async function withServer(handle, env, deps, fn) {
   try {
     return await fn({ port, baseUrl: `http://127.0.0.1:${port}` });
   } finally {
-    server.closeIdleConnections?.();
+    // Every assertion has run: drop all sockets, busy ones too. A fetch whose
+    // upload was cut short by a 413 leaves a request the server never sees end,
+    // and server.close() would wait about 5 s for it to time out.
+    server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }
 }
