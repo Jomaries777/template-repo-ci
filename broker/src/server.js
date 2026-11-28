@@ -2,7 +2,7 @@
 
 import http from "node:http";
 import { Writable } from "node:stream";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export function buildEnv(source = process.env) {
   return { ...source };
@@ -89,6 +89,8 @@ export function createServer(handle, env, deps) {
       const response = await handle(request, env, deps);
       await writeResponse(req, res, response);
     } catch {
+      // No request data or error text in the log: it could hold a token.
+      console.error("handler failed");
       if (!res.headersSent) {
         if (!req.complete) req.resume();
         res.writeHead(500, { "Content-Type": "application/json" });
@@ -100,6 +102,27 @@ export function createServer(handle, env, deps) {
   });
 }
 
+// loadAuditStore: the audit store from firestore.js. Only firestore.js itself
+// being absent is tolerated (the handler then refuses with 503
+// audit_unavailable); a syntax error, a missing dependency, a module without
+// createAuditStore, or a store that fails to build throws, so the server
+// stops instead of starting without its audit log and rate limit.
+const FIRESTORE_PATH = fileURLToPath(new URL("./firestore.js", import.meta.url));
+export async function loadAuditStore(env, deps, importer = () => import("./firestore.js")) {
+  let m;
+  try {
+    m = await importer();
+  } catch (err) {
+    if (err?.code === "ERR_MODULE_NOT_FOUND" && String(err.message).includes(`'${FIRESTORE_PATH}'`)) {
+      console.error("no audit store (firestore.js missing): audited requests get 503");
+      return undefined;
+    }
+    throw err;
+  }
+  if (typeof m.createAuditStore !== "function") throw new Error("firestore.js has no createAuditStore");
+  return m.createAuditStore(env, deps);
+}
+
 async function main() {
   const env = buildEnv(process.env);
   const deps = {
@@ -108,10 +131,10 @@ async function main() {
     random: () => Math.random(),
   };
   try {
-    const m = await import("./firestore.js");
-    if (typeof m.createAuditStore === "function") deps.audit = m.createAuditStore(env, deps);
+    deps.audit = await loadAuditStore(env, deps);
   } catch {
-    // firestore.js arrives in M1 task 1a
+    console.error("audit store failed to load; exiting");
+    process.exit(1);
   }
   const { handle } = await import("./handler.js");
   const port = Number(process.env.PORT) || 8080;

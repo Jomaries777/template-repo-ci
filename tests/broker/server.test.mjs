@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import net from "node:net";
-import { buildEnv, createServer } from "../../broker/src/server.js";
+import { buildEnv, createServer, loadAuditStore } from "../../broker/src/server.js";
 import { handle as realHandle, readJson } from "../../broker/src/handler.js";
 import { RELAY_MAX_BODY } from "../../broker/src/relay.js";
 
@@ -301,4 +301,75 @@ test("buildEnv returns a plain copy without mutating the source", () => {
 
   source.OWNER_LOGIN = "changed";
   assert.equal(copy.OWNER_LOGIN, "Jomaries777");
+});
+
+// loadAuditStore (review of #111): only a missing firestore.js itself is
+// tolerated; any other failure stops the server instead of starting it
+// without an audit store.
+const firestoreUrl = new URL("../../broker/src/firestore.js", import.meta.url);
+function notFound(path) {
+  const err = new Error(`Cannot find module '${path}' imported from /app/src/server.js`);
+  err.code = "ERR_MODULE_NOT_FOUND";
+  return err;
+}
+
+test("loadAuditStore: a store module that loads gives its store", async () => {
+  const store = { ready: async () => true };
+  const got = await loadAuditStore({ A: "1" }, { x: 1 }, async () => ({
+    createAuditStore: (env, deps) => {
+      assert.equal(env.A, "1");
+      assert.equal(deps.x, 1);
+      return store;
+    },
+  }));
+  assert.equal(got, store);
+});
+
+test("loadAuditStore: a missing firestore.js gives no store", async () => {
+  const got = await loadAuditStore({}, {}, async () => {
+    throw notFound(firestoreUrl.pathname);
+  });
+  assert.equal(got, undefined);
+});
+
+test("loadAuditStore: other failures throw", async () => {
+  const cases = [
+    async () => {
+      throw new SyntaxError("Unexpected token");
+    },
+    async () => {
+      throw notFound("/app/node_modules/some-dependency/index.js");
+    },
+    async () => ({}),
+    async () => ({
+      createAuditStore: () => {
+        throw new Error("bad config");
+      },
+    }),
+  ];
+  for (const importer of cases) {
+    await assert.rejects(loadAuditStore({}, {}, importer));
+  }
+});
+
+test("a client that aborts mid-body doesn't crash the server", async () => {
+  const stub = async (request) => {
+    await request.text();
+    return new Response("{}", { status: 200 });
+  };
+  await withServer(stub, {}, {}, async ({ port, baseUrl }) => {
+    await new Promise((resolve) => {
+      const sock = net.connect(port, "127.0.0.1", () => {
+        sock.write("POST /token HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n0123456789");
+        setTimeout(() => {
+          sock.destroy();
+          resolve();
+        }, 50);
+      });
+      sock.on("error", () => {});
+    });
+    // The server still answers the next request.
+    const res = await fetch(`${baseUrl}/healthz`);
+    assert.equal(res.status, 200);
+  });
 });
