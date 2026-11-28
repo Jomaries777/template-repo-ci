@@ -5,7 +5,7 @@
 | Status | Draft |
 | Intent | [intent.md](intent.md), accepted by the owner on 2026-11-28 (#107) |
 | Created | 2026-11-28 |
-| Owner decisions | Intent decisions 1–9 (2026-11-28). C1–C14 below wait for the owner |
+| Owner decisions | Intent decisions 1–9 (2026-11-28). C4: the broker runs in `us-west1` (owner, 2026-11-28). The other concerns, C1–C3 and C5–C14, wait for the owner |
 | Amends | [0001 spec](../0001-github-cicd-pipeline/spec.md) FR-13, §3, §4.1, §4.5, §4.9, §4.11 and C10; [0002 spec](../0002-bot-identity-any-device/spec.md) NFR-1, NFR-6, "Phase 2: the broker", C1 and criteria 9 and 13; [0003 spec](../0003-per-agent-identity/spec.md) NFR-1, NFR-5 and criteria 6 and 13. Each amended section gets an "amended by 0004" note; their history isn't rewritten |
 | Next artifact | `plan.md` in this folder, written in plan mode once this spec is accepted. The acceptance criteria below become its Proof |
 
@@ -46,7 +46,7 @@
 
 ```text
 device:  scripts/bot-token.sh --agent claude owner/repo
-           → POST https://agent-bot-broker-<number>.<region>.run.app/token
+           → POST https://agent-bot-broker-<number>.us-west1.run.app/token
 Cloud Run (project: agent-bot-broker-<suffix>, service account broker@)
   broker/src/server.js   Node 22 http server → Request → handle() → Response
   env:   config.yaml values + 4 secrets from Secret Manager (pinned versions)
@@ -64,11 +64,11 @@ GitHub:  "Check a token" (login App), App JWT → installation token
 | APIs | Cloud Run, Cloud Build, Artifact Registry, Secret Manager, Firestore, IAM, Billing Budgets |
 | Service accounts | `broker@` (runtime) and `builder@` (builds). The default compute service account loses its automatic Editor role (C2) |
 | Secret Manager | The four secrets, created empty, with automatic replication. `broker@` gets `roles/secretmanager.secretAccessor` on each secret, not on the project |
-| Firestore | `(default)` database, Native mode, in the service's region. Security rules deny every client. Composite index on `audit` (`caller_id`, `endpoint`, `ts`). TTL policy on `audit.expire_at` |
+| Firestore | `(default)` database, Native mode, location `us-west1`, the service's region. Security rules deny every client. Composite index on `audit` (`caller_id`, `endpoint`, `ts`). TTL policy on `audit.expire_at` |
 | Artifact Registry | The `cloud-run-source-deploy` repository with a cleanup policy that keeps the 2 newest images |
 | Audit logs | `DATA_READ` audit logs on for `secretmanager.googleapis.com` |
 | Budget | $1 on this project, alerts at 50%, 90%, 100% |
-| Region | `us-central1` by default (C4) |
+| Region | **`us-west1`** for the Cloud Run service, Firestore and Artifact Registry (C4). `setup.sh` and `deploy.sh` use it by default, and refuse another region unless `BROKER_REGION` is set, so a new owner can pick their own |
 
 ### Runtime
 
@@ -105,7 +105,7 @@ The key is read from the file and piped to `gcloud secrets versions add --data-f
 
 ### Deploy
 
-`broker/deploy.sh` runs `gcloud run deploy agent-bot-broker --source broker --project <P> --region <R> --service-account broker@… --build-service-account builder@… --env-vars-file broker/config.yaml --set-secrets <4 pinned versions> --max-instances 1 --allow-unauthenticated`, then checks `/healthz` and that the service has no traffic tags. It reads the live `BROKER_ENABLED` and the live secret versions first, so a deploy changes neither unless the owner asks (`--enable`, or a new version from `put-secret.sh`). The broker is never deployed from CI: the project has no workload identity pool, and no CI holds a credential for it.
+`broker/deploy.sh` runs `gcloud run deploy agent-bot-broker --source broker --project <P> --region us-west1 --service-account broker@… --build-service-account builder@… --env-vars-file broker/config.yaml --set-secrets <4 pinned versions> --max-instances 1 --allow-unauthenticated`, then checks `/healthz` and that the service has no traffic tags. It reads the live `BROKER_ENABLED` and the live secret versions first, so a deploy changes neither unless the owner asks (`--enable`, or a new version from `put-secret.sh`). The broker is never deployed from CI: the project has no workload identity pool, and no CI holds a credential for it.
 
 ### Cutover, with 0003 M3
 
@@ -125,7 +125,7 @@ The order, in short. The plan gives the steps.
 
 | Spike | Question | Where |
 |---|---|---|
-| S1 | Does a public Cloud Run service pass `Authorization: Bearer <non-Google token>` and `X-GitHub-Token` to the container unchanged? Which `X-Forwarded-For` entry is the client's, and can the client forge it? How long is a cold start of the Node server? | A throwaway project, with an echo service and dummy header values (never a real token) |
+| S1 | Does a public Cloud Run service pass `Authorization: Bearer <non-Google token>` and `X-GitHub-Token` to the container unchanged? Which `X-Forwarded-For` entry is the client's, and can the client forge it? How long is a cold start of the Node server? | A throwaway project in `us-west1`, with an echo service and dummy header values (never a real token) |
 | S2 | Does the REST count query with the composite index return the right count, and does a missing index give an error the store turns into `503`? Does the TTL policy delete an expired document? | The same project |
 | S3 | Does `gcloud run deploy --source --build-service-account builder@` build and deploy when the default compute service account has no Editor role? | The same project |
 
@@ -162,7 +162,7 @@ Results go in `intent/0004-leave-cloudflare/spikes/`. The throwaway project is d
 | C1 | The service must allow unauthenticated calls (`allUsers` invoker), because devices prove who they are with a GitHub token, not a Google one. Anyone with the URL can send requests, as with `workers.dev` today. | Least privilege at the network edge. Floods cost requests and "Check a token" calls. | Proposed: **accept**. Junk tokens write nothing; at most 1 instance caps cost; the budget alert warns. The emergency stop is removing `allUsers` (FR-5) |
 | C2 | In a project with no organization, the default compute service account gets Editor, and source deploys used to build as it. A build identity with Editor could reach the secrets. | NFR-2, "the broker's GCP identity can read only its own secrets". | Proposed: builds run as `builder@`, and setup removes Editor from the default compute account. S3 proves the build still works |
 | C3 | Firestore through its REST API and `fetch`, or through `@google-cloud/firestore`. | The client library is a large dependency tree (gRPC) in a service that holds App keys. REST means more code of our own. | Proposed: **REST** (NFR-6). Three calls, offline tests with a fake |
-| C4 | Region: `us-central1` (the `cloud-run` target's default, and close to GitHub's API) or an Asian region close to the owner (UTC+8). | Latency against free-tier certainty. Every call goes on to GitHub anyway. | Proposed: **`us-central1`**, rechecked against the Cloud Run free tier with NFR-1 |
+| C4 | Region: `us-central1` (the `cloud-run` target's default), `us-west1`, or an Asian region close to the owner (UTC+8). | Latency against free-tier certainty. Every call goes on to GitHub anyway. | **`us-west1`** (owner, 2026-11-28), for the service, Firestore and Artifact Registry. Its free tier is rechecked with NFR-1, and the spikes run there too, so S1's cold start is measured where the broker will run |
 | C5 | Revoking the login App's authorization signs every device and the cloud environment out at once. | NFR-4, "no downtime". Without it, an identity that the old Worker has seen would also work on the new broker, and the lost account may be recovered by someone else. | Proposed: **revoke**, in the same sitting as signing in again |
 | C6 | The `-claude` key from 0003 M3 step 1 was deleted after loading, so the owner has no copy. The `-agy` key and today's bot key sit in a Worker in `x7k2-apps`. | Needs new keys for both agent Apps, which the 0003 plan didn't expect. | Proposed: **new keys for all three Apps and a new client secret**. Recorded in 0003's Deviations |
 | C7 | A new owner now needs a GCP billing account (a card) for the broker, even if their project deploys to `github-pages`. Workers Free needed no card. | The template's "$0, no card" path for owners without GCP. | Proposed: **accept**. The billing account is only an identity check, the budget alert guards it, and `cloud-run` is already the default target |
@@ -176,17 +176,17 @@ Results go in `intent/0004-leave-cloudflare/spikes/`. The throwaway project is d
 
 ## Acceptance criteria
 
-Each is checked by a command, a test, or a step recorded in the plan's Progress or in `intent/0004-leave-cloudflare/spikes/`. Together they become `plan.md`'s Proof. `<P>` is the broker project, `<R>` its region.
+Each is checked by a command, a test, or a step recorded in the plan's Progress or in `intent/0004-leave-cloudflare/spikes/`. Together they become `plan.md`'s Proof. `<P>` is the broker project.
 
 1. **Dedicated project.** `gcloud projects describe <P> --format 'value(labels.purpose)'` gives `agent-bot-broker`. `gcloud run services list --project <P>` lists only `agent-bot-broker`. `gcloud iam workload-identity-pools list --location global --project <P>` is empty. `gcloud iam service-accounts keys list --managed-by user` is empty for every account in `<P>`. `<P>` isn't `pse-advisor-feat001` and isn't the `GCP_PROJECT_ID` variable of any of the owner's repos.
-2. **Service settings.** `gcloud run services describe agent-bot-broker --project <P> --region <R> --format json` shows no minimum instances, `maxScale` 1, service account `broker@<P>`, no traffic tags, `BROKER_ENABLED=true`, and the four secrets at numbered versions (no `latest`).
+2. **Service settings.** `gcloud run services list --project <P> --format 'value(metadata.name,region)'` gives `agent-bot-broker us-west1`. `gcloud firestore databases describe --database '(default)' --project <P> --format 'value(locationId)'` gives `us-west1`. `gcloud run services describe agent-bot-broker --project <P> --region us-west1 --format json` shows no minimum instances, `maxScale` 1, service account `broker@<P>`, no traffic tags, `BROKER_ENABLED=true`, and the four secrets at numbered versions (no `latest`).
 3. **Least privilege.** `gcloud secrets get-iam-policy` on each secret gives `broker@` as its only accessor. `gcloud projects get-iam-policy <P>` gives `broker@` only `roles/datastore.user`, and the default compute account no `roles/editor`.
 4. **Secret versions.** `gcloud secrets versions list <secret> --project <P> --filter 'state!=DESTROYED'` gives exactly 1 version for each of the four secrets.
 5. **Health and kill switch.** `curl -s <url>/healthz` gives `{"ok":true,"enabled":true}`. After `broker/deploy.sh --disable`, `bot-token.sh --agent claude` fails with `disabled (HTTP 503)`, and `/healthz` gives `"enabled":false`. After `--enable`, it works again. A plain `deploy.sh` run while disabled leaves it disabled (script test).
 6. **Tokens through the new broker.** The 0003 M3 step 3 PR, opened through the Cloud Run URL, has `gh pr view <n> --json author -q .author.login` = `app/jomaries777-claude`. `bot-token.sh --agent agy` also succeeds, and `bot-relay.sh` from the cloud environment opens a draft PR.
 7. **Audit.** After criterion 6, the `audit` collection has a document for each call, with `agent` set and `expire_at` 90 days after `ts`. `gcloud firestore fields ttls list --project <P>` shows the policy on `audit.expire_at` as active. Broker tests show `503 audit_unavailable` when the store fails, and `429 rate_limited` after 30 owner `/token` calls in an hour.
 8. **Broker tests.** `node --test tests/broker/*.test.mjs` gives `ok` for every existing case, plus: the server adapter passes headers and the body stream, and keeps the 1 KB and 1 MB caps; the IP comes from the right `X-Forwarded-For` entry; the Firestore store sends the count query and the insert, and caches the metadata token. `grep -rE 'AUDIT|D1|CF-Connecting-IP' broker/src` finds nothing.
-9. **Owner scripts.** Script tests with `DRY_RUN=1` show: every `gcloud` line has `--project`; `setup.sh` and `deploy.sh` refuse a project without the label, with a workload identity pool, or with another service; `put-secret.sh` refuses an empty file and a non-PEM file, and never prints key material.
+9. **Owner scripts.** Script tests with `DRY_RUN=1` show: every `gcloud` line has `--project`, and every regional one `--region us-west1` (or `--location us-west1`) unless `BROKER_REGION` is set; `setup.sh` and `deploy.sh` refuse a project without the label, with a workload identity pool, or with another service; `put-secret.sh` refuses an empty file and a non-PEM file, and never prints key material.
 10. **Old broker cut off.** The cutover record lists, with dates, the deletion on GitHub of the old bot key, the old login client secret, and the step-1 `-claude` and `-agy` keys, and the fingerprints of the keys that remain. Each App's settings page shows only the new key. No identity is sent to the old URL to check it.
 11. **Devices moved.** On each device, `make doctor` passes and gives no `workers.dev` warning. Doctor tests show the warning for a `*.workers.dev` URL.
 12. **No Cloudflare left.** `git grep -nIiE 'cloudflare|wrangler|workers\.dev|CLOUDFLARE_' -- ':!intent/' ':!scripts/doctor.sh' ':!tests/scripts/test_doctor.sh'` finds nothing (doctor keeps the FR-9 warning; `broker/README.md` points to the cutover record without naming the old host). `deploy/targets/cloudflare-workers` doesn't exist. A bootstrap test shows `TARGET=cloudflare-workers` fails as an unknown target.
