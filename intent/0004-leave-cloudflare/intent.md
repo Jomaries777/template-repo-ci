@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** by the product owner on 2026-11-28, with decisions 1–9 (the draft's open questions 1–5 answered as decisions 5–9) |
+| Status | **Accepted** by the product owner on 2026-11-28 (#107), with decisions 1–9 (the draft's open questions 1–5 answered as decisions 5–9) |
 | Product owner | Repo owner (sole human: product owner, engineer and release manager) |
 | Created | 2026-11-28 |
 | SDLC stage | Stage 1, Plan: "Capture as intent.md" |
