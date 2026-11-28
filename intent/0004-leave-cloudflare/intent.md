@@ -8,7 +8,7 @@
 | SDLC stage | Stage 1, Plan: "Capture as intent.md" |
 | Framework | [The AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook) |
 | Next artifact | `spec.md` in this folder, written only after this file is accepted and committed |
-| Source | The 0003 M3 cutover incident ([cutover.md](../0003-per-agent-identity/spikes/cutover.md), 2026-11-28) |
+| Source | The 0003 M3 cutover incident on 2026-11-28, recorded in `intent/0003-per-agent-identity/spikes/cutover.md` (lands with the 0003 cutover PR) |
 
 ## Problem
 
